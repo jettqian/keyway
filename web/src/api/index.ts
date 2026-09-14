@@ -78,6 +78,8 @@ export const adminStats = (days: number) => get<StatsResponse>(`/api/admin/stats
 export const adminPricing = () => get<{ pricing: ModelPricing[] }>('/api/admin/pricing')
 export const adminUpdatePricing = (p: ModelPricing) =>
   put<{ pricing: ModelPricing }>(`/api/admin/pricing/${encodeURIComponent(p.model)}`, p)
+export const adminDeletePricing = (model: string) =>
+  del<void>(`/api/admin/pricing/${encodeURIComponent(model)}`)
 export const adminProxies = () => get<{ proxies: Proxy[] }>('/api/admin/proxies')
 export const adminCreateProxy = (input: ProxyInput) => post<{ proxy: Proxy }>('/api/admin/proxies', input)
 export const adminUpdateProxy = (id: number, input: Partial<ProxyInput>) =>

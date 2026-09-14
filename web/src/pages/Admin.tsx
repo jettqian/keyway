@@ -5,6 +5,8 @@ import {
   adminSetUserStatus,
   adminResetPassword,
   adminPricing,
+  adminUpdatePricing,
+  adminDeletePricing,
   adminProxies,
   adminCreateProxy,
   adminUpdateProxy,
@@ -80,6 +82,11 @@ const UsersTab: React.FC = () => {
 const PricingTab: React.FC = () => {
   const [pricing, setPricing] = React.useState<ModelPricing[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [modalOpen, setModalOpen] = React.useState(false)
+  const [editing, setEditing] = React.useState<ModelPricing | null>(null)
+  const [importOpen, setImportOpen] = React.useState(false)
+  const [importText, setImportText] = React.useState('')
+  const [form] = Form.useForm()
   const refresh = React.useCallback(() => {
     setLoading(true)
     adminPricing()
@@ -88,20 +95,142 @@ const PricingTab: React.FC = () => {
       .finally(() => setLoading(false))
   }, [])
   React.useEffect(refresh, [refresh])
+
+  const openCreate = () => {
+    setEditing(null)
+    form.resetFields()
+    setModalOpen(true)
+  }
+  const openEdit = (p: ModelPricing) => {
+    setEditing(p)
+    form.setFieldsValue({
+      model: p.model, inputPerM: p.inputPerM, outputPerM: p.outputPerM,
+      cachedInputPerM: p.cachedInputPerM, cacheWritePerM: p.cacheWritePerM,
+    })
+    setModalOpen(true)
+  }
+  const submit = async () => {
+    const v = await form.validateFields()
+    const p: ModelPricing = {
+      model: editing ? editing.model : v.model,
+      inputPerM: v.inputPerM ?? 0,
+      cachedInputPerM: v.cachedInputPerM ?? null,
+      cacheWritePerM: v.cacheWritePerM ?? null,
+      outputPerM: v.outputPerM ?? 0,
+    }
+    try {
+      await adminUpdatePricing(p)
+      message.success(editing ? '已更新（费用快照从下一条日志生效）' : '已添加')
+      setModalOpen(false)
+      refresh()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+  const exportJSON = () => {
+    const blob = new Blob([JSON.stringify(pricing, null, 2)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'keyway-pricing.json'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+  const runImport = async () => {
+    let list: ModelPricing[]
+    try {
+      list = JSON.parse(importText)
+      if (!Array.isArray(list)) throw new Error()
+    } catch {
+      message.error('不是合法的 JSON 数组')
+      return
+    }
+    let ok = 0
+    for (const p of list) {
+      if (!p.model || p.inputPerM == null || p.outputPerM == null) continue
+      try {
+        await adminUpdatePricing({
+          model: p.model, inputPerM: Number(p.inputPerM), outputPerM: Number(p.outputPerM),
+          cachedInputPerM: p.cachedInputPerM == null ? null : Number(p.cachedInputPerM),
+          cacheWritePerM: p.cacheWritePerM == null ? null : Number(p.cacheWritePerM),
+        })
+        ok++
+      } catch {
+        // 单条失败继续
+      }
+    }
+    message.success(`导入 ${ok}/${list.length} 条`)
+    setImportOpen(false)
+    refresh()
+  }
   return (
-    <Table<ModelPricing>
-      rowKey="model"
-      loading={loading}
-      dataSource={pricing}
-      pagination={{ pageSize: 20 }}
-      columns={[
-        { title: '模型', dataIndex: 'model' },
-        { title: '输入 $/M', dataIndex: 'inputPerM' },
-        { title: '缓存读 $/M', dataIndex: 'cachedInputPerM', render: (v: number | null) => v ?? '（同输入价）' },
-        { title: '缓存写 $/M', dataIndex: 'cacheWritePerM', render: (v: number | null) => v ?? '（同输入价）' },
-        { title: '输出 $/M', dataIndex: 'outputPerM' },
-      ]}
-    />
+    <div>
+      <div style={{ marginBottom: 12, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <Button onClick={exportJSON}>导出 JSON</Button>
+        <Button onClick={() => { setImportText(''); setImportOpen(true) }}>导入 JSON</Button>
+        <Button type="primary" onClick={openCreate}>新增模型</Button>
+      </div>
+      <Table<ModelPricing>
+        rowKey="model"
+        loading={loading}
+        dataSource={pricing}
+        pagination={{ pageSize: 20 }}
+        columns={[
+          { title: '模型', dataIndex: 'model' },
+          { title: '输入 $/M', dataIndex: 'inputPerM' },
+          { title: '缓存读 $/M', dataIndex: 'cachedInputPerM', render: (v: number | null) => (v ?? '（同输入价）') },
+          { title: '缓存写 $/M', dataIndex: 'cacheWritePerM', render: (v: number | null) => (v ?? '（同输入价）') },
+          { title: '输出 $/M', dataIndex: 'outputPerM' },
+          {
+            title: '操作',
+            width: 130,
+            render: (_, p) => (
+              <Space>
+                <a onClick={() => openEdit(p)}>编辑</a>
+                <a
+                  style={{ color: 'red' }}
+                  onClick={async () => {
+                    await adminDeletePricing(p.model)
+                    message.success('已删除')
+                    refresh()
+                  }}
+                >
+                  删除
+                </a>
+              </Space>
+            ),
+          },
+        ]}
+      />
+      <Modal title={editing ? `编辑价目：${editing.model}` : '新增模型价目'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
+        <Form form={form} layout="vertical">
+          <Form.Item name="model" label="模型名" rules={[{ required: true, message: '请输入模型名' }]}>
+            <Input disabled={!!editing} placeholder="如 deepseek-chat" />
+          </Form.Item>
+          <Space size="large">
+            <Form.Item name="inputPerM" label="输入 $/M" rules={[{ required: true }]}>
+              <InputNumber min={0} step={0.01} style={{ width: 120 }} />
+            </Form.Item>
+            <Form.Item name="outputPerM" label="输出 $/M" rules={[{ required: true }]}>
+              <InputNumber min={0} step={0.01} style={{ width: 120 }} />
+            </Form.Item>
+          </Space>
+          <Space size="large">
+            <Form.Item name="cachedInputPerM" label="缓存读 $/M（空=同输入价）">
+              <InputNumber min={0} step={0.01} style={{ width: 150 }} />
+            </Form.Item>
+            <Form.Item name="cacheWritePerM" label="缓存写 $/M（空=同输入价）">
+              <InputNumber min={0} step={0.01} style={{ width: 150 }} />
+            </Form.Item>
+          </Space>
+        </Form>
+      </Modal>
+      <Modal title="导入价目 JSON" open={importOpen} onOk={runImport} onCancel={() => setImportOpen(false)} width={560}>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          粘贴 JSON 数组，字段：model、inputPerM、outputPerM、cachedInputPerM?、cacheWritePerM?（与导出格式一致，同 model 覆盖）
+        </Typography.Paragraph>
+        <Input.TextArea rows={10} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder='[{"model":"deepseek-chat","inputPerM":0.27,"outputPerM":1.1}]' />
+      </Modal>
+    </div>
   )
 }
 

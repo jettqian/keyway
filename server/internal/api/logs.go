@@ -179,6 +179,12 @@ func (s *Server) handleAdminUpdatePricing(c *gin.Context) {
 	s.ok(c, gin.H{"pricing": p})
 }
 
+func (s *Server) handleAdminDeletePricing(c *gin.Context) {
+	model := c.Param("model")
+	s.Store.DB().Delete(&store.ModelPricing{}, model)
+	s.ok(c, gin.H{})
+}
+
 // ---------- 管理员：代理池 / 模板 / 设置 ----------
 
 func (s *Server) handleAdminProxies(c *gin.Context) {

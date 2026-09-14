@@ -182,6 +182,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 		admin.GET("/stats", s.handleAdminStats)
 		admin.GET("/pricing", s.handleAdminPricing)
 		admin.PUT("/pricing/:model", s.handleAdminUpdatePricing)
+		admin.DELETE("/pricing/:model", s.handleAdminDeletePricing)
 		admin.GET("/proxies", s.handleAdminProxies)
 		admin.POST("/proxies", s.handleAdminCreateProxy)
 		admin.PUT("/proxies/:id", s.handleAdminUpdateProxy)
