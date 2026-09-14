@@ -169,4 +169,32 @@ export interface AdminSettings {
   registerMode: 'open' | 'invite' | 'closed'
   feishuEnabled: boolean
   feishuAppId: string
+  feishuAppSecret?: string
+  feishuHasSecret?: boolean
+  feishuBaseUrl?: string
+}
+
+export interface PublicInfo {
+  feishuEnabled: boolean
+  registerMode: 'open' | 'invite' | 'closed'
+}
+
+export interface ProxyInput {
+  name: string
+  url: string
+  note?: string
+  enabled?: boolean
+}
+
+export interface TemplateInput {
+  name: string
+  type: 'openai' | 'anthropic'
+  baseUrls: string[]
+  lineStrategy: 'auto' | 'manual'
+  models: string[]
+  modelMapping: Record<string, string>
+  priorityDefault: number
+  allowPublicProxyDefault: boolean
+  note?: string
+  enabled: boolean
 }

@@ -1,11 +1,18 @@
 import React from 'react'
-import { Card, Form, Input, Button, message, Typography } from 'antd'
+import { Card, Form, Input, Button, message, Typography, Divider } from 'antd'
 import { Link, useNavigate } from 'react-router-dom'
-import { login } from '../api'
+import { login, publicInfo, feishuLoginUrl } from '../api'
 
 const LoginPage: React.FC = () => {
   const nav = useNavigate()
   const [loading, setLoading] = React.useState(false)
+  const [feishuEnabled, setFeishuEnabled] = React.useState(false)
+
+  React.useEffect(() => {
+    publicInfo()
+      .then((r) => setFeishuEnabled(r.feishuEnabled))
+      .catch(() => {})
+  }, [])
 
   const onFinish = async (values: { username: string; password: string }) => {
     setLoading(true)
@@ -17,6 +24,19 @@ const LoginPage: React.FC = () => {
       message.error((e as Error).message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const feishuLogin = async () => {
+    try {
+      const r = await feishuLoginUrl()
+      if (r.url) {
+        window.location.href = r.url
+      } else {
+        message.error('飞书登录未完成配置')
+      }
+    } catch (e) {
+      message.error((e as Error).message)
     }
   }
 
@@ -33,6 +53,12 @@ const LoginPage: React.FC = () => {
           </Form.Item>
           <Button type="primary" htmlType="submit" block loading={loading}>登录</Button>
         </Form>
+        {feishuEnabled ? (
+          <>
+            <Divider plain style={{ fontSize: 12 }}>或</Divider>
+            <Button block onClick={feishuLogin}>飞书扫码登录</Button>
+          </>
+        ) : null}
         <div style={{ marginTop: 12, textAlign: 'center' }}>
           没有账号？<Link to="/register">注册</Link>
         </div>

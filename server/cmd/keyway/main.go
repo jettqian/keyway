@@ -44,7 +44,7 @@ func buildApp(cfg config.Config) (*app, error) {
 	logWriter := usage.NewWriter(st.DB())
 	pm := proxyman.New(st, cfg.Secret)
 	probeEngine := probe.New(st, cfg.Secret, routingSvc, pm, cfg)
-	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm)
+	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm, cfg.BaseURL)
 	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, pm, cfg)
 
 	stopWriter := make(chan struct{})
@@ -99,6 +99,9 @@ func buildApp(cfg config.Config) (*app, error) {
 	apiSvc.RegisterAuthRoutes(apiGroup)
 	sessioned := apiGroup.Group("", apiSvc.SessionAuth())
 	apiSvc.RegisterRoutes(sessioned)
+
+	// 飞书 OAuth 回调（根路由，浏览器跳转）
+	r.GET("/oauth/feishu/callback", apiSvc.HandleFeishuCallback)
 
 	webui.Register(r)
 

@@ -18,6 +18,11 @@ docker compose up -d          # 默认 0.0.0.0:8080，SQLite 落在 ./data
 # 首个注册用户自动成为管理员
 ```
 
+说明：
+- 容器默认以 root 运行以保证挂载卷开箱可写；加固部署可 `chown 65532:65532 ./data`
+  后在 compose 中加 `user: "nonroot"`
+- 备份 = 停机后拷贝 `./data/keyway.db`；升级 = 换镜像 tag 重建（自动迁移表结构）
+
 本地开发（不依赖 Docker）：
 
 ```bash

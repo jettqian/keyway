@@ -8,12 +8,15 @@ import type {
   GatewayToken,
   GatewayTokenCreated,
   ChannelTemplate,
+  TemplateInput,
   LogEntry,
   LogQuery,
   StatsResponse,
   ModelPricing,
   Proxy,
+  ProxyInput,
   AdminSettings,
+  PublicInfo,
 } from './types'
 
 // ---------- 认证 ----------
@@ -25,6 +28,7 @@ export const logout = () => post<void>('/api/auth/logout')
 export const me = () => get<{ user: User }>('/api/auth/me')
 export const changePassword = (oldPassword: string, newPassword: string) =>
   put<void>('/api/auth/password', { oldPassword, newPassword })
+export const publicInfo = () => get<PublicInfo>('/api/auth/public-info')
 export const feishuLoginUrl = () => get<{ url: string }>('/api/auth/feishu/url')
 
 // ---------- 密钥池 ----------
@@ -75,7 +79,20 @@ export const adminPricing = () => get<{ pricing: ModelPricing[] }>('/api/admin/p
 export const adminUpdatePricing = (p: ModelPricing) =>
   put<{ pricing: ModelPricing }>(`/api/admin/pricing/${encodeURIComponent(p.model)}`, p)
 export const adminProxies = () => get<{ proxies: Proxy[] }>('/api/admin/proxies')
+export const adminCreateProxy = (input: ProxyInput) => post<{ proxy: Proxy }>('/api/admin/proxies', input)
+export const adminUpdateProxy = (id: number, input: Partial<ProxyInput>) =>
+  put<void>(`/api/admin/proxies/${id}`, input)
+export const adminDeleteProxy = (id: number) => del<void>(`/api/admin/proxies/${id}`)
+export const adminProxyUsage = () =>
+  get<{ usage: Array<{ userId: number; username: string; proxyId: number; proxyName: string; day: string; bytes: number }> }>(
+    '/api/admin/proxy_usage',
+  )
 export const adminTemplates = () => get<{ templates: ChannelTemplate[] }>('/api/admin/templates')
+export const adminCreateTemplate = (input: TemplateInput) =>
+  post<{ template: ChannelTemplate }>('/api/admin/templates', input)
+export const adminUpdateTemplate = (id: number, input: TemplateInput) =>
+  put<{ template: ChannelTemplate }>(`/api/admin/templates/${id}`, input)
+export const adminDeleteTemplate = (id: number) => del<void>(`/api/admin/templates/${id}`)
 export const adminSettings = () => get<{ settings: AdminSettings }>('/api/admin/settings')
 export const adminUpdateSettings = (s: AdminSettings) => put<{ settings: AdminSettings }>('/api/admin/settings', s)
 

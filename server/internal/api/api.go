@@ -14,15 +14,16 @@ import (
 
 // Server 控制台 API
 type Server struct {
-	Store  *store.Store
-	Secret string
-	Auth   *auth.Service
-	Probe  *probe.Engine
-	PM     *proxyman.Manager
+	Store   *store.Store
+	Secret  string
+	Auth    *auth.Service
+	Probe   *probe.Engine
+	PM      *proxyman.Manager
+	BaseURL string
 }
 
-func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *proxyman.Manager) *Server {
-	return &Server{Store: st, Secret: secret, Auth: a, Probe: p, PM: pm}
+func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *proxyman.Manager, baseURL string) *Server {
+	return &Server{Store: st, Secret: secret, Auth: a, Probe: p, PM: pm, BaseURL: baseURL}
 }
 
 const sessionCookie = "keyway_session"
@@ -88,13 +89,66 @@ func (s *Server) RegisterAuthRoutes(r *gin.RouterGroup) {
 	r.POST("/auth/register", s.handleRegister)
 	r.POST("/auth/login", s.handleLogin)
 	r.POST("/auth/logout", s.handleLogout)
+	r.GET("/auth/public-info", s.handlePublicInfo)
+	r.GET("/auth/feishu/url", s.handleFeishuURL)
+}
+
+// HandleFeishuCallback 飞书 OAuth 回调（注册在根路由）
+func (s *Server) HandleFeishuCallback(c *gin.Context) {
+	base := s.requestBase(c)
+	state := c.Query("state")
+	if !s.validState(state) {
+		c.Redirect(http.StatusFound, base+"/login?feishu=state_error")
+		return
+	}
+	code := c.Query("code")
+	if code == "" {
+		c.Redirect(http.StatusFound, base+"/login?feishu=missing_code")
+		return
+	}
+	u, token, err := s.Auth.FeishuCallback(code, base)
+	if err != nil {
+		c.Redirect(http.StatusFound, base+"/login?feishu=error")
+		return
+	}
+	s.setSessionCookie(c, token)
+	c.Redirect(http.StatusFound, base+"/")
+	_ = u
+}
+
+// requestBase 对外地址：优先配置，其次从请求推导
+func (s *Server) requestBase(c *gin.Context) string {
+	if s.BaseURL != "" {
+		return strings.TrimSuffix(s.BaseURL, "/")
+	}
+	scheme := "https"
+	if c.Request.TLS == nil && c.GetHeader("X-Forwarded-Proto") == "" {
+		scheme = "http"
+	}
+	if p := c.GetHeader("X-Forwarded-Proto"); p != "" {
+		scheme = p
+	}
+	return scheme + "://" + c.Request.Host
+}
+
+func (s *Server) validState(state string) bool {
+	// 透传给 auth 校验（HMAC+TTL）
+	return s.Auth.VerifyFeishuState(state)
+}
+
+func (s *Server) handlePublicInfo(c *gin.Context) {
+	feishu, _ := s.Store.GetSetting("feishu_enabled")
+	mode, _ := s.Store.GetSetting("register_mode")
+	if mode == "" {
+		mode = "open"
+	}
+	s.ok(c, gin.H{"feishuEnabled": feishu == "1", "registerMode": mode})
 }
 
 // RegisterRoutes 会话内路由
 func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/auth/me", s.handleMe)
 	r.PUT("/auth/password", s.handleChangePassword)
-	r.GET("/auth/feishu/url", s.handleFeishuURL)
 
 	r.GET("/keys", s.handleListKeys)
 	r.POST("/keys", s.handleCreateKey)
@@ -221,8 +275,12 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 }
 
 func (s *Server) handleFeishuURL(c *gin.Context) {
-	// 飞书 OAuth 在 M6 接入；当前返回占位
-	s.ok(c, gin.H{"url": ""})
+	u, err := s.Auth.FeishuAuthorizeURL(s.requestBase(c))
+	if err != nil {
+		s.ok(c, gin.H{"url": ""})
+		return
+	}
+	s.ok(c, gin.H{"url": u})
 }
 
 func userDTO(u *store.User) gin.H {

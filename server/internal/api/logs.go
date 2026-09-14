@@ -407,9 +407,12 @@ func (s *Server) handleAdminTemplates(c *gin.Context) {
 }
 
 type adminSettingsDTO struct {
-	RegisterMode  string `json:"registerMode"`
-	FeishuEnabled bool   `json:"feishuEnabled"`
-	FeishuAppID   string `json:"feishuAppId"`
+	RegisterMode    string `json:"registerMode"`
+	FeishuEnabled   bool   `json:"feishuEnabled"`
+	FeishuAppID     string `json:"feishuAppId"`
+	FeishuAppSecret string `json:"feishuAppSecret,omitempty"` // 只写，不回显
+	FeishuHasSecret bool   `json:"feishuHasSecret"`
+	FeishuBaseURL   string `json:"feishuBaseUrl"`
 }
 
 func (s *Server) handleAdminSettings(c *gin.Context) {
@@ -419,10 +422,14 @@ func (s *Server) handleAdminSettings(c *gin.Context) {
 	}
 	feishuEnabled, _ := s.Store.GetSetting("feishu_enabled")
 	appID, _ := s.Store.GetSetting("feishu_app_id")
+	baseURL, _ := s.Store.GetSetting("feishu_base_url")
+	secretEnc, _ := s.Store.GetSetting("feishu_app_secret")
 	s.ok(c, gin.H{"settings": adminSettingsDTO{
-		RegisterMode:  mode,
-		FeishuEnabled: feishuEnabled == "1",
-		FeishuAppID:   appID,
+		RegisterMode:    mode,
+		FeishuEnabled:   feishuEnabled == "1",
+		FeishuAppID:     appID,
+		FeishuHasSecret: secretEnc != "",
+		FeishuBaseURL:   baseURL,
 	}})
 }
 
@@ -445,7 +452,20 @@ func (s *Server) handleAdminUpdateSettings(c *gin.Context) {
 	if dto.FeishuAppID != "" {
 		s.Store.SetSetting("feishu_app_id", dto.FeishuAppID)
 	}
-	s.ok(c, gin.H{"settings": dto})
+	if dto.FeishuBaseURL != "" {
+		s.Store.SetSetting("feishu_base_url", dto.FeishuBaseURL)
+	}
+	if dto.FeishuAppSecret != "" {
+		if err := s.Auth.SaveFeishuSecret(dto.FeishuAppSecret); err != nil {
+			s.fail(c, http.StatusInternalServerError, "保存飞书 Secret 失败")
+			return
+		}
+		dto.FeishuAppSecret = ""
+	}
+	// 回显不含密钥
+	resp := dto
+	resp.FeishuHasSecret = true
+	s.ok(c, gin.H{"settings": resp})
 }
 
 // ---------- 辅助 ----------
