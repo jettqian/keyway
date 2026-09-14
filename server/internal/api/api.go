@@ -116,7 +116,9 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.DELETE("/tokens/:id", s.handleRevokeToken)
 
 	r.GET("/logs", s.handleLogs)
+	r.GET("/logs/export", s.handleLogsExport)
 	r.GET("/stats", s.handleStats)
+	r.GET("/stats/export", s.handleStatsExport)
 
 	admin := r.Group("/admin", s.AdminAuth())
 	{
@@ -137,6 +139,10 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 		admin.DELETE("/templates/:id", s.handleAdminDeleteTemplate)
 		admin.GET("/settings", s.handleAdminSettings)
 		admin.PUT("/settings", s.handleAdminUpdateSettings)
+		admin.GET("/invites", s.handleAdminListInvites)
+		admin.POST("/invites", s.handleAdminCreateInvites)
+		admin.DELETE("/invites/:code", s.handleAdminDeleteInvite)
+		admin.GET("/stats/export", s.handleAdminStatsExport)
 	}
 }
 

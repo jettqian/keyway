@@ -272,6 +272,30 @@ func whereUser(userID *int64) func(db *gorm.DB) *gorm.DB {
 	}
 }
 
+// StartRetention 日志保留期清理循环（每 6 小时执行一次）
+func (w *Writer) StartRetention(stop <-chan struct{}, retentionDays int) {
+	if retentionDays < 1 {
+		retentionDays = 30
+	}
+	run := func() {
+		if n, err := DeleteOldLogs(w.db, retentionDays); err == nil && n > 0 {
+			// 清理量写入 stderr 日志便于观察
+			fmt.Printf("[keyway] 清理过期日志 %d 条\n", n)
+		}
+	}
+	run()
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
+}
+
 // DeleteOldLogs 保留期清理
 func DeleteOldLogs(db *gorm.DB, retentionDays int) (int64, error) {
 	if retentionDays < 1 {

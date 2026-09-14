@@ -1,0 +1,7 @@
+data/
+web/node_modules/
+web/dist/
+server/internal/webui/dist/
+*.md
+.git/
+.gitignore

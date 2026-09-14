@@ -68,6 +68,13 @@ func buildApp(cfg config.Config) (*app, error) {
 		close(pmDone)
 	}()
 
+	retentionStop := make(chan struct{})
+	retentionDone := make(chan struct{})
+	go func() {
+		logWriter.StartRetention(retentionStop, cfg.LogRetentionDays)
+		close(retentionDone)
+	}()
+
 	if os.Getenv("KEYWAY_DEBUG") == "" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -115,11 +122,31 @@ func buildApp(cfg config.Config) (*app, error) {
 			case <-pmDone:
 			case <-time.After(5 * time.Second):
 			}
+			close(retentionStop)
+			select {
+			case <-retentionDone:
+			case <-time.After(5 * time.Second):
+			}
 		},
 	}, nil
 }
 
 func main() {
+	// docker healthcheck 模式：自检 /healthz 后退出（distroless 无 curl/wget）
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		cfg := config.Load()
+		port := cfg.Port
+		if port == 0 {
+			port = 8080
+		}
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", port))
+		if err != nil || resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		resp.Body.Close()
+		os.Exit(0)
+	}
+
 	cfg := config.Load()
 	if err := cfg.ValidateSecret(); err != nil {
 		fmt.Fprintf(os.Stderr, "KEYWAY_SECRET 未配置或无效（生成：openssl rand -base64 32）：%v\n", err)

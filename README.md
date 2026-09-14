@@ -8,11 +8,33 @@
 - [需求文档（PRD）](docs/PRD.md)
 - [技术方案（DESIGN）](docs/DESIGN.md)
 
-## 规划中的快速开始
+## 快速开始
 
 ```bash
-mkdir -p data && openssl rand -base64 32   # 生成 KEYWAY_SECRET
-docker compose up -d                        # 默认 0.0.0.0:8080，SQLite 落在 ./data
+# 生成主密钥并写入环境
+export KEYWAY_SECRET=$(openssl rand -base64 32)
+
+docker compose up -d          # 默认 0.0.0.0:8080，SQLite 落在 ./data
+# 首个注册用户自动成为管理员
+```
+
+本地开发（不依赖 Docker）：
+
+```bash
+cd server && go run ./cmd/keyway      # 后端 :8080
+cd web && npm run dev                 # 前端 :5173（/api 代理到 8080）
+```
+
+Agent 侧一次性配置（之后零改动）：
+
+```bash
+# OpenAI 兼容客户端
+export OPENAI_BASE_URL=https://your-domain/v1
+export OPENAI_API_KEY=sk-keyway-...
+
+# Claude Code
+export ANTHROPIC_BASE_URL=https://your-domain
+export ANTHROPIC_AUTH_TOKEN=sk-keyway-...
 ```
 
 ## 核心特性（规划）
@@ -25,4 +47,4 @@ docker compose up -d                        # 默认 0.0.0.0:8080，SQLite 落�
 - 用量/费用统计（价目表估算），按用户/模型/渠道/密钥聚合
 - 飞书登录、开放注册（可邀请码制）
 
-状态：设计阶段，见 docs/。
+状态：MVP 功能全部落地（后端 + 控制台前端），飞书 OAuth 与部分管理界面表单在收尾中，见 docs/PRD.md 里程碑。

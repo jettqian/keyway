@@ -1,0 +1,26 @@
+services:
+  keyway:
+    build: .
+    image: keyway:latest
+    container_name: keyway
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      TZ: Asia/Shanghai
+      # 必填：32 字节主密钥，openssl rand -base64 32 生成
+      KEYWAY_SECRET: ${KEYWAY_SECRET:?请在 .env 或环境变量中设置 KEYWAY_SECRET}
+      # 对外地址（OAuth 回调/链接展示），如 https://keyway.example.com
+      KEYWAY_BASE_URL: ${KEYWAY_BASE_URL:-}
+      # 探测周期（分钟）
+      KEYWAY_PROBE_INTERVAL_MIN: "10"
+      # 日志保留期（天）
+      KEYWAY_LOG_RETENTION_DAYS: "30"
+    healthcheck:
+      test: ["CMD", "/app/keyway", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
