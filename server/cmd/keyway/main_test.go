@@ -303,3 +303,44 @@ func TestHealthz(t *testing.T) {
 }
 
 var _ = url.Parse
+
+func TestE2E价目表CRUD(t *testing.T) {
+	c, _ := setupApp(t)
+	c.bootstrap(t, "http://upstream.invalid")
+
+	// 新增（body 不带 model，URL 为权威）
+	w := c.do("PUT", "/api/admin/pricing/test-price-model", map[string]any{
+		"inputPerM": 0.5, "outputPerM": 2.0, "cachedInputPerM": 0.1,
+	}, true)
+	if w.Code != 200 {
+		t.Fatalf("新增价目失败: %s", w.Body.String())
+	}
+	// 读取并校验 camelCase 字段
+	w = c.do("GET", "/api/admin/pricing", nil, true)
+	var resp struct {
+		Pricing []struct {
+			Model           string   `json:"model"`
+			InputPerM       float64  `json:"inputPerM"`
+			CachedInputPerM *float64 `json:"cachedInputPerM"`
+			OutputPerM      float64  `json:"outputPerM"`
+		} `json:"pricing"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	var found bool
+	for _, p := range resp.Pricing {
+		if p.Model == "test-price-model" {
+			found = true
+			if p.InputPerM != 0.5 || p.OutputPerM != 2 || p.CachedInputPerM == nil || *p.CachedInputPerM != 0.1 {
+				t.Fatalf("价目字段错误: %+v", p)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("未找到新增价目")
+	}
+	// 删除
+	w = c.do("DELETE", "/api/admin/pricing/test-price-model", nil, true)
+	if w.Code != 200 {
+		t.Fatalf("删除价目失败: %s", w.Body.String())
+	}
+}

@@ -169,11 +169,11 @@ func (s *Server) handleAdminPricing(c *gin.Context) {
 func (s *Server) handleAdminUpdatePricing(c *gin.Context) {
 	model := c.Param("model")
 	var p store.ModelPricing
-	if err := c.BindJSON(&p); err != nil || p.Model == "" {
+	if err := c.BindJSON(&p); err != nil {
 		s.fail(c, http.StatusBadRequest, "非法请求体")
 		return
 	}
-	p.Model = model
+	p.Model = model // URL 参数为权威
 	p.UpdatedAt = time.Now().Unix()
 	s.Store.DB().Save(&p)
 	s.ok(c, gin.H{"pricing": p})

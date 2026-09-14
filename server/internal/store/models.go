@@ -144,7 +144,7 @@ type ModelPricing struct {
 	Model           string   `gorm:"column:model;primaryKey" json:"model"`
 	InputPerM       float64  `gorm:"column:input_per_m;not null" json:"inputPerM"`
 	CachedInputPerM *float64 `gorm:"column:cached_input_per_m" json:"cachedInputPerM"` // NULL 回退 input_per_m
-	CacheWritePerM  *float64 `gorm:"column:cache_write_per_m" json:"cacheWritePerM"`  // NULL 回退 input_per_m
+	CacheWritePerM  *float64 `gorm:"column:cache_write_per_m" json:"cacheWritePerM"`   // NULL 回退 input_per_m
 	OutputPerM      float64  `gorm:"column:output_per_m;not null" json:"outputPerM"`
 	Currency        string   `gorm:"column:currency;not null;default:'USD'" json:"currency"`
 	UpdatedAt       int64    `gorm:"column:updated_at" json:"updatedAt"`
