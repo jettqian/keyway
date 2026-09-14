@@ -1,11 +1,9 @@
-// keyway 入口：配置加载、存储初始化、HTTP 服务与优雅退出
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,59 +12,115 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"keyway/internal/api"
+	"keyway/internal/auth"
 	"keyway/internal/config"
+	"keyway/internal/relay"
+	"keyway/internal/routing"
 	"keyway/internal/store"
+	"keyway/internal/usage"
+	"keyway/internal/webui"
 )
 
-// shutdownTimeout 优雅退出等待上限
-const shutdownTimeout = 10 * time.Second
+// app 组装完成的应用实例
+type app struct {
+	engine *gin.Engine
+	store  *store.Store
+	stop   func()
+}
+
+// buildApp 完成全部装配（供 main 与测试复用）
+func buildApp(cfg config.Config) (*app, error) {
+	st, err := store.Open(store.Options{DataDir: cfg.DataDir})
+	if err != nil {
+		return nil, err
+	}
+
+	authSvc := auth.New(st, cfg.Secret)
+	routingSvc := routing.New(st, cfg.Secret)
+	logWriter := usage.NewWriter(st.DB())
+	apiSvc := api.New(st, cfg.Secret, authSvc)
+	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, cfg)
+
+	stopWriter := make(chan struct{})
+	writerDone := make(chan struct{})
+	go func() {
+		logWriter.Start(stopWriter)
+		close(writerDone)
+	}()
+
+	if os.Getenv("KEYWAY_DEBUG") == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+	r := gin.New()
+	r.Use(gin.Logger(), gin.Recovery())
+
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	v1 := r.Group("/v1", relaySvc.TokenAuth())
+	{
+		v1.POST("/chat/completions", relaySvc.HandleOpenAIChat)
+		v1.POST("/completions", relaySvc.HandleOpenAIPassthrough("/completions"))
+		v1.POST("/embeddings", relaySvc.HandleOpenAIPassthrough("/embeddings"))
+		v1.GET("/models", relaySvc.HandleModels)
+		v1.POST("/messages", relaySvc.HandleAnthropicMessages)
+		v1.POST("/messages/count_tokens", relaySvc.HandleAnthropicCountTokens)
+	}
+
+	apiGroup := r.Group("/api")
+	apiSvc.RegisterAuthRoutes(apiGroup)
+	sessioned := apiGroup.Group("", apiSvc.SessionAuth())
+	apiSvc.RegisterRoutes(sessioned)
+
+	webui.Register(r)
+
+	return &app{
+		engine: r,
+		store:  st,
+		stop: func() {
+			close(stopWriter)
+			select {
+			case <-writerDone:
+			case <-time.After(5 * time.Second):
+			}
+		},
+	}, nil
+}
 
 func main() {
 	cfg := config.Load()
 	if err := cfg.ValidateSecret(); err != nil {
-		fmt.Fprintln(os.Stderr, "启动失败:", err)
+		fmt.Fprintf(os.Stderr, "KEYWAY_SECRET 未配置或无效（生成：openssl rand -base64 32）：%v\n", err)
 		os.Exit(1)
 	}
-
-	st, err := store.Open(store.Options{DataDir: cfg.DataDir})
+	a, err := buildApp(cfg)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "初始化存储失败:", err)
+		fmt.Fprintf(os.Stderr, "初始化失败: %v\n", err)
 		os.Exit(1)
 	}
-	defer st.Close()
+	defer a.store.Close()
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: newRouter(),
+		Handler: a.engine,
 	}
-
 	go func() {
-		log.Printf("keyway 监听 %s（数据目录 %s）", srv.Addr, cfg.DataDir)
+		fmt.Fprintf(os.Stderr, "keyway listening on %s\n", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("HTTP 服务异常退出: %v", err)
+			fmt.Fprintf(os.Stderr, "服务异常退出: %v\n", err)
+			os.Exit(1)
 		}
 	}()
 
-	// 优雅退出：SIGINT/SIGTERM → Shutdown（等待在途请求完成）
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "优雅退出失败:", err)
+		fmt.Fprintf(os.Stderr, "优雅退出失败: %v\n", err)
 	}
-	log.Println("keyway 已退出")
-}
-
-// newRouter 构建 gin 路由（后续里程碑在 /v1、/api 挂载各服务）
-func newRouter() *gin.Engine {
-	gin.SetMode(gin.ReleaseMode)
-	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
-	return r
+	a.stop()
 }

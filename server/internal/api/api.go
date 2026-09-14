@@ -1,0 +1,227 @@
+package api
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+
+	"keyway/internal/auth"
+	"keyway/internal/store"
+)
+
+// Server 控制台 API
+type Server struct {
+	Store  *store.Store
+	Secret string
+	Auth   *auth.Service
+}
+
+func New(st *store.Store, secret string, a *auth.Service) *Server {
+	return &Server{Store: st, Secret: secret, Auth: a}
+}
+
+const sessionCookie = "keyway_session"
+
+func (s *Server) fail(c *gin.Context, status int, msg string) {
+	c.JSON(status, gin.H{"message": msg})
+}
+
+func (s *Server) ok(c *gin.Context, data any) {
+	c.JSON(http.StatusOK, data)
+}
+
+// ---------- 中间件 ----------
+
+// SessionAuth 会话鉴权（/api）
+func (s *Server) SessionAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token, err := c.Cookie(sessionCookie)
+		if err != nil || token == "" {
+			s.fail(c, http.StatusUnauthorized, "未登录")
+			c.Abort()
+			return
+		}
+		if c.Request.Method != http.MethodGet && c.GetHeader("X-Keyway-CSRF") == "" {
+			s.fail(c, http.StatusForbidden, "缺少 CSRF 头")
+			c.Abort()
+			return
+		}
+		u, err := s.Auth.UserFromSession(token)
+		if err != nil {
+			s.fail(c, http.StatusUnauthorized, err.Error())
+			c.Abort()
+			return
+		}
+		c.Set("user", u)
+		c.Set("session", token)
+		c.Next()
+	}
+}
+
+// AdminAuth 管理员鉴权
+func (s *Server) AdminAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		u := currentUser(c)
+		if u == nil || u.Role != 100 {
+			s.fail(c, http.StatusForbidden, "需要管理员权限")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func currentUser(c *gin.Context) *store.User {
+	v, _ := c.Get("user")
+	u, _ := v.(*store.User)
+	return u
+}
+
+// ---------- 认证路由 ----------
+
+func (s *Server) RegisterAuthRoutes(r *gin.RouterGroup) {
+	r.POST("/auth/register", s.handleRegister)
+	r.POST("/auth/login", s.handleLogin)
+	r.POST("/auth/logout", s.handleLogout)
+}
+
+// RegisterRoutes 会话内路由
+func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
+	r.GET("/auth/me", s.handleMe)
+	r.PUT("/auth/password", s.handleChangePassword)
+	r.GET("/auth/feishu/url", s.handleFeishuURL)
+
+	r.GET("/keys", s.handleListKeys)
+	r.POST("/keys", s.handleCreateKey)
+	r.PUT("/keys/:id", s.handleUpdateKey)
+	r.DELETE("/keys/:id", s.handleDeleteKey)
+
+	r.GET("/channels", s.handleListChannels)
+	r.POST("/channels", s.handleCreateChannel)
+	r.POST("/channels/from_template/:tid", s.handleCopyTemplate)
+	r.PUT("/channels/:id", s.handleUpdateChannel)
+	r.DELETE("/channels/:id", s.handleDeleteChannel)
+	r.POST("/channels/:id/test", s.handleTestChannel)
+
+	r.GET("/templates", s.handleListTemplates)
+
+	r.GET("/tokens", s.handleListTokens)
+	r.POST("/tokens", s.handleCreateToken)
+	r.DELETE("/tokens/:id", s.handleRevokeToken)
+
+	r.GET("/logs", s.handleLogs)
+	r.GET("/stats", s.handleStats)
+
+	admin := r.Group("/admin", s.AdminAuth())
+	{
+		admin.GET("/users", s.handleAdminUsers)
+		admin.PUT("/users/:id/status", s.handleAdminUserStatus)
+		admin.POST("/users/:id/reset_password", s.handleAdminResetPassword)
+		admin.GET("/stats", s.handleAdminStats)
+		admin.GET("/pricing", s.handleAdminPricing)
+		admin.PUT("/pricing/:model", s.handleAdminUpdatePricing)
+		admin.GET("/proxies", s.handleAdminProxies)
+		admin.GET("/templates", s.handleAdminTemplates)
+		admin.GET("/settings", s.handleAdminSettings)
+		admin.PUT("/settings", s.handleAdminUpdateSettings)
+	}
+}
+
+func (s *Server) setSessionCookie(c *gin.Context, token string) {
+	c.SetCookie(sessionCookie, token, 7*24*3600, "/", "", false, true)
+}
+
+func (s *Server) handleRegister(c *gin.Context) {
+	var req struct {
+		Username   string `json:"username"`
+		Password   string `json:"password"`
+		InviteCode string `json:"inviteCode"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		s.fail(c, http.StatusBadRequest, "非法请求体")
+		return
+	}
+	u, token, err := s.Auth.Register(req.Username, req.Password, req.InviteCode)
+	if err != nil {
+		s.fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.setSessionCookie(c, token)
+	s.ok(c, gin.H{"user": userDTO(u)})
+}
+
+func (s *Server) handleLogin(c *gin.Context) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		s.fail(c, http.StatusBadRequest, "非法请求体")
+		return
+	}
+	u, token, err := s.Auth.Login(req.Username, req.Password)
+	if err != nil {
+		s.fail(c, http.StatusUnauthorized, err.Error())
+		return
+	}
+	s.setSessionCookie(c, token)
+	s.ok(c, gin.H{"user": userDTO(u)})
+}
+
+func (s *Server) handleLogout(c *gin.Context) {
+	if token, err := c.Cookie(sessionCookie); err == nil {
+		s.Auth.Logout(token)
+	}
+	c.SetCookie(sessionCookie, "", -1, "/", "", false, true)
+	s.ok(c, gin.H{})
+}
+
+func (s *Server) handleMe(c *gin.Context) {
+	s.ok(c, gin.H{"user": userDTO(currentUser(c))})
+}
+
+func (s *Server) handleChangePassword(c *gin.Context) {
+	var req struct {
+		OldPassword string `json:"oldPassword"`
+		NewPassword string `json:"newPassword"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		s.fail(c, http.StatusBadRequest, "非法请求体")
+		return
+	}
+	if err := s.Auth.ChangePassword(currentUser(c).ID, req.OldPassword, req.NewPassword); err != nil {
+		s.fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	// 改密后吊销全部会话，要求重新登录
+	if token, err := c.Cookie(sessionCookie); err == nil {
+		s.Auth.Logout(token)
+	}
+	c.SetCookie(sessionCookie, "", -1, "/", "", false, true)
+	s.ok(c, gin.H{})
+}
+
+func (s *Server) handleFeishuURL(c *gin.Context) {
+	// 飞书 OAuth 在 M6 接入；当前返回占位
+	s.ok(c, gin.H{"url": ""})
+}
+
+func userDTO(u *store.User) gin.H {
+	dto := gin.H{
+		"id":        u.ID,
+		"username":  u.Username,
+		"role":      u.Role,
+		"status":    u.Status,
+		"hasFeishu": u.FeishuUserID != nil,
+		"createdAt": u.CreatedAt,
+	}
+	if u.LastLoginAt != nil {
+		dto["lastLoginAt"] = *u.LastLoginAt
+	}
+	return dto
+}
+
+func trimOrEmpty(s string) string {
+	return strings.TrimSpace(s)
+}
