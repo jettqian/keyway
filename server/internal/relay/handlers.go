@@ -554,15 +554,19 @@ func respondRawOrConverted(c *gin.Context, inbound string, status int, body []by
 	c.Data(status, "application/json", convert.AnthropicErrorToOpenAI(body))
 }
 
-// sniffUsage 从透传字节中嗅探 usage（尽力而为）
+// sniffUsage 从透传字节中嗅探 usage（尽力而为；兼容 SSE 行前缀）
 func sniffUsage(u convert.Usage, data []byte) convert.Usage {
-	if !bytes.Contains(data, []byte(`"usage"`)) {
+	payload := data
+	if s := strings.TrimSpace(string(data)); strings.HasPrefix(s, "data:") {
+		payload = []byte(strings.TrimSpace(strings.TrimPrefix(s, "data:")))
+	}
+	if !bytes.Contains(payload, []byte(`"usage"`)) {
 		return u
 	}
 	var probe struct {
 		Usage *convert.OpenAIUsage `json:"usage"`
 	}
-	if err := json.Unmarshal(data, &probe); err == nil && probe.Usage != nil {
+	if err := json.Unmarshal(payload, &probe); err == nil && probe.Usage != nil {
 		return convert.NormalizeOpenAIUsage(probe.Usage)
 	}
 	return u
