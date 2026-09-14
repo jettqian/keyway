@@ -1,0 +1,16 @@
+# 运行时数据（SQLite 等）
+data/
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 构建产物
+dist/
+*.db
+*.db-wal
+*.db-shm
+
+# 本地环境与密钥
+.env
+.env.*
