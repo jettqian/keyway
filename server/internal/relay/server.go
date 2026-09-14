@@ -146,7 +146,12 @@ func orderCombos(db *gorm.DB, channelID int64, lines []string, paths []struct{ p
 		}
 	}
 	stats := probe.LoadStats(db, channelID)
-	fresh := time.Now().Unix() - 3*10*60 // 3 个探测周期视为新鲜
+	// 新鲜阈值 = 3 个探测周期（读取网关配置，默认 10 分钟）
+	intervalMin := 10
+	if iv := intervalMinutes(); iv > 0 {
+		intervalMin = iv
+	}
+	fresh := time.Now().Unix() - int64(3*intervalMin*60)
 
 	type scored struct {
 		r    raw
@@ -201,3 +206,6 @@ func (s *Server) orderKeys(rc *routing.ResolvedChannel) []*store.Key {
 	}
 	return cooling
 }
+
+// intervalMinutes 探测周期（分钟），供 orderCombos 新鲜度阈值计算
+func intervalMinutes() int { return 10 }

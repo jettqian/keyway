@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -206,6 +207,18 @@ func TestE2EOpenAI透传与模型映射(t *testing.T) {
 		t.Fatalf("模型映射未生效: %v", resp["model"])
 	}
 	_ = token
+	// 耗时指标落库（FR-L1：首字节/总时长；异步批写，轮询等待）
+	var last store.Log
+	for i := 0; i < 30; i++ {
+		c.store.DB().Order("id DESC").First(&last)
+		if last.TtftMs != nil && last.TotalMs != nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if last.TtftMs == nil || *last.TtftMs < 0 || last.TotalMs == nil || *last.TotalMs <= 0 {
+		t.Fatalf("耗时指标缺失: ttft=%v total=%v", last.TtftMs, last.TotalMs)
+	}
 }
 
 func TestE2EAnthropic入站转OpenAI(t *testing.T) {

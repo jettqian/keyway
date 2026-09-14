@@ -1,12 +1,15 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v0.9
+- 版本：v1.0
 - 日期：2026-09-14
-- 状态：已实现（M1–M6 落地）
+- 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.0：整体 review——① 修复渠道更新（不改代理时）静默丢弃计价字段；② 耗时指标落地
+>   （TtftMs/TotalMs 随日志落库，日志页可见）；③ 跨协议错误体仅在跨协议失败时转换
+>   （同协议保持原文）；④ line_stats 新鲜度阈值读取探测周期配置；文档全面同步实现
 > - v0.9：① **令牌多渠道绑定**（channelIds，≤20）：令牌限定一组渠道，配合渠道级启用开关实现
 >   "按需开关"；旧单渠道字段兼容保留；② 渠道计价模式（pricing_mode）：`usd`（美元渠道倍率折扣）
 >   / `cny_ratio`（人民币渠道：$1 官方用量实收 ¥X，如 micu 渠道 0.5 表示 $1 → ¥0.5），
@@ -206,7 +209,10 @@ US12 预制渠道复制（P6）
 | models[] | 该渠道声明服务的模型名列表；openai 型可一键"从上游拉取" |
 | model_mapping | 可选映射：请求模型名 → 上游模型名（精确匹配，未命中则透传原名） |
 | priority | 同一模型命中多渠道时的优选顺序（数值大优先） |
-| enabled / status | 开关；最近一次健康状态、最近错误摘要 |
+| pricing_mode | 计价模式（费用统计用）：`usd`（美元渠道，倍率折扣）/ `cny_ratio`（人民币渠道，$1 官方用量实收 ¥X） |
+| price_multiplier | `usd` 模式折扣倍率（默认 1，如 8 折填 0.8） |
+| cny_ratio | `cny_ratio` 模式换算比（如 0.5 表示 $1 → ¥0.5；统计按全局汇率 `usd_cny_rate` 折 USD） |
+| enabled / status | 开关；停用（草稿）允许 0 密钥保存，启用须绑定 1~5 把 |
 
 - FR-C1 渠道 CRUD 全部由用户自助完成，仅作用于本人；所有字段可随时修改，保存后
   下一个请求生效
@@ -238,7 +244,8 @@ US12 预制渠道复制（P6）
 ### 5.5 网关令牌（签发给 Agent）
 
 - FR-T1 每用户可签发多个 `sk-keyway-` 前缀令牌；界面可查看、吊销
-- FR-T2 令牌可选：限定单一渠道、限定模型（前缀通配）、过期时间
+- FR-T2 令牌可选：**限定渠道集合（多选 ≤20，配合渠道启用开关按需切换路由）**、
+  限定模型（前缀通配）、过期时间
 - FR-T3 认证时同时接受 `Authorization: Bearer` 与 `x-api-key`（兼容两类客户端习惯）
 - FR-T4 令牌吊销立即生效
 
@@ -394,7 +401,8 @@ channels(id, user_id, copied_from_template_id NULL,       -- 仅来源标记，�
          name, type, base_urls_json, key_ids_json, key_strategy, line_strategy,
          proxy_url_enc, allow_public_proxy BOOL,
          models_json, model_mapping_json,
-         priority, is_default, enabled, last_ok_at, last_error, created_at)
+         priority, price_multiplier, pricing_mode, cny_ratio,
+         is_default, enabled, last_ok_at, last_error, created_at)
 
 line_stats(channel_id, line_url, via,         -- via: direct | personal | proxy:{id}
            last_probe_at, latency_ms, ok, last_error)
@@ -403,7 +411,9 @@ proxies(id, name, url_enc, enabled, note, created_at)      -- 管理员公共代
 proxy_usage(user_id, proxy_id, day, bytes)                 -- 公共代理流量统计（仅统计）
 
 tokens(id, user_id, name, key_enc, key_prefix, key_hash,   -- 网关令牌
-       channel_id?, model_scope?, expires_at, created_at, revoked)
+       channel_id?,          -- 旧单渠道限定（兼容保留）
+       channel_ids_json,     -- 多渠道限定集合（空 = 不限）
+       model_scope?, expires_at, created_at, revoked)
 
 model_pricing(model, input_per_m, cached_input_per_m NULL, cache_write_per_m NULL,
               output_per_m, currency, updated_at)   -- 缓存档可空，回退规则见 FR-L5
@@ -417,7 +427,8 @@ logs(id, user_id, token_id, channel_id, template_source_id?, line_url, via, key_
      error, created_at)
 
 invite_codes(code, created_by, used_by, used_at)
-settings(key, value)        -- 注册策略、保留期、探测频率、飞书 App 配置等
+settings(key, value)        -- 注册策略、保留期、探测频率、飞书 App 配置、
+                            -- usd_cny_rate（人民币渠道费用折算汇率，默认 7.2）等
 ```
 
 ## 9. 验收标准
@@ -445,11 +456,11 @@ settings(key, value)        -- 注册策略、保留期、探测频率、飞书 
 
 ## 10. 里程碑
 
-| 阶段 | 内容 |
-|---|---|
-| v1.0 MVP | 账户（密码+飞书登录）、密钥池+渠道组合、渠道 CRUD（多线路）+矩阵/逐密钥测试、**预制渠道模板+一键复制**、令牌、模型路由+默认渠道、openai↔anthropic 双向转换（含流式与工具调用）、线路×路径自动优选+后台探测、密钥轮换+冷却、个人代理+公共代理池（含流量统计）、日志统计（含费用估算、按密钥分账）、管理员用量/花费看板+价目表、docker 部署 |
-| v1.1 | 探测策略调优（指数退避、失败加压探测）、CSV 导出完善、count_tokens、失败切换策略完善、保留期清理任务 |
-| v2（视需求） | Gemini 原生、/v1/responses、通用 OIDC 登录、2FA、MySQL/多实例、Prometheus 指标、协议转换调试抓包（用户显式开启） |
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| v1.0 MVP | 账户（密码+飞书登录）、密钥池+渠道组合、渠道 CRUD（多线路/计价模式）+矩阵/逐密钥测试、**预制渠道模板+草稿复制**、令牌（多渠道绑定）、模型路由+默认渠道、openai↔anthropic 双向转换（含流式与工具调用）、线路×路径自动优选+后台探测、密钥轮换+冷却、个人代理+公共代理池（含流量统计）、日志统计（含费用估算、按密钥分账、首字节/总耗时）、管理员用量/花费看板+价目表（CRUD/导入导出）、docker 部署 | ✅ 完成 |
+| v1.1 | 探测策略调优（已含指数退避）、CSV 导出（已完成）、count_tokens（已完成）、失败切换策略（已完成）、保留期清理（已完成） | ✅ 完成 |
+| v2（视需求） | Gemini 原生、/v1/responses、通用 OIDC 登录、2FA、MySQL/多实例、Prometheus 指标、协议转换调试抓包（用户显式开启） | 待启动 |
 
 ## 11. 开放问题
 

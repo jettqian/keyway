@@ -284,6 +284,7 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 			"key_ids_json": ch.KeyIDsJSON, "key_strategy": ch.KeyStrategy, "line_strategy": ch.LineStrategy,
 			"allow_public_proxy": ch.AllowPublicProxy, "models_json": ch.ModelsJSON,
 			"model_mapping_json": ch.ModelMappingJSON, "priority": ch.Priority,
+			"price_multiplier": ch.PriceMultiplier, "pricing_mode": ch.PricingMode, "cny_ratio": ch.CNYRatio,
 			"is_default": ch.IsDefault, "enabled": ch.Enabled,
 		})
 	} else {

@@ -70,7 +70,7 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 					continue
 				}
 				passthroughResponse(c, resp)
-				s.submitLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, convert.Usage{})
+				s.submitLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, convert.Usage{}, 0, 0)
 				return
 			}
 		}
@@ -169,14 +169,16 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 	}
 
 	attempts := s.plan(matched, defaults)
+	reqStart := time.Now()
 	var (
-		lastStatus int
-		lastBody   []byte
-		lastErr    string
+		lastStatus     int
+		lastBody       []byte
+		lastErr        string
+		lastCrossProto bool // 最后一次失败尝试是否跨协议（决定错误体是否需要转换）
 	)
 	for _, a := range attempts {
 		upstreamModel := mapModel(a.rc.Channel, model)
-		sendBody, targetURL, dropped, _, err := s.buildUpstreamRequest(inbound, a.rc.Channel.Type, rawBody, a, upstreamModel)
+		sendBody, targetURL, dropped, cross, err := s.buildUpstreamRequest(inbound, a.rc.Channel.Type, rawBody, a, upstreamModel)
 		if err != nil {
 			respondProtocolError(c, inbound, http.StatusBadRequest, err.Error())
 			return
@@ -186,6 +188,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		resp, _, err := s.sendUpstream(a, "POST", targetURL, sendBody, stream)
 		if err != nil {
 			lastErr = err.Error()
+			lastCrossProto = cross
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
 			continue // 网络错误 → 下一组合
 		}
@@ -199,6 +202,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			s.Routing.MarkKeyError(a.key.ID, fmt.Sprintf("上游 %d", resp.StatusCode))
 			lastStatus = resp.StatusCode
 			lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			lastCrossProto = cross
 			resp.Body.Close()
 			continue
 		}
@@ -206,6 +210,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		if resp.StatusCode >= 500 {
 			lastStatus = resp.StatusCode
 			lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			lastCrossProto = cross
 			resp.Body.Close()
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, fmt.Sprintf("上游 %d", resp.StatusCode))
 			continue
@@ -217,18 +222,19 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			c.Header("X-Keyway-Dropped", strings.Join(dropped, ","))
 		}
 		var u convert.Usage
+		ttft, total := int64(0), int64(0)
 		if stream {
-			u = s.streamResponse(c, a, inbound, resp)
+			u, ttft, total = s.streamResponse(c, a, inbound, resp, reqStart)
 		} else {
-			u = s.bodyResponse(c, a, inbound, resp)
+			u, ttft, total = s.bodyResponse(c, a, inbound, resp, reqStart)
 		}
-		s.submitLog(c, a, inbound, model, upstreamModel, resp.StatusCode, u)
+		s.submitLog(c, a, inbound, model, upstreamModel, resp.StatusCode, u, ttft, total)
 		return
 	}
 
 	// 全部组合耗尽
 	if lastStatus > 0 {
-		respondRawOrConverted(c, inbound, lastStatus, lastBody)
+		respondRawOrConverted(c, inbound, lastStatus, lastBody, lastCrossProto)
 		return
 	}
 	msg := "全部上游不可达"
@@ -316,8 +322,9 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 	return resp, keyPlain, nil
 }
 
-// streamResponse 流式回写：跨协议走转换器，同协议逐行透传（flush）；公共代理统计出站字节
-func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp *http.Response) convert.Usage {
+// streamResponse 流式回写：跨协议走转换器，同协议逐行透传（flush）；公共代理统计出站字节。
+// 返回 usage、首字节耗时（自请求开始到首个写出块）、总耗时
+func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time) (convert.Usage, int64, int64) {
 	channelType := a.rc.Channel.Type
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -341,10 +348,17 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 	var lineBuf []byte
 	var u convert.Usage
 	var totalBytes int64
+	ttft := int64(0)
+	markTTFT := func() {
+		if ttft == 0 {
+			ttft = time.Since(reqStart).Milliseconds()
+		}
+	}
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			totalBytes += int64(n)
+			markTTFT()
 			lineBuf = append(lineBuf, buf[:n]...)
 			for {
 				idx := bytes.IndexByte(lineBuf, '\n')
@@ -353,12 +367,12 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 				}
 				line := lineBuf[:idx+1]
 				lineBuf = lineBuf[idx+1:]
-				s.writeStreamLine(c, flusher, conv, line, &u)
+				s.writeStreamLine(c, flusher, conv, line, &u, markTTFT)
 			}
 		}
 		if readErr != nil {
 			if len(lineBuf) > 0 {
-				s.writeStreamLine(c, flusher, conv, lineBuf, &u)
+				s.writeStreamLine(c, flusher, conv, lineBuf, &u, markTTFT)
 			}
 			if conv != nil {
 				if out, err := conv.Finish(); err == nil && len(out) > 0 {
@@ -376,30 +390,34 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 			s.PM.Record(user.ID, a.proxyID, totalBytes)
 		}
 	}
-	return u
+	total := time.Since(reqStart).Milliseconds()
+	return u, ttft, total
 }
 
 func (s *Server) writeStreamLine(c *gin.Context, w io.Writer, conv interface {
 	Feed([]byte) ([]byte, bool, error)
 	Finish() ([]byte, error)
 	Usage() convert.Usage
-}, line []byte, u *convert.Usage) {
+}, line []byte, u *convert.Usage, markTTFT func()) {
 	if conv != nil {
 		out, _, err := conv.Feed(line)
 		if err == nil && len(out) > 0 {
+			markTTFT()
 			w.Write(out)
 			c.Writer.Flush()
 		}
 		return
 	}
 	// 同协议透传，并嗅探 usage
+	markTTFT()
 	*u = sniffUsage(*u, line)
 	w.Write(line)
 	c.Writer.Flush()
 }
 
-// bodyResponse 非流式回写：跨协议转换响应体；公共代理统计出站字节
-func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *http.Response) convert.Usage {
+// bodyResponse 非流式回写：跨协议转换响应体；公共代理统计出站字节。
+// 返回 usage、首字节耗时（自请求开始到开始写出）、总耗时
+func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time) (convert.Usage, int64, int64) {
 	channelType := a.rc.Channel.Type
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
 	resp.Body.Close()
@@ -408,6 +426,7 @@ func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *h
 			s.PM.Record(user.ID, a.proxyID, int64(len(body)))
 		}
 	}
+	ttft := time.Since(reqStart).Milliseconds()
 
 	if inbound == "openai" && channelType == "anthropic" {
 		var an convert.AnthropicMessagesResponse
@@ -416,7 +435,7 @@ func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *h
 			oi := convert.AnthropicToOpenAIResponse(&an)
 			oi.Model = modelFromUpstream(body)
 			c.Data(resp.StatusCode, "application/json", mustJSON(oi))
-			return u
+			return u, ttft, time.Since(reqStart).Milliseconds()
 		}
 	} else if inbound == "anthropic" && channelType == "openai" {
 		var oi convert.OpenAIChatResponse
@@ -424,13 +443,13 @@ func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *h
 			u := convert.NormalizeOpenAIUsage(oi.Usage)
 			an := convert.OpenAIToAnthropicResponse(&oi)
 			c.Data(resp.StatusCode, "application/json", mustJSON(an))
-			return u
+			return u, ttft, time.Since(reqStart).Milliseconds()
 		}
 	}
 	// 同协议或转换失败：原样透传
 	u := sniffUsage(convert.Usage{}, body)
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
-	return u
+	return u, ttft, time.Since(reqStart).Milliseconds()
 }
 
 // ---------- 辅助 ----------
@@ -452,8 +471,8 @@ func (s *Server) planFor(rc *routing.ResolvedChannel) []attempt {
 	return s.plan([]*routing.ResolvedChannel{rc}, nil)
 }
 
-// submitLog 异步记录日志（含费用快照）
-func (s *Server) submitLog(c *gin.Context, a attempt, inbound, model, upstreamModel string, statusCode int, u convert.Usage) {
+// submitLog 异步记录日志（含费用快照与耗时）
+func (s *Server) submitLog(c *gin.Context, a attempt, inbound, model, upstreamModel string, statusCode int, u convert.Usage, ttftMs, totalMs int64) {
 	token, user := ctxTokenUser(c)
 	if a.rc.Channel == nil {
 		return
@@ -478,7 +497,8 @@ func (s *Server) submitLog(c *gin.Context, a attempt, inbound, model, upstreamMo
 		Model:            &model,
 		UpstreamModel:    &upstreamModel,
 		StatusCode:       &statusCode,
-		TotalMs:          nil,
+		TotalMs:          &totalMs,
+		TtftMs:           &ttftMs,
 		PromptTokens:     int64p(u.PromptTokens),
 		CompletionTokens: int64p(u.CompletionTokens),
 		CachedTokens:     int64p(u.CachedTokens),
@@ -546,17 +566,21 @@ func respondProtocolError(c *gin.Context, inbound string, status int, msg string
 	respondOpenAIError(c, status, msg)
 }
 
-// respondRawOrConverted 上游错误透传（跨协议时转换错误结构）
-func respondRawOrConverted(c *gin.Context, inbound string, status int, body []byte) {
+// respondRawOrConverted 上游错误透传（跨协议失败时才转换错误结构，同协议保持原文）
+func respondRawOrConverted(c *gin.Context, inbound string, status int, body []byte, crossProto bool) {
 	if len(body) == 0 {
 		respondProtocolError(c, inbound, status, "上游错误（无响应体）")
 		return
 	}
-	if inbound == "anthropic" {
-		c.Data(status, "application/json", convert.OpenAIErrorToAnthropic(body))
+	if crossProto {
+		if inbound == "anthropic" {
+			c.Data(status, "application/json", convert.OpenAIErrorToAnthropic(body))
+			return
+		}
+		c.Data(status, "application/json", convert.AnthropicErrorToOpenAI(body))
 		return
 	}
-	c.Data(status, "application/json", convert.AnthropicErrorToOpenAI(body))
+	c.Data(status, "application/json", body)
 }
 
 // sniffUsage 从透传字节中嗅探 usage（尽力而为；兼容 SSE 行前缀）

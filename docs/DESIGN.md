@@ -1,6 +1,6 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.1（与 PRD v0.7 对应；新增缓存计价与 usage 归一化设计）
+- 版本：v1.2（与 PRD v1.0 对应；整体 review 后文档同步实现）
 - 日期：2026-09-14
 - 关联文档：docs/PRD.md
 - 本文档解决：架构、技术选型、数据模型落地、核心机制设计、协议转换决策表（PRD 开放
@@ -121,6 +121,9 @@ CREATE TABLE channels (
   allow_public_proxy INTEGER NOT NULL DEFAULT 0,
   models_json TEXT NOT NULL, model_mapping_json TEXT DEFAULT '{}',
   priority INTEGER NOT NULL DEFAULT 0,
+  price_multiplier REAL NOT NULL DEFAULT 1,   -- usd 模式折扣倍率
+  pricing_mode TEXT NOT NULL DEFAULT 'usd',   -- usd | cny_ratio
+  cny_ratio REAL NOT NULL DEFAULT 0,          -- cny_ratio 模式：$1 官方用量实收 ¥X
   is_default INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   last_ok_at INTEGER, last_error TEXT, created_at INTEGER
@@ -150,7 +153,8 @@ CREATE TABLE tokens (                      -- 网关令牌
   key_enc BLOB NOT NULL,                   -- 全文加密（支持界面回看）
   key_prefix TEXT NOT NULL,                -- 展示与日志用
   key_hash TEXT NOT NULL UNIQUE,           -- sha256，认证 O(1) 查找
-  channel_id INTEGER,                      -- 限定渠道（可空）
+  channel_id INTEGER,                      -- 旧单渠道限定（兼容保留）
+  channel_ids_json TEXT DEFAULT '',        -- 多渠道限定集合（空 = 不限，≤20）
   model_scope TEXT,                        -- 模型前缀通配（可空）
   expires_at INTEGER, revoked INTEGER NOT NULL DEFAULT 0, created_at INTEGER
 );
@@ -391,20 +395,26 @@ new-api 的已知语义（仅参考行为，代码自研）。
   宁缺日志不断流）
 - 失败请求也记录（status_code + error）
 
-### 8.2 费用快照（FR-L5，含缓存计价）
+### 8.2 费用快照（FR-L5，含缓存计价与渠道计价模式）
 
 - 写日志时查 model_pricing（内存缓存，编辑后失效）：`upstream_model`（映射后）优先，
   回退入站 model
-- 公式（token 归一化后）：
+- 基础公式（token 归一化后，官方 USD 价）：
   ```
-  input_cost  = (prompt_tokens − cached_tokens − cache_write_tokens) ÷ 1M × input_per_m
-               + cached_tokens      ÷ 1M × cached_input_per_m
-               + cache_write_tokens ÷ 1M × cache_write_per_m
-  output_cost = completion_tokens ÷ 1M × output_per_m
+  base_input  = (prompt_tokens − cached_tokens − cache_write_tokens) ÷ 1M × input_per_m
+              + cached_tokens      ÷ 1M × cached_input_per_m
+              + cache_write_tokens ÷ 1M × cache_write_per_m
+  base_output = completion_tokens ÷ 1M × output_per_m
   ```
+- 渠道计价模式（v0.9）：
+  - `pricing_mode = usd`（默认）：`cost = base × price_multiplier`（美元渠道折扣）
+  - `pricing_mode = cny_ratio`：`cost = base × cny_ratio ÷ usd_cny_rate`
+    （人民币渠道：$1 官方用量实收 ¥cny_ratio，如 micu 渠道 0.5 表示 $1 → ¥0.5；
+    汇率 `settings.usd_cny_rate` 默认 7.2，管理员可改）
 - 缓存档回退：`cached_input_per_m` 为 NULL → 取 `input_per_m`；`cache_write_per_m`
   为 NULL → 取 `input_per_m`（Anthropic 实际 1.25×，在价目中显式配置）
 - 未命中价目 → 费用 NULL；统计页区分"已定价/未定价"两档展示
+- 耗时指标（v1.0）：`ttft_ms`（请求开始到首个写出块）、`total_ms` 随日志落库
 
 ### 8.2.1 usage 与缓存 token 归一化（转换/透传通用）
 
@@ -518,16 +528,18 @@ GET /oauth/feishu/callback?code&state
 
 ## 15. 实施计划（里程碑）
 
-| 阶段 | 内容 | 验收（PRD） |
-|---|---|---|
-| M1 骨架 | 项目脚手架、配置、DB 迁移、用户/会话/注册、渠道与密钥池 CRUD、令牌签发、透传转发（同协议）+ 流式、异步日志 | A1 A2 A5(部分) A6 A8 A10 |
-| M2 协议转换 | 双向转换器 + 流式事件映射 + 金样本回归、count_tokens、/v1/models 双格式 | A4 |
-| M3 优选与切换 | 探测器、line_stats、attempt plan、失败切换、key 轮换冷却、测试按钮 | A9 A11 A15 A16 |
-| M4 代理与模板 | proxyman（个人+公共池）、流量统计、预制模板 CRUD+复制 | A3 A12 A17 A18 |
-| M5 观测 | 价目表、费用快照、统计页、CSV、管理员用户管理 | A14 |
-| M6 准入与收尾 | 飞书 OAuth、邀请码、保留期清理、docker 化、README、压测 | A13 A7 |
+| 阶段 | 内容 | 验收（PRD） | 状态 |
+|---|---|---|---|
+| M1 骨架 | 项目脚手架、配置、DB 迁移、用户/会话/注册、渠道与密钥池 CRUD、令牌签发、透传转发（同协议）+ 流式、异步日志 | A1 A2 A5(部分) A6 A8 A10 | ✅ |
+| M2 协议转换 | 双向转换器 + 流式事件映射 + 金样本回归、count_tokens、/v1/models 双格式 | A4 | ✅ |
+| M3 优选与切换 | 探测器、line_stats、attempt plan、失败切换、key 轮换冷却、测试按钮 | A9 A11 A15 A16 | ✅ |
+| M4 代理与模板 | proxyman（个人+公共池）、流量统计、预制模板 CRUD+草稿复制 | A3 A12 A17 A18 | ✅ |
+| M5 观测 | 价目表（CRUD/导入导出）、费用快照（计价模式/汇率）、统计页、CSV、管理员用户管理 | A14 | ✅ |
+| M6 准入与收尾 | 飞书 OAuth、邀请码、保留期清理、docker 化、README | A13 | ✅ |
+| 迭代 | 渠道计价模式、令牌多渠道绑定、耗时指标（A7 压测除外均完成） | — | ✅ |
 
 每阶段完成标准：对应验收项自测通过 + 单元/金样本测试全绿 + gofmt/go vet 干净。
+（A7 压测未执行，属运维验证项，部署后按需进行。）
 
 ## 16. 风险与对策
 
