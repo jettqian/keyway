@@ -1,0 +1,36 @@
+{
+  "model": "claude-3-5-sonnet",
+  "max_tokens": 512,
+  "system": [
+    { "type": "text", "text": "系统提示", "cache_control": { "type": "ephemeral" } }
+  ],
+  "metadata": { "user_id": "user-1" },
+  "stop_sequences": ["END"],
+  "temperature": 0.3,
+  "stream": true,
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "查询指定城市的天气",
+      "input_schema": {
+        "type": "object",
+        "properties": { "city": { "type": "string" } },
+        "required": ["city"]
+      }
+    }
+  ],
+  "tool_choice": { "type": "auto" },
+  "messages": [
+    { "role": "user", "content": [
+      { "type": "text", "text": "北京今天天气怎么样？" }
+    ] },
+    { "role": "assistant", "content": [
+      { "type": "thinking", "thinking": "需要调用天气工具", "signature": "sig" },
+      { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "北京" } }
+    ] },
+    { "role": "user", "content": [
+      { "type": "tool_result", "tool_use_id": "call_1", "content": "晴，26 度" },
+      { "type": "text", "text": "给点出行建议" }
+    ] }
+  ]
+}

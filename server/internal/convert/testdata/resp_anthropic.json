@@ -1,0 +1,18 @@
+{
+  "id": "msg_01ABC",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-3-5-sonnet",
+  "content": [
+    { "type": "thinking", "thinking": "先查天气", "signature": "sig1" },
+    { "type": "text", "text": "北京今天晴" },
+    { "type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": { "city": "北京" } }
+  ],
+  "stop_reason": "tool_use",
+  "usage": {
+    "input_tokens": 100,
+    "cache_creation_input_tokens": 20,
+    "cache_read_input_tokens": 50,
+    "output_tokens": 80
+  }
+}
