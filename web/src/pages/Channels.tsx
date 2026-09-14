@@ -31,6 +31,7 @@ const emptyInput: ChannelInput = {
   models: [],
   modelMapping: {},
   priority: 0,
+  priceMultiplier: 1,
   isDefault: false,
   enabled: true,
 }
@@ -79,6 +80,7 @@ const ChannelsPage: React.FC = () => {
       models: c.models,
       modelMapping: Object.entries(c.modelMapping).map(([from, to]) => ({ from, to })),
       priority: c.priority,
+      priceMultiplier: c.priceMultiplier ?? 1,
       isDefault: c.isDefault,
       enabled: c.enabled,
     })
@@ -103,6 +105,7 @@ const ChannelsPage: React.FC = () => {
       models: v.models || [],
       modelMapping: mapping,
       priority: v.priority,
+      priceMultiplier: v.priceMultiplier || 1,
       isDefault: v.isDefault,
       enabled: v.enabled,
     }
@@ -292,6 +295,14 @@ const ChannelsPage: React.FC = () => {
           <Space size="large">
             <Form.Item name="priority" label="优先级（大者优先）">
               <InputNumber />
+            </Form.Item>
+            <Form.Item
+              name="priceMultiplier"
+              label="价格倍率（费用统计用）"
+              extra="渠道优惠填折扣，如 5 折填 0.5；不影响上游真实计费"
+              initialValue={1}
+            >
+              <InputNumber min={0} step={0.05} style={{ width: 110 }} />
             </Form.Item>
             <Form.Item name="isDefault" label="设为默认渠道" valuePropName="checked">
               <Switch />

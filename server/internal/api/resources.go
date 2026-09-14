@@ -125,6 +125,7 @@ type channelInput struct {
 	Models           []string          `json:"models"`
 	ModelMapping     map[string]string `json:"modelMapping"`
 	Priority         int               `json:"priority"`
+	PriceMultiplier  float64           `json:"priceMultiplier"`
 	IsDefault        bool              `json:"isDefault"`
 	Enabled          bool              `json:"enabled"`
 }
@@ -139,14 +140,22 @@ func (s *Server) validateChannel(in *channelInput) string {
 	if n := len(nonEmpty(in.BaseURLs)); n < 1 || n > 5 {
 		return "线路数量须为 1~5"
 	}
-	if len(in.KeyIDs) < 1 || len(in.KeyIDs) > 5 {
-		return "绑定密钥数量须为 1~5"
+	// 启用中的渠道必须绑定密钥；草稿（停用）允许 0 把，便于先建后绑
+	if in.Enabled {
+		if len(in.KeyIDs) < 1 || len(in.KeyIDs) > 5 {
+			return "启用中的渠道须绑定 1~5 把密钥（停用状态可作为草稿保存）"
+		}
+	} else if len(in.KeyIDs) > 5 {
+		return "绑定密钥数量须为 0~5"
 	}
 	if in.KeyStrategy == "" {
 		in.KeyStrategy = "ordered"
 	}
 	if in.LineStrategy == "" {
 		in.LineStrategy = "auto"
+	}
+	if in.PriceMultiplier < 0 {
+		return "价格倍率不能为负"
 	}
 	return ""
 }
@@ -156,6 +165,9 @@ func (s *Server) applyChannelInput(ch *store.Channel, in *channelInput, copyFrom
 	ch.Type = in.Type
 	urls := nonEmpty(in.BaseURLs)
 	ch.BaseURLsJSON = string(mustJSONStr(urls))
+	if in.KeyIDs == nil {
+		in.KeyIDs = []int64{}
+	}
 	ch.KeyIDsJSON = string(mustJSONStr(in.KeyIDs))
 	ch.KeyStrategy = in.KeyStrategy
 	ch.LineStrategy = in.LineStrategy
@@ -163,6 +175,11 @@ func (s *Server) applyChannelInput(ch *store.Channel, in *channelInput, copyFrom
 	ch.ModelsJSON = string(mustJSONStr(nonEmpty(in.Models)))
 	ch.ModelMappingJSON = string(mustJSONStr(in.ModelMapping))
 	ch.Priority = in.Priority
+	if in.PriceMultiplier > 0 {
+		ch.PriceMultiplier = in.PriceMultiplier
+	} else {
+		ch.PriceMultiplier = 1
+	}
 	ch.IsDefault = boolToInt(in.IsDefault)
 	ch.Enabled = boolToInt(in.Enabled)
 	if copyFrom != nil {
@@ -199,7 +216,7 @@ func (s *Server) handleCreateChannel(c *gin.Context) {
 		return
 	}
 	// 校验密钥归属
-	if !s.ownsKeys(currentUser(c).ID, in.KeyIDs) {
+	if len(in.KeyIDs) > 0 && !s.ownsKeys(currentUser(c).ID, in.KeyIDs) {
 		s.fail(c, http.StatusBadRequest, "包含不属于你的密钥")
 		return
 	}
@@ -234,7 +251,7 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, msg)
 		return
 	}
-	if !s.ownsKeys(currentUser(c).ID, in.KeyIDs) {
+	if len(in.KeyIDs) > 0 && !s.ownsKeys(currentUser(c).ID, in.KeyIDs) {
 		s.fail(c, http.StatusBadRequest, "包含不属于你的密钥")
 		return
 	}
@@ -318,30 +335,34 @@ func (s *Server) handleCopyTemplate(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, "模板线路配置无效")
 		return
 	}
-	// 密钥留空由用户绑定：临时取用户第一把可用密钥，无则创建失败提示
-	var firstKey store.Key
-	if err := s.Store.DB().Where("user_id = ? AND status = 1", currentUser(c).ID).First(&firstKey).Error; err != nil {
-		s.fail(c, http.StatusBadRequest, "请先在密钥池创建至少一把上游密钥再复制模板")
+	// 复制为草稿：不绑定密钥、不启用，用户编辑绑定密钥后再启用。
+	// 用 map 显式列值创建，绕过 GORM 对带 default 标签零值字段的跳过（Enabled=0 会被 default:1 覆盖）
+	userID := currentUser(c).ID
+	if err := s.Store.DB().Model(&store.Channel{}).Create(map[string]any{
+		"user_id":                 userID,
+		"copied_from_template_id": tpl.ID,
+		"name":                    tpl.Name,
+		"type":                    tpl.Type,
+		"base_urls_json":          tpl.BaseURLsJSON,
+		"key_ids_json":            "[]",
+		"key_strategy":            "ordered",
+		"line_strategy":           tpl.LineStrategy,
+		"allow_public_proxy":      tpl.AllowPublicProxyDefault,
+		"models_json":             tpl.ModelsJSON,
+		"model_mapping_json":      tpl.ModelMappingJSON,
+		"priority":                tpl.PriorityDefault,
+		"price_multiplier":        1,
+		"is_default":              0,
+		"enabled":                 0,
+		"created_at":              time.Now().Unix(),
+	}).Error; err != nil {
+		s.fail(c, http.StatusInternalServerError, "复制失败")
 		return
 	}
-	ch := store.Channel{
-		UserID:               currentUser(c).ID,
-		CopiedFromTemplateID: &tpl.ID,
-		Name:                 tpl.Name,
-		Type:                 tpl.Type,
-		BaseURLsJSON:         tpl.BaseURLsJSON,
-		KeyIDsJSON:           string(mustJSONStr([]int64{firstKey.ID})),
-		KeyStrategy:          "ordered",
-		LineStrategy:         tpl.LineStrategy,
-		AllowPublicProxy:     tpl.AllowPublicProxyDefault,
-		ModelsJSON:           tpl.ModelsJSON,
-		ModelMappingJSON:     tpl.ModelMappingJSON,
-		Priority:             tpl.PriorityDefault,
-		Enabled:              1,
-		CreatedAt:            time.Now().Unix(),
-	}
-	if err := s.Store.DB().Create(&ch).Error; err != nil {
-		s.fail(c, http.StatusInternalServerError, "复制失败")
+	var ch store.Channel
+	if err := s.Store.DB().Where("user_id = ? AND copied_from_template_id = ?", userID, tpl.ID).
+		Order("id DESC").First(&ch).Error; err != nil {
+		s.fail(c, http.StatusInternalServerError, "回读草稿失败")
 		return
 	}
 	s.Store.DB().Model(&tpl).UpdateColumn("copy_count", tpl.CopyCount+1)
@@ -493,8 +514,9 @@ func channelDTO(ch *store.Channel) gin.H {
 		"hasPersonalProxy": ch.ProxyURLEnc != nil,
 		"allowPublicProxy": ch.AllowPublicProxy == 1,
 		"models":           models, "modelMapping": mapping,
-		"priority": ch.Priority, "isDefault": ch.IsDefault == 1,
-		"enabled": ch.Enabled == 1, "createdAt": ch.CreatedAt,
+		"priority": ch.Priority, "priceMultiplier": ch.PriceMultiplier,
+		"isDefault": ch.IsDefault == 1,
+		"enabled":   ch.Enabled == 1, "createdAt": ch.CreatedAt,
 	}
 	if ch.CopiedFromTemplateID != nil {
 		dto["copiedFromTemplateId"] = *ch.CopiedFromTemplateID

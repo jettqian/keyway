@@ -37,6 +37,7 @@ export interface Channel {
   models: string[]
   modelMapping: Record<string, string>
   priority: number
+  priceMultiplier?: number
   isDefault: boolean
   enabled: boolean
   copiedFromTemplateId?: number
@@ -56,6 +57,7 @@ export interface ChannelInput {
   models: string[]
   modelMapping: Record<string, string>
   priority: number
+  priceMultiplier?: number
   isDefault: boolean
   enabled: boolean
 }

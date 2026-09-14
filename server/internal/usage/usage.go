@@ -81,8 +81,12 @@ func (w *Writer) Dropped() int64 {
 
 // ---------- 费用快照（DESIGN §8.2）----------
 
-// ComputeCost 按价目表快照计算费用；未定价返回 (nil, nil)
-func ComputeCost(db *gorm.DB, model, upstreamModel string, u convert.Usage) (inputCost, outputCost *float64) {
+// ComputeCost 按价目表快照计算费用；multiplier 为渠道价格倍率（默认 1）；
+// 未定价返回 (nil, nil)
+func ComputeCost(db *gorm.DB, model, upstreamModel string, multiplier float64, u convert.Usage) (inputCost, outputCost *float64) {
+	if multiplier <= 0 {
+		multiplier = 1
+	}
 	name := upstreamModel
 	if name == "" {
 		name = model
@@ -106,10 +110,10 @@ func ComputeCost(db *gorm.DB, model, upstreamModel string, u convert.Usage) (inp
 	if plain < 0 {
 		plain = 0
 	}
-	ic := plain*p.InputPerM +
+	ic := (plain*p.InputPerM +
 		float64(u.CachedTokens)/1e6*cachedInput +
-		float64(u.CacheWriteTokens)/1e6*cacheWrite
-	oc := float64(u.CompletionTokens) / 1e6 * p.OutputPerM
+		float64(u.CacheWriteTokens)/1e6*cacheWrite) * multiplier
+	oc := float64(u.CompletionTokens) / 1e6 * p.OutputPerM * multiplier
 	return &ic, &oc
 }
 

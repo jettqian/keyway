@@ -177,23 +177,39 @@ func TestE2E管理员模板CRUD与复制(t *testing.T) {
 		t.Fatalf("用户侧模板不可见: %s", w.Body.String())
 	}
 
-	// 复制模板（需先有密钥）
-	if w := c.do("POST", "/api/keys", map[string]any{"name": "k1", "value": "upstream-key"}, true); w.Code != 200 {
-		t.Fatal("建密钥失败")
-	}
+	// 复制模板：草稿（无密钥、停用），无需先建密钥
 	w = c.do("POST", "/api/channels/from_template/1", nil, true)
 	if w.Code != 200 {
 		t.Fatalf("复制模板失败: %s", w.Body.String())
 	}
 	var copyResp struct {
 		Channel struct {
-			ID   int64  `json:"id"`
-			Name string `json:"name"`
+			ID      int64   `json:"id"`
+			Name    string  `json:"name"`
+			KeyIDs  []int64 `json:"keyIds"`
+			Enabled bool    `json:"enabled"`
 		} `json:"channel"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &copyResp)
 	if copyResp.Channel.Name != "官方 OpenAI" {
 		t.Fatalf("复制渠道名异常: %s", w.Body.String())
+	}
+	if len(copyResp.Channel.KeyIDs) != 0 || copyResp.Channel.Enabled {
+		t.Fatalf("复制应为无密钥的停用草稿: %s", w.Body.String())
+	}
+	// 草稿不参与路由：该模型请求仍应 404（未配置其他渠道）
+	if w := c.do("POST", "/api/tokens", map[string]any{"name": "t1"}, true); w.Code != 200 {
+		t.Fatal("签令牌失败")
+	} else {
+		var tokResp struct {
+			Plaintext string `json:"plaintext"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &tokResp)
+		c.token = tokResp.Plaintext
+	}
+	w = c.do("POST", "/v1/chat/completions", map[string]any{"model": "tpl-model"}, false)
+	if w.Code != 404 {
+		t.Fatalf("草稿不应参与路由: %d", w.Code)
 	}
 
 	// 模板停用后不再接受新复制，但不影响已复制渠道

@@ -459,7 +459,11 @@ func (s *Server) submitLog(c *gin.Context, a attempt, inbound, model, upstreamMo
 		return
 	}
 	now := time.Now().Unix()
-	ic, oc := usage.ComputeCost(s.Store.DB(), model, upstreamModel, u)
+	multiplier := a.rc.Channel.PriceMultiplier
+	if multiplier <= 0 {
+		multiplier = 1
+	}
+	ic, oc := usage.ComputeCost(s.Store.DB(), model, upstreamModel, multiplier, u)
 	l := &store.Log{
 		CreatedAt:        now,
 		UserID:           user.ID,

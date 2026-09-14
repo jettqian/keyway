@@ -181,7 +181,7 @@ func (s *Server) handleAdminUpdatePricing(c *gin.Context) {
 
 func (s *Server) handleAdminDeletePricing(c *gin.Context) {
 	model := c.Param("model")
-	if err := s.Store.DB().Delete(&store.ModelPricing{}, model).Error; err != nil {
+	if err := s.Store.DB().Where("model = ?", model).Delete(&store.ModelPricing{}).Error; err != nil {
 		s.fail(c, http.StatusInternalServerError, "删除失败: "+err.Error())
 		return
 	}

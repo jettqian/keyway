@@ -78,6 +78,7 @@ type Channel struct {
 	ModelsJSON           string  `gorm:"column:models_json;not null"`
 	ModelMappingJSON     string  `gorm:"column:model_mapping_json;default:'{}'"`
 	Priority             int     `gorm:"column:priority;not null;default:0"`
+	PriceMultiplier      float64 `gorm:"column:price_multiplier;not null;default:1"` // 渠道价格倍率（优惠渠道 <1）
 	IsDefault            int     `gorm:"column:is_default;not null;default:0"`
 	Enabled              int     `gorm:"column:enabled;not null;default:1;index:idx_channels_user,priority:2"`
 	LastOkAt             *int64  `gorm:"column:last_ok_at"`
