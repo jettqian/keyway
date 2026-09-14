@@ -38,6 +38,8 @@ export interface Channel {
   modelMapping: Record<string, string>
   priority: number
   priceMultiplier?: number
+  pricingMode?: 'usd' | 'cny_ratio'
+  cnyRatio?: number
   isDefault: boolean
   enabled: boolean
   copiedFromTemplateId?: number
@@ -58,6 +60,8 @@ export interface ChannelInput {
   modelMapping: Record<string, string>
   priority: number
   priceMultiplier?: number
+  pricingMode?: 'usd' | 'cny_ratio'
+  cnyRatio?: number
   isDefault: boolean
   enabled: boolean
 }
@@ -83,6 +87,7 @@ export interface GatewayToken {
   name: string
   keyPrefix: string
   channelId?: number
+  channelIds?: number[]
   modelScope?: string
   expiresAt?: string
   revoked: boolean
@@ -174,6 +179,7 @@ export interface AdminSettings {
   feishuAppSecret?: string
   feishuHasSecret?: boolean
   feishuBaseUrl?: string
+  exchangeRate?: number
 }
 
 export interface PublicInfo {

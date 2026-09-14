@@ -30,7 +30,7 @@ const TokensPage: React.FC = () => {
     try {
       const r = await createToken({
         name: v.name,
-        channelId: v.channelId,
+        channelIds: v.channelIds,
         modelScope: v.modelScope,
         expiresAt: v.expiresAt?.toISOString(),
       })
@@ -59,8 +59,14 @@ const TokensPage: React.FC = () => {
           { title: '前缀', dataIndex: 'keyPrefix' },
           {
             title: '限定渠道',
-            dataIndex: 'channelId',
-            render: (id?: number) => channels.find((c) => c.id === id)?.name ?? '不限',
+            dataIndex: 'channelIds',
+            render: (_: number[] | undefined, t: GatewayToken) => {
+              const ids = t.channelIds ?? (t.channelId ? [t.channelId] : [])
+              if (ids.length === 0) return '不限'
+              return ids
+                .map((id) => channels.find((c) => c.id === id)?.name ?? `#${id}`)
+                .join('、')
+            },
           },
           { title: '模型范围', dataIndex: 'modelScope', render: (v?: string) => v ?? '不限' },
           { title: '过期时间', dataIndex: 'expiresAt', render: (v?: string) => v ?? '永不过期' },
@@ -93,11 +99,12 @@ const TokensPage: React.FC = () => {
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="如 claude-code" />
           </Form.Item>
-          <Form.Item name="channelId" label="限定渠道（可选）">
+          <Form.Item name="channelIds" label="限定渠道（可多选，按需开关渠道）">
             <Select
+              mode="multiple"
               allowClear
               options={channels.map((c) => ({ value: c.id, label: c.name }))}
-              placeholder="不限定"
+              placeholder="不限定则路由到所有启用渠道"
             />
           </Form.Item>
           <Form.Item name="modelScope" label="模型范围（前缀通配，可选）">

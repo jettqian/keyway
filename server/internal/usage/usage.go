@@ -2,6 +2,7 @@ package usage
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -81,11 +82,18 @@ func (w *Writer) Dropped() int64 {
 
 // ---------- 费用快照（DESIGN §8.2）----------
 
-// ComputeCost 按价目表快照计算费用；multiplier 为渠道价格倍率（默认 1）；
+// ComputeCost 按价目表快照计算费用；渠道计价模式：
+//   - "usd"（默认）：费用 = 官方 USD 价 × multiplier（美元渠道折扣）
+//   - "cny_ratio"：渠道按人民币计价（$1 官方用量实收 cnyRatio 元），如 0.5 表示 $1 → ¥0.5；
+//     统计 USD 费用 = 官方价 × cnyRatio ÷ 汇率（settings.usd_cny_rate，默认 7.2）
+//
 // 未定价返回 (nil, nil)
-func ComputeCost(db *gorm.DB, model, upstreamModel string, multiplier float64, u convert.Usage) (inputCost, outputCost *float64) {
+func ComputeCost(db *gorm.DB, model, upstreamModel, pricingMode string, multiplier, cnyRatio float64, u convert.Usage) (inputCost, outputCost *float64) {
 	if multiplier <= 0 {
 		multiplier = 1
+	}
+	if pricingMode != "cny_ratio" {
+		pricingMode = "usd"
 	}
 	name := upstreamModel
 	if name == "" {
@@ -110,11 +118,34 @@ func ComputeCost(db *gorm.DB, model, upstreamModel string, multiplier float64, u
 	if plain < 0 {
 		plain = 0
 	}
-	ic := (plain*p.InputPerM +
+	ic := plain*p.InputPerM +
 		float64(u.CachedTokens)/1e6*cachedInput +
-		float64(u.CacheWriteTokens)/1e6*cacheWrite) * multiplier
-	oc := float64(u.CompletionTokens) / 1e6 * p.OutputPerM * multiplier
+		float64(u.CacheWriteTokens)/1e6*cacheWrite
+	oc := float64(u.CompletionTokens) / 1e6 * p.OutputPerM
+	if pricingMode == "cny_ratio" {
+		if cnyRatio <= 0 {
+			cnyRatio = 7.2 // 兜底：按官方等价
+		}
+		rate := usdCNYRate(db)
+		ic = ic * cnyRatio / rate
+		oc = oc * cnyRatio / rate
+	} else {
+		ic *= multiplier
+		oc *= multiplier
+	}
 	return &ic, &oc
+}
+
+// usdCNYRate 全局美元兑人民币汇率（settings.usd_cny_rate，默认 7.2）
+func usdCNYRate(db *gorm.DB) float64 {
+	var setting store.Setting
+	if err := db.Where("`key` = ?", "usd_cny_rate").First(&setting).Error; err != nil {
+		return 7.2
+	}
+	if v, err := strconv.ParseFloat(setting.Value, 64); err == nil && v > 0.5 && v < 20 {
+		return v
+	}
+	return 7.2
 }
 
 // ---------- 查询 ----------

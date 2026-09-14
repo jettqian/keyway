@@ -416,12 +416,13 @@ func (s *Server) handleAdminTemplates(c *gin.Context) {
 }
 
 type adminSettingsDTO struct {
-	RegisterMode    string `json:"registerMode"`
-	FeishuEnabled   bool   `json:"feishuEnabled"`
-	FeishuAppID     string `json:"feishuAppId"`
-	FeishuAppSecret string `json:"feishuAppSecret,omitempty"` // 只写，不回显
-	FeishuHasSecret bool   `json:"feishuHasSecret"`
-	FeishuBaseURL   string `json:"feishuBaseUrl"`
+	RegisterMode    string  `json:"registerMode"`
+	FeishuEnabled   bool    `json:"feishuEnabled"`
+	FeishuAppID     string  `json:"feishuAppId"`
+	FeishuAppSecret string  `json:"feishuAppSecret,omitempty"` // 只写，不回显
+	FeishuHasSecret bool    `json:"feishuHasSecret"`
+	FeishuBaseURL   string  `json:"feishuBaseUrl"`
+	ExchangeRate    float64 `json:"exchangeRate"` // USD→CNY，人民币渠道费用折算用
 }
 
 func (s *Server) handleAdminSettings(c *gin.Context) {
@@ -433,12 +434,17 @@ func (s *Server) handleAdminSettings(c *gin.Context) {
 	appID, _ := s.Store.GetSetting("feishu_app_id")
 	baseURL, _ := s.Store.GetSetting("feishu_base_url")
 	secretEnc, _ := s.Store.GetSetting("feishu_app_secret")
+	rate := 7.2
+	if v, err := strconv.ParseFloat(mustSetting(s.Store, "usd_cny_rate"), 64); err == nil && v > 0 {
+		rate = v
+	}
 	s.ok(c, gin.H{"settings": adminSettingsDTO{
 		RegisterMode:    mode,
 		FeishuEnabled:   feishuEnabled == "1",
 		FeishuAppID:     appID,
 		FeishuHasSecret: secretEnc != "",
 		FeishuBaseURL:   baseURL,
+		ExchangeRate:    rate,
 	}})
 }
 
@@ -471,10 +477,18 @@ func (s *Server) handleAdminUpdateSettings(c *gin.Context) {
 		}
 		dto.FeishuAppSecret = ""
 	}
+	if dto.ExchangeRate >= 0.5 && dto.ExchangeRate <= 20 {
+		s.Store.SetSetting("usd_cny_rate", strconv.FormatFloat(dto.ExchangeRate, 'f', 4, 64))
+	}
 	// 回显不含密钥
 	resp := dto
 	resp.FeishuHasSecret = true
 	s.ok(c, gin.H{"settings": resp})
+}
+
+func mustSetting(st *store.Store, key string) string {
+	v, _ := st.GetSetting(key)
+	return v
 }
 
 // ---------- 辅助 ----------

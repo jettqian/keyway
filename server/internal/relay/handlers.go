@@ -44,7 +44,7 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			return
 		}
 		token, user := ctxTokenUser(c)
-		matched, defaults, err := s.Routing.Resolve(user.ID, probe.Model, token.ChannelID, deref(token.ModelScope))
+		matched, defaults, err := s.Routing.Resolve(user.ID, probe.Model, token.ChannelFilter(), deref(token.ModelScope))
 		if err != nil {
 			respondOpenAIError(c, http.StatusInternalServerError, err.Error())
 			return
@@ -115,7 +115,7 @@ func (s *Server) HandleAnthropicCountTokens(c *gin.Context) {
 // HandleModels GET /v1/models（OpenAI / Anthropic 双格式）
 func (s *Server) HandleModels(c *gin.Context) {
 	token, user := ctxTokenUser(c)
-	models, err := s.Routing.AllEnabledModels(user.ID)
+	models, err := s.Routing.AllEnabledModels(user.ID, token.ChannelFilter())
 	if err != nil {
 		respondOpenAIError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -157,7 +157,7 @@ func (s *Server) HandleModels(c *gin.Context) {
 func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ any) {
 	token, user := ctxTokenUser(c)
 
-	matched, defaults, err := s.Routing.Resolve(user.ID, model, token.ChannelID, deref(token.ModelScope))
+	matched, defaults, err := s.Routing.Resolve(user.ID, model, token.ChannelFilter(), deref(token.ModelScope))
 	if err != nil {
 		respondProtocolError(c, inbound, http.StatusInternalServerError, err.Error())
 		return
@@ -463,7 +463,8 @@ func (s *Server) submitLog(c *gin.Context, a attempt, inbound, model, upstreamMo
 	if multiplier <= 0 {
 		multiplier = 1
 	}
-	ic, oc := usage.ComputeCost(s.Store.DB(), model, upstreamModel, multiplier, u)
+	ic, oc := usage.ComputeCost(s.Store.DB(), model, upstreamModel,
+		a.rc.Channel.PricingMode, multiplier, a.rc.Channel.CNYRatio, u)
 	l := &store.Log{
 		CreatedAt:        now,
 		UserID:           user.ID,

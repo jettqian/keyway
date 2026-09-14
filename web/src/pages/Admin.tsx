@@ -548,6 +548,7 @@ const SettingsTab: React.FC = () => {
           feishuEnabled: r.settings.feishuEnabled,
           feishuAppId: r.settings.feishuAppId,
           feishuBaseUrl: r.settings.feishuBaseUrl,
+          exchangeRate: r.settings.exchangeRate ?? 7.2,
         })
         setHasSecret(r.settings.feishuHasSecret ?? false)
       })
@@ -588,6 +589,13 @@ const SettingsTab: React.FC = () => {
       </Form.Item>
       <Form.Item name="feishuBaseUrl" label="飞书开放平台地址（默认官方，测试可覆盖）">
         <Input placeholder="https://open.feishu.cn" />
+      </Form.Item>
+      <Form.Item
+        name="exchangeRate"
+        label="美元兑人民币汇率"
+        extra="人民币渠道（cny_ratio）的费用折算用，默认 7.2"
+      >
+        <InputNumber min={0.5} max={20} step={0.1} style={{ width: 160 }} />
       </Form.Item>
       <Button type="primary" htmlType="submit" loading={loading}>保存</Button>
     </Form>

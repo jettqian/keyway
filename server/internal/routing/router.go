@@ -39,13 +39,14 @@ func DecodeKeyValue(secret string, k *store.Key) (string, error) {
 }
 
 // Resolve 按模型名解析用户可用渠道（priority 降序）；
-// channelID 非空时强制限定该渠道；modelScope 非空时按前缀通配过滤。
+// channelIDs 非空时限定该渠道集合（令牌多渠道绑定）；
+// modelScope 非空时按前缀通配过滤。
 // 无命中时回落默认渠道（模型名透传）；仍无则返回空列表。
-func (s *Service) Resolve(userID int64, model string, channelID *int64, modelScope string) ([]*ResolvedChannel, []*ResolvedChannel, error) {
+func (s *Service) Resolve(userID int64, model string, channelIDs []int64, modelScope string) ([]*ResolvedChannel, []*ResolvedChannel, error) {
 	var chans []store.Channel
 	q := s.store.DB().Where("user_id = ? AND enabled = 1", userID)
-	if channelID != nil {
-		q = q.Where("id = ?", *channelID)
+	if len(channelIDs) > 0 {
+		q = q.Where("id IN ?", channelIDs)
 	}
 	if err := q.Find(&chans).Error; err != nil {
 		return nil, nil, fmt.Errorf("查询渠道失败: %w", err)
@@ -79,10 +80,14 @@ func (s *Service) Resolve(userID int64, model string, channelID *int64, modelSco
 	return matched, defaults, nil
 }
 
-// AllEnabledModels 用户所有启用渠道模型名并集（/v1/models 用）
-func (s *Service) AllEnabledModels(userID int64) ([]string, error) {
+// AllEnabledModels 用户可用渠道模型名并集（channelIDs 非空时限定集合，/v1/models 用）
+func (s *Service) AllEnabledModels(userID int64, channelIDs []int64) ([]string, error) {
+	q := s.store.DB().Where("user_id = ? AND enabled = 1", userID)
+	if len(channelIDs) > 0 {
+		q = q.Where("id IN ?", channelIDs)
+	}
 	var chans []store.Channel
-	if err := s.store.DB().Where("user_id = ? AND enabled = 1", userID).Find(&chans).Error; err != nil {
+	if err := q.Find(&chans).Error; err != nil {
 		return nil, err
 	}
 	seen := map[string]bool{}

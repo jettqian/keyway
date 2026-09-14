@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,45 +11,135 @@ import (
 	"keyway/internal/usage"
 )
 
-// Test渠道价格倍率 倍率影响费用快照（渠道优惠场景，FR v0.8）
-func Test渠道价格倍率(t *testing.T) {
+// Test渠道计价模式 usd 倍率 / cny_ratio 换算比（PRD v0.9）
+func Test渠道计价模式(t *testing.T) {
 	c, _ := setupApp(t)
 	c.bootstrap(t, "http://upstream.invalid")
 
-	// 设价目：mult-model 输入 $1/M、输出 $2/M
 	if err := c.store.DB().Save(&store.ModelPricing{
-		Model: "mult-model", InputPerM: 1, OutputPerM: 2, Currency: "USD", UpdatedAt: time.Now().Unix(),
+		Model: "price-model", InputPerM: 1, OutputPerM: 2, Currency: "USD", UpdatedAt: time.Now().Unix(),
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-
 	u := convert.Usage{PromptTokens: 10000, CompletionTokens: 1000}
 
-	// 倍率 0.5（渠道五折）：10k 输入 → $0.005；1k 输出 → $0.001
-	ic, oc := usage.ComputeCost(c.store.DB(), "mult-model", "mult-model", 0.5, u)
-	if ic == nil || oc == nil {
-		t.Fatal("应命中价目")
-	}
-	if *ic < 0.0049 || *ic > 0.0051 {
-		t.Fatalf("输入费用倍率错误: %v（期望 0.005）", *ic)
-	}
-	if *oc < 0.0009 || *oc > 0.0011 {
-		t.Fatalf("输出费用倍率错误: %v（期望 0.001）", *oc)
+	// USD 模式 ×0.8：10k 输入 → $0.008
+	ic, _ := usage.ComputeCost(c.store.DB(), "price-model", "price-model", "usd", 0.8, 0, u)
+	if *ic < 0.0079 || *ic > 0.0081 {
+		t.Fatalf("usd 倍率费用错误: %v（期望 0.008）", *ic)
 	}
 
-	// 默认倍率 1：10k 输入 → $0.01
-	ic2, _ := usage.ComputeCost(c.store.DB(), "mult-model", "mult-model", 1, u)
-	if *ic2 < 0.0099 || *ic2 > 0.0101 {
-		t.Fatalf("默认倍率输入费用错误: %v（期望 0.01）", *ic2)
+	// CNY 模式：$1 官方用量实收 ¥0.5（micu 类中转），默认汇率 7.2
+	// 10k 输入官方价 $0.01 → 渠道实付 ¥0.005 → 统计 $0.005/7.2 ≈ 0.000694
+	ic2, _ := usage.ComputeCost(c.store.DB(), "price-model", "price-model", "cny_ratio", 1, 0.5, u)
+	want := 0.01 * 0.5 / 7.2
+	if *ic2 < want-0.000001 || *ic2 > want+0.000001 {
+		t.Fatalf("cny_ratio 费用错误: %v（期望 %v）", *ic2, want)
 	}
 
-	// 倍率含缓存档：5k 输入 + 5k 缓存读 ×0.5 倍率
-	c.store.DB().Model(&store.ModelPricing{}).Where("model = ?", "mult-model").
-		Update("cached_input_per_m", 0.1)
-	u2 := convert.Usage{PromptTokens: 10000, CachedTokens: 5000, CompletionTokens: 0}
-	ic3, _ := usage.ComputeCost(c.store.DB(), "mult-model", "mult-model", 0.5, u2)
-	// 5k×1 + 5k×0.1 = 0.0055 × 0.5 = 0.00275
-	if *ic3 < 0.00274 || *ic3 > 0.00276 {
-		t.Fatalf("缓存+倍率费用错误: %v（期望 0.00275）", *ic3)
+	// 管理员改汇率后生效
+	c.store.SetSetting("usd_cny_rate", "7.0")
+	ic3, _ := usage.ComputeCost(c.store.DB(), "price-model", "price-model", "cny_ratio", 1, 0.5, u)
+	want3 := 0.01 * 0.5 / 7.0
+	if *ic3 < want3-0.000001 || *ic3 > want3+0.000001 {
+		t.Fatalf("汇率未生效: %v（期望 %v）", *ic3, want3)
 	}
+}
+
+// TestE2E令牌多渠道绑定与开关 令牌限定多渠道，渠道级开关控制实际路由
+func TestE2E令牌多渠道绑定与开关(t *testing.T) {
+	c, _ := setupApp(t)
+	up1 := seededUpstream(t, "chan-a", 0)
+	up2 := seededUpstream(t, "chan-b", 0)
+	defer up1.Close()
+	defer up2.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "dave", "password": "password123"}, false); w.Code != 200 {
+		t.Fatal("注册失败")
+	}
+	var keyResp struct {
+		Key struct {
+			ID int64 `json:"id"`
+		} `json:"key"`
+	}
+	if w := c.do("POST", "/api/keys", map[string]any{"name": "k", "value": "upstream-key"}, true); w.Code != 200 {
+		t.Fatal("建密钥失败")
+	} else {
+		json.Unmarshal(w.Body.Bytes(), &keyResp)
+	}
+
+	// 两个渠道服务同一模型，c1 优先级高
+	var ids []int64
+	for i, up := range []string{up1.URL, up2.URL} {
+		w := c.do("POST", "/api/channels", map[string]any{
+			"name": nameByIndex(i), "type": "openai",
+			"baseUrls": []string{up},
+			"keyIds":   []int64{keyResp.Key.ID},
+			"models":   []string{"pick-model"},
+			"priority": 10 - i, "enabled": true,
+		}, true)
+		if w.Code != 200 {
+			t.Fatalf("建渠道失败: %s", w.Body.String())
+		}
+		var chResp struct {
+			Channel struct {
+				ID int64 `json:"id"`
+			} `json:"channel"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &chResp)
+		ids = append(ids, chResp.Channel.ID)
+	}
+
+	// 令牌绑定两个渠道
+	var tokResp struct {
+		Plaintext string `json:"plaintext"`
+	}
+	if w := c.do("POST", "/api/tokens", map[string]any{
+		"name": "multi", "channelIds": ids,
+	}, true); w.Code != 200 {
+		t.Fatalf("多渠道令牌失败: %s", w.Body.String())
+	} else {
+		json.Unmarshal(w.Body.Bytes(), &tokResp)
+		c.token = tokResp.Plaintext
+	}
+
+	// 路由到高优先级 c1
+	w := c.do("POST", "/v1/chat/completions", map[string]any{"model": "pick-model", "messages": []map[string]any{{"role": "user", "content": "hi"}}}, false)
+	if !strings.Contains(w.Body.String(), "chan-a") {
+		t.Fatalf("应路由到高优先级渠道: %s", w.Body.String())
+	}
+
+	// 关掉 c1 → 自动落到 c2（按需开关）
+	if w := c.do("PUT", "/api/channels/"+itoa(ids[0]), map[string]any{
+		"name": nameByIndex(0), "type": "openai",
+		"baseUrls": []string{up1.URL},
+		"keyIds":   []int64{keyResp.Key.ID},
+		"models":   []string{"pick-model"},
+		"priority": 10, "enabled": false,
+	}, true); w.Code != 200 {
+		t.Fatalf("关闭渠道失败: %s", w.Body.String())
+	}
+	w = c.do("POST", "/v1/chat/completions", map[string]any{"model": "pick-model", "messages": []map[string]any{{"role": "user", "content": "hi"}}}, false)
+	if !strings.Contains(w.Body.String(), "chan-b") {
+		t.Fatalf("关闭高优先后应路由到次优先级渠道: %s", w.Body.String())
+	}
+}
+
+func nameByIndex(i int) string {
+	if i == 0 {
+		return "c-first"
+	}
+	return "c-second"
+}
+
+func itoa(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
 }

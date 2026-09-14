@@ -126,6 +126,8 @@ type channelInput struct {
 	ModelMapping     map[string]string `json:"modelMapping"`
 	Priority         int               `json:"priority"`
 	PriceMultiplier  float64           `json:"priceMultiplier"`
+	PricingMode      string            `json:"pricingMode"`
+	CNYRatio         float64           `json:"cnyRatio"`
 	IsDefault        bool              `json:"isDefault"`
 	Enabled          bool              `json:"enabled"`
 }
@@ -154,8 +156,17 @@ func (s *Server) validateChannel(in *channelInput) string {
 	if in.LineStrategy == "" {
 		in.LineStrategy = "auto"
 	}
+	if in.PricingMode == "" {
+		in.PricingMode = "usd"
+	}
+	if in.PricingMode != "usd" && in.PricingMode != "cny_ratio" {
+		return "计价模式须为 usd 或 cny_ratio"
+	}
 	if in.PriceMultiplier < 0 {
 		return "价格倍率不能为负"
+	}
+	if in.PricingMode == "cny_ratio" && in.CNYRatio <= 0 {
+		return "人民币渠道须填写换算比（$1 官方用量实收人民币金额）"
 	}
 	return ""
 }
@@ -179,6 +190,13 @@ func (s *Server) applyChannelInput(ch *store.Channel, in *channelInput, copyFrom
 		ch.PriceMultiplier = in.PriceMultiplier
 	} else {
 		ch.PriceMultiplier = 1
+	}
+	if in.PricingMode == "cny_ratio" {
+		ch.PricingMode = "cny_ratio"
+		ch.CNYRatio = in.CNYRatio
+	} else {
+		ch.PricingMode = "usd"
+		ch.CNYRatio = 0
 	}
 	ch.IsDefault = boolToInt(in.IsDefault)
 	ch.Enabled = boolToInt(in.Enabled)
@@ -403,7 +421,8 @@ func (s *Server) handleListTemplates(c *gin.Context) {
 func tokenDTO(t *store.Token) gin.H {
 	dto := gin.H{
 		"id": t.ID, "name": t.Name, "keyPrefix": t.KeyPrefix,
-		"revoked": t.Revoked == 1, "createdAt": t.CreatedAt,
+		"channelIds": t.ChannelFilter(),
+		"revoked":    t.Revoked == 1, "createdAt": t.CreatedAt,
 	}
 	if t.ChannelID != nil {
 		dto["channelId"] = *t.ChannelID
@@ -429,19 +448,39 @@ func (s *Server) handleListTokens(c *gin.Context) {
 
 func (s *Server) handleCreateToken(c *gin.Context) {
 	var req struct {
-		Name       string `json:"name"`
-		ChannelID  *int64 `json:"channelId"`
-		ModelScope string `json:"modelScope"`
-		ExpiresAt  *int64 `json:"expiresAt"`
+		Name       string  `json:"name"`
+		ChannelID  *int64  `json:"channelId"`
+		ChannelIDs []int64 `json:"channelIds"`
+		ModelScope string  `json:"modelScope"`
+		ExpiresAt  *int64  `json:"expiresAt"`
 	}
 	if err := c.BindJSON(&req); err != nil || trimOrEmpty(req.Name) == "" {
 		s.fail(c, http.StatusBadRequest, "名称不能为空")
 		return
 	}
+	// 渠道限定集合 = channelIds ∪ 旧 channelId；校验归属
+	filter := req.ChannelIDs
 	if req.ChannelID != nil {
-		var ch store.Channel
-		if err := s.Store.DB().Where("id = ? AND user_id = ?", *req.ChannelID, currentUser(c).ID).First(&ch).Error; err != nil {
-			s.fail(c, http.StatusBadRequest, "限定渠道不存在")
+		exists := false
+		for _, id := range filter {
+			if id == *req.ChannelID {
+				exists = true
+			}
+		}
+		if !exists {
+			filter = append(filter, *req.ChannelID)
+		}
+	}
+	if len(filter) > 20 {
+		s.fail(c, http.StatusBadRequest, "限定渠道数量过多（≤20）")
+		return
+	}
+	if len(filter) > 0 {
+		var count int64
+		s.Store.DB().Model(&store.Channel{}).
+			Where("user_id = ? AND id IN ?", currentUser(c).ID, filter).Count(&count)
+		if count != int64(len(filter)) {
+			s.fail(c, http.StatusBadRequest, "包含不存在或不属于你的渠道")
 			return
 		}
 	}
@@ -458,7 +497,7 @@ func (s *Server) handleCreateToken(c *gin.Context) {
 	t := store.Token{
 		UserID: currentUser(c).ID, Name: trimOrEmpty(req.Name),
 		KeyEnc: enc, KeyPrefix: plaintext[:16], KeyHash: crypto.HashToken(plaintext),
-		ChannelID: req.ChannelID, CreatedAt: time.Now().Unix(),
+		ChannelIDsJSON: string(mustJSONStr(filter)), CreatedAt: time.Now().Unix(),
 	}
 	if req.ModelScope != "" {
 		t.ModelScope = &req.ModelScope
@@ -515,6 +554,7 @@ func channelDTO(ch *store.Channel) gin.H {
 		"allowPublicProxy": ch.AllowPublicProxy == 1,
 		"models":           models, "modelMapping": mapping,
 		"priority": ch.Priority, "priceMultiplier": ch.PriceMultiplier,
+		"pricingMode": ch.PricingMode, "cnyRatio": ch.CNYRatio,
 		"isDefault": ch.IsDefault == 1,
 		"enabled":   ch.Enabled == 1, "createdAt": ch.CreatedAt,
 	}

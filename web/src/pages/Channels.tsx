@@ -32,6 +32,8 @@ const emptyInput: ChannelInput = {
   modelMapping: {},
   priority: 0,
   priceMultiplier: 1,
+  pricingMode: 'usd',
+  cnyRatio: 0,
   isDefault: false,
   enabled: true,
 }
@@ -81,6 +83,8 @@ const ChannelsPage: React.FC = () => {
       modelMapping: Object.entries(c.modelMapping).map(([from, to]) => ({ from, to })),
       priority: c.priority,
       priceMultiplier: c.priceMultiplier ?? 1,
+      pricingMode: c.pricingMode ?? 'usd',
+      cnyRatio: c.cnyRatio ?? 0,
       isDefault: c.isDefault,
       enabled: c.enabled,
     })
@@ -106,6 +110,8 @@ const ChannelsPage: React.FC = () => {
       modelMapping: mapping,
       priority: v.priority,
       priceMultiplier: v.priceMultiplier || 1,
+      pricingMode: v.pricingMode,
+      cnyRatio: v.cnyRatio || 0,
       isDefault: v.isDefault,
       enabled: v.enabled,
     }
@@ -296,14 +302,40 @@ const ChannelsPage: React.FC = () => {
             <Form.Item name="priority" label="优先级（大者优先）">
               <InputNumber />
             </Form.Item>
-            <Form.Item
-              name="priceMultiplier"
-              label="价格倍率（费用统计用）"
-              extra="渠道优惠填折扣，如 5 折填 0.5；不影响上游真实计费"
-              initialValue={1}
-            >
-              <InputNumber min={0} step={0.05} style={{ width: 110 }} />
+            <Form.Item name="pricingMode" label="计价模式（费用统计用）">
+              <Select
+                style={{ width: 190 }}
+                options={[
+                  { value: 'usd', label: '美元渠道（倍率折扣）' },
+                  { value: 'cny_ratio', label: '人民币渠道（$1 实收 ¥X）' },
+                ]}
+              />
             </Form.Item>
+          </Space>
+          <Form.Item noStyle shouldUpdate={(a, b) => a.pricingMode !== b.pricingMode}>
+            {({ getFieldValue }) =>
+              getFieldValue('pricingMode') === 'cny_ratio' ? (
+                <Form.Item
+                  name="cnyRatio"
+                  label="换算比（每 $1 官方用量实收人民币）"
+                  extra="如 micu 渠道 $1 收 ¥0.5 就填 0.5；统计按全局汇率折算美元"
+                  rules={[{ required: true, message: '人民币渠道须填写换算比' }]}
+                >
+                  <InputNumber min={0.001} step={0.05} style={{ width: 160 }} />
+                </Form.Item>
+              ) : (
+                <Form.Item
+                  name="priceMultiplier"
+                  label="价格倍率（费用统计用）"
+                  extra="美元渠道折扣，如 8 折填 0.8；官方渠道保持 1"
+                  initialValue={1}
+                >
+                  <InputNumber min={0} step={0.05} style={{ width: 160 }} />
+                </Form.Item>
+              )
+            }
+          </Form.Item>
+          <Space size="large">
             <Form.Item name="isDefault" label="设为默认渠道" valuePropName="checked">
               <Switch />
             </Form.Item>

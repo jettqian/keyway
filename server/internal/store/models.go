@@ -1,5 +1,7 @@
 package store
 
+import "encoding/json"
+
 // GORM 模型严格对齐 DESIGN §3 DDL：
 // - JSON 列（base_urls_json 等）以 string 存储，由上层自行 marshal
 // - DDL 中可空列用指针类型表达
@@ -78,12 +80,17 @@ type Channel struct {
 	ModelsJSON           string  `gorm:"column:models_json;not null"`
 	ModelMappingJSON     string  `gorm:"column:model_mapping_json;default:'{}'"`
 	Priority             int     `gorm:"column:priority;not null;default:0"`
-	PriceMultiplier      float64 `gorm:"column:price_multiplier;not null;default:1"` // 渠道价格倍率（优惠渠道 <1）
-	IsDefault            int     `gorm:"column:is_default;not null;default:0"`
-	Enabled              int     `gorm:"column:enabled;not null;default:1;index:idx_channels_user,priority:2"`
-	LastOkAt             *int64  `gorm:"column:last_ok_at"`
-	LastError            *string `gorm:"column:last_error"`
-	CreatedAt            int64   `gorm:"column:created_at"`
+	PriceMultiplier      float64 `gorm:"column:price_multiplier;not null;default:1"` // 价格倍率：相对官方价的折扣（如 0.8 = 8 折）
+	// 币种语义：usd = 直接乘官方 USD 价目（默认）；
+	// cny_ratio = 渠道按人民币计价（如 $1 实收 ¥X），统计时 USD 费用 = 官方价 × X ÷ 汇率
+	PricingMode string `gorm:"column:pricing_mode;not null;default:'usd'"`
+	// PricingMode=cny_ratio 时：$1 官方用量的渠道实收人民币金额（如 0.5 表示 $1 → ¥0.5）
+	CNYRatio  float64 `gorm:"column:cny_ratio;not null;default:0"`
+	IsDefault int     `gorm:"column:is_default;not null;default:0"`
+	Enabled   int     `gorm:"column:enabled;not null;default:1;index:idx_channels_user,priority:2"`
+	LastOkAt  *int64  `gorm:"column:last_ok_at"`
+	LastError *string `gorm:"column:last_error"`
+	CreatedAt int64   `gorm:"column:created_at"`
 }
 
 func (Channel) TableName() string { return "channels" }
@@ -125,17 +132,18 @@ func (ProxyUsage) TableName() string { return "proxy_usage" }
 
 // Token 网关令牌
 type Token struct {
-	ID         int64   `gorm:"column:id;primaryKey;autoIncrement"`
-	UserID     int64   `gorm:"column:user_id;not null"`
-	Name       string  `gorm:"column:name;not null"`
-	KeyEnc     []byte  `gorm:"column:key_enc;not null"`              // 全文加密（支持界面回看）
-	KeyPrefix  string  `gorm:"column:key_prefix;not null"`           // 展示与日志用
-	KeyHash    string  `gorm:"column:key_hash;not null;uniqueIndex"` // sha256，认证 O(1) 查找
-	ChannelID  *int64  `gorm:"column:channel_id"`                    // 限定渠道（可空）
-	ModelScope *string `gorm:"column:model_scope"`                   // 模型前缀通配（可空）
-	ExpiresAt  *int64  `gorm:"column:expires_at"`
-	Revoked    int     `gorm:"column:revoked;not null;default:0"`
-	CreatedAt  int64   `gorm:"column:created_at"`
+	ID             int64   `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID         int64   `gorm:"column:user_id;not null"`
+	Name           string  `gorm:"column:name;not null"`
+	KeyEnc         []byte  `gorm:"column:key_enc;not null"`              // 全文加密（支持界面回看）
+	KeyPrefix      string  `gorm:"column:key_prefix;not null"`           // 展示与日志用
+	KeyHash        string  `gorm:"column:key_hash;not null;uniqueIndex"` // sha256，认证 O(1) 查找
+	ChannelID      *int64  `gorm:"column:channel_id"`                    // 限定单渠道（旧字段，兼容保留）
+	ChannelIDsJSON string  `gorm:"column:channel_ids_json;default:''"`   // 限定多渠道（空 = 不限）
+	ModelScope     *string `gorm:"column:model_scope"`                   // 模型前缀通配（可空）
+	ExpiresAt      *int64  `gorm:"column:expires_at"`
+	Revoked        int     `gorm:"column:revoked;not null;default:0"`
+	CreatedAt      int64   `gorm:"column:created_at"`
 }
 
 func (Token) TableName() string { return "tokens" }
@@ -180,6 +188,25 @@ type Log struct {
 }
 
 func (Log) TableName() string { return "logs" }
+
+// ChannelFilter 令牌的渠道限定集合（多渠道绑定；含旧单渠道字段兼容）
+func (t *Token) ChannelFilter() []int64 {
+	var ids []int64
+	json.Unmarshal([]byte(t.ChannelIDsJSON), &ids)
+	if t.ChannelID != nil {
+		exists := false
+		for _, id := range ids {
+			if id == *t.ChannelID {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			ids = append(ids, *t.ChannelID)
+		}
+	}
+	return ids
+}
 
 // InviteCode 邀请码
 type InviteCode struct {
