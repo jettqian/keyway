@@ -1,0 +1,90 @@
+import { get, post, put, del } from './client'
+import type {
+  User,
+  ApiKey,
+  ApiKeyInput,
+  Channel,
+  ChannelInput,
+  GatewayToken,
+  GatewayTokenCreated,
+  ChannelTemplate,
+  LogEntry,
+  LogQuery,
+  StatsResponse,
+  ModelPricing,
+  Proxy,
+  AdminSettings,
+} from './types'
+
+// ---------- 认证 ----------
+export const login = (username: string, password: string) =>
+  post<{ user: User }>('/api/auth/login', { username, password })
+export const register = (username: string, password: string, inviteCode?: string) =>
+  post<{ user: User }>('/api/auth/register', { username, password, inviteCode })
+export const logout = () => post<void>('/api/auth/logout')
+export const me = () => get<{ user: User }>('/api/auth/me')
+export const changePassword = (oldPassword: string, newPassword: string) =>
+  put<void>('/api/auth/password', { oldPassword, newPassword })
+export const feishuLoginUrl = () => get<{ url: string }>('/api/auth/feishu/url')
+
+// ---------- 密钥池 ----------
+export const listKeys = () => get<{ keys: ApiKey[] }>('/api/keys')
+export const createKey = (input: ApiKeyInput) => post<{ key: ApiKey }>('/api/keys', input)
+export const updateKey = (id: number, input: ApiKeyInput) => put<{ key: ApiKey }>(`/api/keys/${id}`, input)
+export const deleteKey = (id: number) => del<void>(`/api/keys/${id}`)
+
+// ---------- 渠道 ----------
+export const listChannels = () => get<{ channels: Channel[] }>('/api/channels')
+export const createChannel = (input: ChannelInput) => post<{ channel: Channel }>('/api/channels', input)
+export const updateChannel = (id: number, input: ChannelInput) =>
+  put<{ channel: Channel }>(`/api/channels/${id}`, input)
+export const deleteChannel = (id: number) => del<void>(`/api/channels/${id}`)
+export const testChannel = (id: number) => post<{ results: ChannelTestResult[] }>(`/api/channels/${id}/test`)
+export const copyTemplate = (templateId: number) =>
+  post<{ channel: Channel }>(`/api/channels/from_template/${templateId}`)
+
+export interface ChannelTestResult {
+  lineUrl: string
+  via: string
+  ok: boolean
+  latencyMs: number
+  error: string
+}
+
+// ---------- 模板 ----------
+export const listTemplates = () => get<{ templates: ChannelTemplate[] }>('/api/templates')
+
+// ---------- 令牌 ----------
+export const listTokens = () => get<{ tokens: GatewayToken[] }>('/api/tokens')
+export const createToken = (input: { name: string; channelId?: number; modelScope?: string; expiresAt?: string }) =>
+  post<GatewayTokenCreated>('/api/tokens', input)
+export const revokeToken = (id: number) => del<void>(`/api/tokens/${id}`)
+
+// ---------- 日志与统计 ----------
+export const listLogs = (q: LogQuery) =>
+  get<{ logs: LogEntry[]; total: number }>(`/api/logs?${qs(q as unknown as Record<string, unknown>)}`)
+export const myStats = (days: number) => get<StatsResponse>(`/api/stats?days=${days}`)
+
+// ---------- 管理员 ----------
+export const adminUsers = () => get<{ users: User[] }>('/api/admin/users')
+export const adminSetUserStatus = (id: number, status: number) =>
+  put<{ user: User }>(`/api/admin/users/${id}/status`, { status })
+export const adminResetPassword = (id: number) => post<{ password: string }>(`/api/admin/users/${id}/reset_password`)
+export const adminStats = (days: number) => get<StatsResponse>(`/api/admin/stats?days=${days}`)
+export const adminPricing = () => get<{ pricing: ModelPricing[] }>('/api/admin/pricing')
+export const adminUpdatePricing = (p: ModelPricing) =>
+  put<{ pricing: ModelPricing }>(`/api/admin/pricing/${encodeURIComponent(p.model)}`, p)
+export const adminProxies = () => get<{ proxies: Proxy[] }>('/api/admin/proxies')
+export const adminTemplates = () => get<{ templates: ChannelTemplate[] }>('/api/admin/templates')
+export const adminSettings = () => get<{ settings: AdminSettings }>('/api/admin/settings')
+export const adminUpdateSettings = (s: AdminSettings) => put<{ settings: AdminSettings }>('/api/admin/settings', s)
+
+function qs(q: Record<string, unknown>): string {
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(q)) {
+    if (v !== undefined && v !== null && v !== '') {
+      params.set(k, String(v))
+    }
+  }
+  return params.toString()
+}
