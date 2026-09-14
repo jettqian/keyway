@@ -100,6 +100,11 @@ func (s *Service) AllEnabledModels(userID int64) ([]string, error) {
 	return out, nil
 }
 
+// ForChannel 构造指定渠道的解析结果（探测/测试用）
+func (s *Service) ForChannel(ch *store.Channel) (*ResolvedChannel, error) {
+	return s.buildResolved(ch)
+}
+
 func (s *Service) buildResolved(ch *store.Channel) (*ResolvedChannel, error) {
 	var urls []string
 	if err := json.Unmarshal([]byte(ch.BaseURLsJSON), &urls); err != nil || len(urls) == 0 {

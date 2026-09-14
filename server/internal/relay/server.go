@@ -1,17 +1,19 @@
 package relay
 
 import (
-	"fmt"
 	"net/http"
-	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"keyway/internal/auth"
 	"keyway/internal/config"
+	"keyway/internal/httpx"
+	"keyway/internal/probe"
 	"keyway/internal/routing"
 	"keyway/internal/store"
 	"keyway/internal/usage"
@@ -26,17 +28,16 @@ type Server struct {
 	Logs    *usage.Writer
 	Cfg     config.Config
 
-	clients map[string]*http.Client
-	mu      sync.Mutex
-	rr      map[int64]int64 // round_robin 渠道计数
-	rrMu    sync.Mutex
+	pool httpx.Pool
+	rr   map[int64]int64 // round_robin 渠道计数
+	rrMu sync.Mutex
 }
 
 func NewServer(st *store.Store, secret string, a *auth.Service, r *routing.Service, w *usage.Writer, cfg config.Config) *Server {
 	return &Server{
 		Store: st, Secret: secret, Auth: a, Routing: r, Logs: w, Cfg: cfg,
-		clients: map[string]*http.Client{},
-		rr:      map[int64]int64{},
+		pool: *httpx.NewPool(),
+		rr:   map[int64]int64{},
 	}
 }
 
@@ -63,28 +64,7 @@ func (s *Server) TokenAuth() gin.HandlerFunc {
 
 // getClient 按代理 URL 复用 HTTP 客户端（"" = 直连）
 func (s *Server) getClient(proxyURL string) (*http.Client, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if cl, ok := s.clients[proxyURL]; ok {
-		return cl, nil
-	}
-	transport := &http.Transport{
-		MaxIdleConns:          64,
-		MaxIdleConnsPerHost:   32,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
-	}
-	if proxyURL != "" {
-		u, err := parseProxyURL(proxyURL)
-		if err != nil {
-			return nil, err
-		}
-		transport.Proxy = http.ProxyURL(u)
-	}
-	cl := &http.Client{Transport: transport}
-	s.clients[proxyURL] = cl
-	return cl, nil
+	return s.pool.Get(proxyURL)
 }
 
 // ---------- 尝试计划 ----------
@@ -97,7 +77,14 @@ type attempt struct {
 	key      *store.Key
 }
 
+type linePath struct {
+	line  string
+	proxy string
+	via   string
+}
+
 // plan 生成组合序列：渠道（priority 降序）× 线路 × 路径（直连→个人代理）× 密钥（有序/轮询）
+// 线路×路径按 line_stats 探测数据排序：健康且新鲜者按延迟升序，未知按录入顺序，不健康殿后；
 // 预算截断为 cfg.AttemptBudget；冷却中的密钥排后（可用密钥优先）
 func (s *Server) plan(matched, defaults []*routing.ResolvedChannel) []attempt {
 	var out []attempt
@@ -110,11 +97,16 @@ func (s *Server) plan(matched, defaults []*routing.ResolvedChannel) []attempt {
 		if rc.PersonalProxyURL != "" {
 			paths = append(paths, struct{ proxy, via string }{rc.PersonalProxyURL, "personal"})
 		}
-		for _, line := range rc.BaseURLs {
-			for _, p := range paths {
-				for _, k := range keys {
-					out = append(out, attempt{rc: rc, lineURL: line, proxyURL: p.proxy, via: p.via, key: k})
-				}
+		lines := rc.BaseURLs
+		if rc.Channel.LineStrategy == "manual" {
+			// manual：固定第一条线路且不做路径优选
+			lines = lines[:1]
+			paths = paths[:1]
+		}
+		combos := orderCombos(s.Store.DB(), rc.Channel.ID, lines, paths)
+		for _, cb := range combos {
+			for _, k := range keys {
+				out = append(out, attempt{rc: rc, lineURL: cb.line, proxyURL: cb.proxy, via: cb.via, key: k})
 			}
 		}
 	}
@@ -124,6 +116,47 @@ func (s *Server) plan(matched, defaults []*routing.ResolvedChannel) []attempt {
 	}
 	if len(out) > budget {
 		out = out[:budget]
+	}
+	return out
+}
+
+// orderCombos 按 line_stats 健康度与延迟排序组合（FR-S2）
+func orderCombos(db *gorm.DB, channelID int64, lines []string, paths []struct{ proxy, via string }) []linePath {
+	type raw struct {
+		lp    linePath
+		order int
+	}
+	var all []raw
+	for _, line := range lines {
+		for _, p := range paths {
+			all = append(all, raw{lp: linePath{line: line, proxy: p.proxy, via: p.via}, order: len(all)})
+		}
+	}
+	stats := probe.LoadStats(db, channelID)
+	fresh := time.Now().Unix() - 3*10*60 // 3 个探测周期视为新鲜
+
+	type scored struct {
+		r    raw
+		rank int64
+	}
+	list := make([]scored, 0, len(all))
+	for _, r := range all {
+		if st, ok := stats[probe.StatKey(r.lp.line, r.lp.via)]; ok && st.LastProbeAt != nil && *st.LastProbeAt > fresh {
+			if st.Ok != nil && *st.Ok == 1 && st.LatencyMs != nil {
+				list = append(list, scored{r, *st.LatencyMs}) // 健康新鲜：延迟升序
+				continue
+			}
+			if st.Ok != nil && *st.Ok == 0 {
+				list = append(list, scored{r, 2_000_000_000 + int64(r.order)}) // 不健康殿后
+				continue
+			}
+		}
+		list = append(list, scored{r, 1_000_000_000 + int64(r.order)}) // 未知：录入顺序
+	}
+	sort.SliceStable(list, func(i, j int) bool { return list[i].rank < list[j].rank })
+	out := make([]linePath, 0, len(list))
+	for _, s := range list {
+		out = append(out, s.r.lp)
 	}
 	return out
 }
@@ -154,16 +187,4 @@ func (s *Server) orderKeys(rc *routing.ResolvedChannel) []*store.Key {
 		return hot
 	}
 	return cooling
-}
-
-func parseProxyURL(u string) (*url.URL, error) {
-	parsed, err := url.Parse(u)
-	if err != nil {
-		return nil, fmt.Errorf("代理地址无效: %w", err)
-	}
-	switch parsed.Scheme {
-	case "http", "https", "socks5":
-		return parsed, nil
-	}
-	return nil, fmt.Errorf("不支持的代理协议: %s", parsed.Scheme)
 }

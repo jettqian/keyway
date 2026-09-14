@@ -270,9 +270,36 @@ func (s *Server) handleDeleteChannel(c *gin.Context) {
 	s.ok(c, gin.H{})
 }
 
-// handleTestChannel 渠道连通性测试（线路×路径矩阵，逐组合最小请求）
+// handleTestChannel 渠道连通性测试（线路×路径矩阵，FR-C2）
 func (s *Server) handleTestChannel(c *gin.Context) {
-	s.fail(c, http.StatusNotImplemented, "渠道测试将在探测引擎（M3）接入后提供")
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var ch store.Channel
+	if err := s.Store.DB().Where("id = ? AND user_id = ?", id, currentUser(c).ID).First(&ch).Error; err != nil {
+		s.fail(c, http.StatusNotFound, "渠道不存在")
+		return
+	}
+	results, err := s.Probe.ProbeChannel(&ch)
+	if err != nil {
+		s.fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.ok(c, gin.H{"results": results})
+}
+
+// handleTestKeys 逐密钥测试（FR-K6）
+func (s *Server) handleTestKeys(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var ch store.Channel
+	if err := s.Store.DB().Where("id = ? AND user_id = ?", id, currentUser(c).ID).First(&ch).Error; err != nil {
+		s.fail(c, http.StatusNotFound, "渠道不存在")
+		return
+	}
+	results, err := s.Probe.ProbeKeys(&ch)
+	if err != nil {
+		s.fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.ok(c, gin.H{"results": results})
 }
 
 func (s *Server) handleCopyTemplate(c *gin.Context) {

@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/config"
+	"keyway/internal/store"
 )
 
 // mockUpstream 模拟双协议上游
@@ -64,9 +65,11 @@ func mockUpstream(t *testing.T) *httptest.Server {
 }
 
 type ctx struct {
-	e     *gin.Engine
-	jar   *simpleJar
-	token string
+	e         *gin.Engine
+	store     *store.Store
+	jar       *simpleJar
+	token     string
+	channelID int64
 }
 
 type simpleJar struct{ cookies map[string]*http.Cookie }
@@ -102,7 +105,7 @@ func setupApp(t *testing.T) (*ctx, *httptest.Server) {
 	}
 	t.Cleanup(a.stop)
 	upstream := mockUpstream(t)
-	return &ctx{e: a.engine, jar: newSimpleJar()}, upstream
+	return &ctx{e: a.engine, store: a.store, jar: newSimpleJar()}, upstream
 }
 
 func (c *ctx) do(method, path string, body any, useSession bool) *httptest.ResponseRecorder {
@@ -156,6 +159,14 @@ func (c *ctx) bootstrap(t *testing.T, upstreamURL string) string {
 		"priority":     10, "enabled": true,
 	}, true); w.Code != 200 {
 		t.Fatalf("建渠道失败: %d %s", w.Code, w.Body.String())
+	} else {
+		var chResp struct {
+			Channel struct {
+				ID int64 `json:"id"`
+			} `json:"channel"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &chResp)
+		c.channelID = chResp.Channel.ID
 	}
 	var tokResp struct {
 		Plaintext string `json:"plaintext"`

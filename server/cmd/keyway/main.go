@@ -15,6 +15,7 @@ import (
 	"keyway/internal/api"
 	"keyway/internal/auth"
 	"keyway/internal/config"
+	"keyway/internal/probe"
 	"keyway/internal/relay"
 	"keyway/internal/routing"
 	"keyway/internal/store"
@@ -39,7 +40,8 @@ func buildApp(cfg config.Config) (*app, error) {
 	authSvc := auth.New(st, cfg.Secret)
 	routingSvc := routing.New(st, cfg.Secret)
 	logWriter := usage.NewWriter(st.DB())
-	apiSvc := api.New(st, cfg.Secret, authSvc)
+	probeEngine := probe.New(st, cfg.Secret, routingSvc, cfg)
+	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine)
 	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, cfg)
 
 	stopWriter := make(chan struct{})
@@ -47,6 +49,13 @@ func buildApp(cfg config.Config) (*app, error) {
 	go func() {
 		logWriter.Start(stopWriter)
 		close(writerDone)
+	}()
+
+	probeStop := make(chan struct{})
+	probeDone := make(chan struct{})
+	go func() {
+		probeEngine.Start(probeStop)
+		close(probeDone)
 	}()
 
 	if os.Getenv("KEYWAY_DEBUG") == "" {
@@ -83,6 +92,11 @@ func buildApp(cfg config.Config) (*app, error) {
 			close(stopWriter)
 			select {
 			case <-writerDone:
+			case <-time.After(5 * time.Second):
+			}
+			close(probeStop)
+			select {
+			case <-probeDone:
 			case <-time.After(5 * time.Second):
 			}
 		},

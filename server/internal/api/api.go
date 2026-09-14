@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/auth"
+	"keyway/internal/probe"
 	"keyway/internal/store"
 )
 
@@ -15,10 +16,11 @@ type Server struct {
 	Store  *store.Store
 	Secret string
 	Auth   *auth.Service
+	Probe  *probe.Engine
 }
 
-func New(st *store.Store, secret string, a *auth.Service) *Server {
-	return &Server{Store: st, Secret: secret, Auth: a}
+func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine) *Server {
+	return &Server{Store: st, Secret: secret, Auth: a, Probe: p}
 }
 
 const sessionCookie = "keyway_session"
@@ -103,6 +105,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.PUT("/channels/:id", s.handleUpdateChannel)
 	r.DELETE("/channels/:id", s.handleDeleteChannel)
 	r.POST("/channels/:id/test", s.handleTestChannel)
+	r.POST("/channels/:id/test_keys", s.handleTestKeys)
 
 	r.GET("/templates", s.handleListTemplates)
 
