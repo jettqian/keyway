@@ -8,6 +8,7 @@ import (
 
 	"keyway/internal/auth"
 	"keyway/internal/probe"
+	"keyway/internal/proxyman"
 	"keyway/internal/store"
 )
 
@@ -17,10 +18,11 @@ type Server struct {
 	Secret string
 	Auth   *auth.Service
 	Probe  *probe.Engine
+	PM     *proxyman.Manager
 }
 
-func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine) *Server {
-	return &Server{Store: st, Secret: secret, Auth: a, Probe: p}
+func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *proxyman.Manager) *Server {
+	return &Server{Store: st, Secret: secret, Auth: a, Probe: p, PM: pm}
 }
 
 const sessionCookie = "keyway_session"
@@ -125,7 +127,14 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 		admin.GET("/pricing", s.handleAdminPricing)
 		admin.PUT("/pricing/:model", s.handleAdminUpdatePricing)
 		admin.GET("/proxies", s.handleAdminProxies)
+		admin.POST("/proxies", s.handleAdminCreateProxy)
+		admin.PUT("/proxies/:id", s.handleAdminUpdateProxy)
+		admin.DELETE("/proxies/:id", s.handleAdminDeleteProxy)
+		admin.GET("/proxy_usage", s.handleAdminProxyUsage)
 		admin.GET("/templates", s.handleAdminTemplates)
+		admin.POST("/templates", s.handleAdminCreateTemplate)
+		admin.PUT("/templates/:id", s.handleAdminUpdateTemplate)
+		admin.DELETE("/templates/:id", s.handleAdminDeleteTemplate)
 		admin.GET("/settings", s.handleAdminSettings)
 		admin.PUT("/settings", s.handleAdminUpdateSettings)
 	}

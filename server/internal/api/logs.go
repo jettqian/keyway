@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/crypto"
+	"keyway/internal/httpx"
 	"keyway/internal/store"
 	"keyway/internal/usage"
 )
@@ -192,6 +193,207 @@ func (s *Server) handleAdminProxies(c *gin.Context) {
 		})
 	}
 	s.ok(c, gin.H{"proxies": out})
+}
+
+func (s *Server) handleAdminCreateProxy(c *gin.Context) {
+	var req struct {
+		Name string `json:"name"`
+		URL  string `json:"url"`
+		Note string `json:"note"`
+	}
+	if err := c.BindJSON(&req); err != nil || trimOrEmpty(req.Name) == "" || trimOrEmpty(req.URL) == "" {
+		s.fail(c, http.StatusBadRequest, "名称与代理地址不能为空")
+		return
+	}
+	enc, err := encryptProxy(s.Secret, req.URL)
+	if err != nil {
+		s.fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	p := store.Proxy{Name: trimOrEmpty(req.Name), URLEnc: enc, Note: req.Note, Enabled: 1, CreatedAt: time.Now().Unix()}
+	if err := s.Store.DB().Create(&p).Error; err != nil {
+		s.fail(c, http.StatusInternalServerError, "创建失败")
+		return
+	}
+	s.PM.Reload()
+	s.ok(c, gin.H{"proxy": gin.H{"id": p.ID, "name": p.Name, "enabled": true, "note": p.Note}})
+}
+
+func (s *Server) handleAdminUpdateProxy(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var p store.Proxy
+	if err := s.Store.DB().First(&p, id).Error; err != nil {
+		s.fail(c, http.StatusNotFound, "代理不存在")
+		return
+	}
+	var req struct {
+		Name    string `json:"name"`
+		URL     string `json:"url"`
+		Note    string `json:"note"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		s.fail(c, http.StatusBadRequest, "非法请求体")
+		return
+	}
+	updates := map[string]any{}
+	if trimOrEmpty(req.Name) != "" {
+		updates["name"] = trimOrEmpty(req.Name)
+	}
+	updates["note"] = req.Note
+	if trimOrEmpty(req.URL) != "" {
+		enc, err := encryptProxy(s.Secret, req.URL)
+		if err != nil {
+			s.fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["url_enc"] = enc
+	}
+	if req.Enabled != nil {
+		updates["enabled"] = boolToInt(*req.Enabled)
+	}
+	s.Store.DB().Model(&p).Updates(updates)
+	s.PM.Reload()
+	s.ok(c, gin.H{})
+}
+
+func (s *Server) handleAdminDeleteProxy(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	s.Store.DB().Delete(&store.Proxy{}, id)
+	s.PM.Reload()
+	s.ok(c, gin.H{})
+}
+
+// handleAdminProxyUsage 公共代理按用户流量统计（仅统计，FR-P2）
+func (s *Server) handleAdminProxyUsage(c *gin.Context) {
+	type row struct {
+		UserID    int64  `json:"userId"`
+		Username  string `json:"username"`
+		ProxyID   int64  `json:"proxyId"`
+		ProxyName string `json:"proxyName"`
+		Day       string `json:"day"`
+		Bytes     int64  `json:"bytes"`
+	}
+	var rows []row
+	s.Store.DB().Raw(`
+		SELECT pu.user_id AS user_id, COALESCE(u.username,'-') AS username,
+		       pu.proxy_id AS proxy_id, COALESCE(p.name,'-') AS proxy_name,
+		       pu.day AS day, pu.bytes AS bytes
+		FROM proxy_usage pu
+		LEFT JOIN users u ON u.id = pu.user_id
+		LEFT JOIN proxies p ON p.id = pu.proxy_id
+		ORDER BY pu.day DESC, pu.bytes DESC
+		LIMIT 500
+	`).Scan(&rows)
+	s.ok(c, gin.H{"usage": rows})
+}
+
+// ---------- 管理员：预制模板 CRUD ----------
+
+type templateInput struct {
+	Name                    string            `json:"name"`
+	Type                    string            `json:"type"`
+	BaseURLs                []string          `json:"baseUrls"`
+	LineStrategy            string            `json:"lineStrategy"`
+	Models                  []string          `json:"models"`
+	ModelMapping            map[string]string `json:"modelMapping"`
+	PriorityDefault         int               `json:"priorityDefault"`
+	AllowPublicProxyDefault bool              `json:"allowPublicProxyDefault"`
+	Note                    string            `json:"note"`
+	Enabled                 bool              `json:"enabled"`
+}
+
+func (t *templateInput) validate() string {
+	if trimOrEmpty(t.Name) == "" {
+		return "名称不能为空"
+	}
+	if t.Type != "openai" && t.Type != "anthropic" {
+		return "类型必须为 openai 或 anthropic"
+	}
+	if n := len(nonEmpty(t.BaseURLs)); n < 1 || n > 5 {
+		return "线路数量须为 1~5"
+	}
+	if len(nonEmpty(t.Models)) < 1 {
+		return "至少配置一个模型"
+	}
+	if t.LineStrategy == "" {
+		t.LineStrategy = "auto"
+	}
+	return ""
+}
+
+func (s *Server) handleAdminCreateTemplate(c *gin.Context) {
+	var in templateInput
+	if err := c.BindJSON(&in); err != nil {
+		s.fail(c, http.StatusBadRequest, "非法请求体")
+		return
+	}
+	if msg := in.validate(); msg != "" {
+		s.fail(c, http.StatusBadRequest, msg)
+		return
+	}
+	tpl := store.ChannelTemplate{
+		Name: trimOrEmpty(in.Name), Type: in.Type,
+		BaseURLsJSON:            string(mustJSONStr(nonEmpty(in.BaseURLs))),
+		LineStrategy:            in.LineStrategy,
+		ModelsJSON:              string(mustJSONStr(nonEmpty(in.Models))),
+		ModelMappingJSON:        string(mustJSONStr(in.ModelMapping)),
+		PriorityDefault:         in.PriorityDefault,
+		AllowPublicProxyDefault: boolToInt(in.AllowPublicProxyDefault),
+		Note:                    in.Note,
+		Enabled:                 boolToInt(in.Enabled),
+		UpdatedAt:               time.Now().Unix(),
+	}
+	if err := s.Store.DB().Create(&tpl).Error; err != nil {
+		s.fail(c, http.StatusInternalServerError, "创建失败")
+		return
+	}
+	s.ok(c, gin.H{"template": templateDTO(&tpl)})
+}
+
+func (s *Server) handleAdminUpdateTemplate(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var tpl store.ChannelTemplate
+	if err := s.Store.DB().First(&tpl, id).Error; err != nil {
+		s.fail(c, http.StatusNotFound, "模板不存在")
+		return
+	}
+	var in templateInput
+	if err := c.BindJSON(&in); err != nil {
+		s.fail(c, http.StatusBadRequest, "非法请求体")
+		return
+	}
+	if msg := in.validate(); msg != "" {
+		s.fail(c, http.StatusBadRequest, msg)
+		return
+	}
+	tpl.Name = trimOrEmpty(in.Name)
+	tpl.Type = in.Type
+	tpl.BaseURLsJSON = string(mustJSONStr(nonEmpty(in.BaseURLs)))
+	tpl.LineStrategy = in.LineStrategy
+	tpl.ModelsJSON = string(mustJSONStr(nonEmpty(in.Models)))
+	tpl.ModelMappingJSON = string(mustJSONStr(in.ModelMapping))
+	tpl.PriorityDefault = in.PriorityDefault
+	tpl.AllowPublicProxyDefault = boolToInt(in.AllowPublicProxyDefault)
+	tpl.Note = in.Note
+	tpl.Enabled = boolToInt(in.Enabled)
+	tpl.UpdatedAt = time.Now().Unix()
+	s.Store.DB().Save(&tpl)
+	s.ok(c, gin.H{"template": templateDTO(&tpl)})
+}
+
+func (s *Server) handleAdminDeleteTemplate(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	// 已复制渠道不受影响（copied_from_template_id 悬挂标记）
+	s.Store.DB().Delete(&store.ChannelTemplate{}, id)
+	s.ok(c, gin.H{})
+}
+
+func encryptProxy(secret, url string) ([]byte, error) {
+	if _, err := httpx.ParseProxyURL(url); err != nil {
+		return nil, err
+	}
+	return crypto.Encrypt(secret, "proxy", []byte(url))
 }
 
 func (s *Server) handleAdminTemplates(c *gin.Context) {

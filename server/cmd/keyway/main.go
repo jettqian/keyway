@@ -16,6 +16,7 @@ import (
 	"keyway/internal/auth"
 	"keyway/internal/config"
 	"keyway/internal/probe"
+	"keyway/internal/proxyman"
 	"keyway/internal/relay"
 	"keyway/internal/routing"
 	"keyway/internal/store"
@@ -27,6 +28,7 @@ import (
 type app struct {
 	engine *gin.Engine
 	store  *store.Store
+	pm     *proxyman.Manager
 	stop   func()
 }
 
@@ -40,9 +42,10 @@ func buildApp(cfg config.Config) (*app, error) {
 	authSvc := auth.New(st, cfg.Secret)
 	routingSvc := routing.New(st, cfg.Secret)
 	logWriter := usage.NewWriter(st.DB())
-	probeEngine := probe.New(st, cfg.Secret, routingSvc, cfg)
-	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine)
-	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, cfg)
+	pm := proxyman.New(st, cfg.Secret)
+	probeEngine := probe.New(st, cfg.Secret, routingSvc, pm, cfg)
+	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm)
+	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, pm, cfg)
 
 	stopWriter := make(chan struct{})
 	writerDone := make(chan struct{})
@@ -56,6 +59,13 @@ func buildApp(cfg config.Config) (*app, error) {
 	go func() {
 		probeEngine.Start(probeStop)
 		close(probeDone)
+	}()
+
+	pmStop := make(chan struct{})
+	pmDone := make(chan struct{})
+	go func() {
+		pm.Start(pmStop)
+		close(pmDone)
 	}()
 
 	if os.Getenv("KEYWAY_DEBUG") == "" {
@@ -88,6 +98,7 @@ func buildApp(cfg config.Config) (*app, error) {
 	return &app{
 		engine: r,
 		store:  st,
+		pm:     pm,
 		stop: func() {
 			close(stopWriter)
 			select {
@@ -97,6 +108,11 @@ func buildApp(cfg config.Config) (*app, error) {
 			close(probeStop)
 			select {
 			case <-probeDone:
+			case <-time.After(5 * time.Second):
+			}
+			close(pmStop)
+			select {
+			case <-pmDone:
 			case <-time.After(5 * time.Second):
 			}
 		},

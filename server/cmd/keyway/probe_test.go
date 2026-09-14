@@ -41,6 +41,25 @@ func (c *ctx) seedStats(t *testing.T, channelID int64, lineURL string, ok bool, 
 	}
 }
 
+// ---------- proxy_test.go 辅助 ----------
+
+func timeNow() int64 { return time.Now().Unix() }
+
+func lineStatRow(channelID int64, lineURL, via string, now, lat *int64, ok *int) store.LineStat {
+	return store.LineStat{
+		ChannelID: channelID, LineURL: lineURL, Via: via,
+		LastProbeAt: now, LatencyMs: lat, Ok: ok,
+	}
+}
+
+func channelModel() store.Channel { return store.Channel{} }
+
+// flushPM 手动刷新公共代理流量统计（测试用）
+func (c *ctx) flushPM(t *testing.T) {
+	t.Helper()
+	c.pm.Flush()
+}
+
 func TestE2E测试按钮矩阵(t *testing.T) {
 	c, upstream := setupApp(t)
 	c.bootstrap(t, upstream.URL)

@@ -17,6 +17,7 @@ import (
 
 	"keyway/internal/config"
 	"keyway/internal/httpx"
+	"keyway/internal/proxyman"
 	"keyway/internal/routing"
 	"keyway/internal/store"
 )
@@ -51,6 +52,7 @@ type Engine struct {
 	store   *store.Store
 	secret  string
 	routing *routing.Service
+	pm      *proxyman.Manager
 	cfg     config.Config
 	pool    *httpx.Pool
 
@@ -59,9 +61,9 @@ type Engine struct {
 	failMult map[int64]int       // 连续失败退避倍数
 }
 
-func New(st *store.Store, secret string, r *routing.Service, cfg config.Config) *Engine {
+func New(st *store.Store, secret string, r *routing.Service, pm *proxyman.Manager, cfg config.Config) *Engine {
 	return &Engine{
-		store: st, secret: secret, routing: r, cfg: cfg,
+		store: st, secret: secret, routing: r, pm: pm, cfg: cfg,
 		pool:     httpx.NewPool(),
 		next:     map[int64]time.Time{},
 		failMult: map[int64]int{},
@@ -172,11 +174,8 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 		return nil, err
 	}
 
-	// 路径集合：直连 + 个人代理（公共代理 M4 接入）
-	paths := []struct{ proxy, via string }{{"", "direct"}}
-	if rc.PersonalProxyURL != "" {
-		paths = append(paths, struct{ proxy, via string }{rc.PersonalProxyURL, "personal"})
-	}
+	// 路径集合：proxyman（直连 → 个人 → 公共代理，渠道 opt-in）
+	paths := e.pm.Paths(rc.PersonalProxyURL, ch.AllowPublicProxy == 1)
 
 	var results []Result
 	for _, line := range rc.BaseURLs {
@@ -184,7 +183,7 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 			if len(results) >= matrixCap {
 				break
 			}
-			results = append(results, e.probeOnce(ch, model, keyPlain, line, p.proxy, p.via))
+			results = append(results, e.probeOnce(ch, model, keyPlain, line, p.ProxyURL, p.Via))
 		}
 	}
 	e.saveResults(ch.ID, results)

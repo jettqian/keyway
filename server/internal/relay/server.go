@@ -14,6 +14,7 @@ import (
 	"keyway/internal/config"
 	"keyway/internal/httpx"
 	"keyway/internal/probe"
+	"keyway/internal/proxyman"
 	"keyway/internal/routing"
 	"keyway/internal/store"
 	"keyway/internal/usage"
@@ -26,6 +27,7 @@ type Server struct {
 	Auth    *auth.Service
 	Routing *routing.Service
 	Logs    *usage.Writer
+	PM      *proxyman.Manager
 	Cfg     config.Config
 
 	pool httpx.Pool
@@ -33,9 +35,9 @@ type Server struct {
 	rrMu sync.Mutex
 }
 
-func NewServer(st *store.Store, secret string, a *auth.Service, r *routing.Service, w *usage.Writer, cfg config.Config) *Server {
+func NewServer(st *store.Store, secret string, a *auth.Service, r *routing.Service, w *usage.Writer, pm *proxyman.Manager, cfg config.Config) *Server {
 	return &Server{
-		Store: st, Secret: secret, Auth: a, Routing: r, Logs: w, Cfg: cfg,
+		Store: st, Secret: secret, Auth: a, Routing: r, Logs: w, PM: pm, Cfg: cfg,
 		pool: *httpx.NewPool(),
 		rr:   map[int64]int64{},
 	}
@@ -73,17 +75,20 @@ type attempt struct {
 	rc       *routing.ResolvedChannel
 	lineURL  string
 	proxyURL string // "" = 直连
-	via      string // direct | personal
+	via      string // direct | personal | proxy:{id}
+	proxyID  int64  // 公共代理 ID（via 为 proxy:{id} 时非零）
 	key      *store.Key
 }
 
 type linePath struct {
-	line  string
-	proxy string
-	via   string
+	line    string
+	proxy   string
+	via     string
+	proxyID int64
 }
 
-// plan 生成组合序列：渠道（priority 降序）× 线路 × 路径（直连→个人代理）× 密钥（有序/轮询）
+// plan 生成组合序列：渠道（priority 降序）× 线路 × 路径 × 密钥（有序/轮询）
+// 路径集合 = proxyman（直连→个人→公共代理，渠道 opt-in）；
 // 线路×路径按 line_stats 探测数据排序：健康且新鲜者按延迟升序，未知按录入顺序，不健康殿后；
 // 预算截断为 cfg.AttemptBudget；冷却中的密钥排后（可用密钥优先）
 func (s *Server) plan(matched, defaults []*routing.ResolvedChannel) []attempt {
@@ -93,20 +98,28 @@ func (s *Server) plan(matched, defaults []*routing.ResolvedChannel) []attempt {
 		if len(keys) == 0 {
 			continue
 		}
-		paths := []struct{ proxy, via string }{{"", "direct"}}
-		if rc.PersonalProxyURL != "" {
-			paths = append(paths, struct{ proxy, via string }{rc.PersonalProxyURL, "personal"})
-		}
+		paths := s.PM.Paths(rc.PersonalProxyURL, rc.Channel.AllowPublicProxy == 1)
 		lines := rc.BaseURLs
 		if rc.Channel.LineStrategy == "manual" {
 			// manual：固定第一条线路且不做路径优选
 			lines = lines[:1]
 			paths = paths[:1]
 		}
-		combos := orderCombos(s.Store.DB(), rc.Channel.ID, lines, paths)
+		var rawPaths []struct{ proxy, via string }
+		ids := map[string]int64{}
+		for _, p := range paths {
+			rawPaths = append(rawPaths, struct{ proxy, via string }{p.ProxyURL, p.Via})
+			if p.ProxyID != 0 {
+				ids[p.Via] = p.ProxyID
+			}
+		}
+		combos := orderCombos(s.Store.DB(), rc.Channel.ID, lines, rawPaths)
 		for _, cb := range combos {
 			for _, k := range keys {
-				out = append(out, attempt{rc: rc, lineURL: cb.line, proxyURL: cb.proxy, via: cb.via, key: k})
+				out = append(out, attempt{
+					rc: rc, lineURL: cb.line, proxyURL: cb.proxy, via: cb.via,
+					proxyID: ids[cb.via], key: k,
+				})
 			}
 		}
 	}

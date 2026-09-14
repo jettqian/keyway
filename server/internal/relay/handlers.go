@@ -218,9 +218,9 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		}
 		var u convert.Usage
 		if stream {
-			u = s.streamResponse(c, inbound, a.rc.Channel.Type, resp)
+			u = s.streamResponse(c, a, inbound, resp)
 		} else {
-			u = s.bodyResponse(c, inbound, a.rc.Channel.Type, resp)
+			u = s.bodyResponse(c, a, inbound, resp)
 		}
 		s.submitLog(c, a, inbound, model, upstreamModel, resp.StatusCode, u)
 		return
@@ -316,8 +316,9 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 	return resp, keyPlain, nil
 }
 
-// streamResponse 流式回写：跨协议走转换器，同协议逐行透传（flush）
-func (s *Server) streamResponse(c *gin.Context, inbound, channelType string, resp *http.Response) convert.Usage {
+// streamResponse 流式回写：跨协议走转换器，同协议逐行透传（flush）；公共代理统计出站字节
+func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp *http.Response) convert.Usage {
+	channelType := a.rc.Channel.Type
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -339,9 +340,11 @@ func (s *Server) streamResponse(c *gin.Context, inbound, channelType string, res
 	buf := make([]byte, 32*1024)
 	var lineBuf []byte
 	var u convert.Usage
+	var totalBytes int64
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
+			totalBytes += int64(n)
 			lineBuf = append(lineBuf, buf[:n]...)
 			for {
 				idx := bytes.IndexByte(lineBuf, '\n')
@@ -368,6 +371,11 @@ func (s *Server) streamResponse(c *gin.Context, inbound, channelType string, res
 	}
 	resp.Body.Close()
 	c.Writer.Flush()
+	if a.proxyID != 0 {
+		if _, user := ctxTokenUser(c); user != nil {
+			s.PM.Record(user.ID, a.proxyID, totalBytes)
+		}
+	}
 	return u
 }
 
@@ -390,10 +398,16 @@ func (s *Server) writeStreamLine(c *gin.Context, w io.Writer, conv interface {
 	c.Writer.Flush()
 }
 
-// bodyResponse 非流式回写：跨协议转换响应体
-func (s *Server) bodyResponse(c *gin.Context, inbound, channelType string, resp *http.Response) convert.Usage {
+// bodyResponse 非流式回写：跨协议转换响应体；公共代理统计出站字节
+func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *http.Response) convert.Usage {
+	channelType := a.rc.Channel.Type
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
 	resp.Body.Close()
+	if a.proxyID != 0 {
+		if _, user := ctxTokenUser(c); user != nil {
+			s.PM.Record(user.ID, a.proxyID, int64(len(body)))
+		}
+	}
 
 	if inbound == "openai" && channelType == "anthropic" {
 		var an convert.AnthropicMessagesResponse

@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/config"
+	"keyway/internal/proxyman"
 	"keyway/internal/store"
 )
 
@@ -67,6 +68,7 @@ func mockUpstream(t *testing.T) *httptest.Server {
 type ctx struct {
 	e         *gin.Engine
 	store     *store.Store
+	pm        *proxyman.Manager
 	jar       *simpleJar
 	token     string
 	channelID int64
@@ -105,7 +107,7 @@ func setupApp(t *testing.T) (*ctx, *httptest.Server) {
 	}
 	t.Cleanup(a.stop)
 	upstream := mockUpstream(t)
-	return &ctx{e: a.engine, store: a.store, jar: newSimpleJar()}, upstream
+	return &ctx{e: a.engine, store: a.store, pm: a.pm, jar: newSimpleJar()}, upstream
 }
 
 func (c *ctx) do(method, path string, body any, useSession bool) *httptest.ResponseRecorder {
