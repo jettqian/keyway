@@ -117,6 +117,20 @@ const StatsPage: React.FC = () => {
                 render: (v: string, r: LatestUsage) => v || `#${r.channelId}`,
               },
               {
+                title: '线路',
+                dataIndex: 'lineUrl',
+                ellipsis: true,
+                render: (v: string, r: LatestUsage) =>
+                  v ? (
+                    <span>
+                      {v}
+                      {r.via ? <span className="text-tertiary"> · {r.via}</span> : null}
+                    </span>
+                  ) : (
+                    <span className="text-tertiary">—</span>
+                  ),
+              },
+              {
                 title: '模型',
                 dataIndex: 'model',
                 render: (_, r: LatestUsage) => (

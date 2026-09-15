@@ -1,6 +1,11 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.30（与 PRD v1.5.32 对应；前端**数字/货币展示精细化**——自托管 Inter
+- 版本：v1.31（与 PRD v1.5.33 对应；最近生效流量**补充实际路由线路维度**——
+  `stats.recent`（LatestUsage）新增 `lineUrl`/`via` 字段，去重查询口径不变
+  （仍按渠道×模型取 MAX(id) 最新一条），线路随该行一并取
+  `COALESCE(line_url,'')`/`COALESCE(via,'')`；统计页最近生效流量表新增「线路」
+  列（line_url 主显 + via 弱色后缀，历史日志无线路数据回退 —）；
+  前版 v1.30：与 PRD v1.5.32 对应；前端**数字/货币展示精细化**——自托管 Inter
   字体（`@fontsource/inter` 400–800 字重，修复 fontFamily 声明 Inter 但从未加载、
   `$`/`%`/数字实际渲染在系统中文字体上的问题）；新增 `Money` 组件统一货币展示
   （`$` 符号小一号弱色、统计带大数字模式弱化费用小数拖尾、`%` 后缀弱化），
@@ -637,7 +642,8 @@ new-api 的已知语义（仅参考行为，代码自研）。
 - 最近生效流量（`stats.recent`）：**同渠道同模型只占一行**——先按
   `GROUP BY channel_id, model` 对成功（status_code < 400 且 channel_id 非空）日志取
   `MAX(id)`（每组最新一条），再 `ORDER BY id DESC LIMIT 5` 取最近 5 个组合，回传
-  渠道名/模型/时间；不受统计窗口限制，API 层按 channel_id 批量补渠道名
+  渠道名/模型/时间/**实际路由线路**（line_url + via，随该组最新一条取值，历史
+  日志为空串）；不受统计窗口限制，API 层按 channel_id 批量补渠道名
 - CSV：服务端流式生成 `text/csv` 下载
 - 若 v1.1 出现慢查询 → 增加 daily rollup 表（计划内，不在 MVP）
 
@@ -754,7 +760,7 @@ GET /oauth/feishu/callback?code&state
 | POST /api/tokens/:id/reveal | 所属用户回看完整令牌（复制密钥按钮数据源） |
 | POST /api/tokens/:id/revoke | 吊销令牌（立即失效，保留记录） |
 | GET /api/logs | 自己的日志（分页/过滤） |
-| GET /api/stats | 自己的统计（含最近生效流量 recent：同渠道同模型去重后的最新 5 个组合；start/end 自定义时间窗，缺省 days） |
+| GET /api/stats | 自己的统计（含最近生效流量 recent：同渠道同模型去重后的最新 5 个组合，含实际线路 lineUrl/via；start/end 自定义时间窗，缺省 days） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
   （模型目录 CRUD）、/api/admin/templates、
   /api/admin/proxies、/api/admin/pricing(+import、+sync_remote 远程同步)、

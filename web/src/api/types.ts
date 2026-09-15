@@ -167,6 +167,8 @@ export interface LatestUsage {
   createdAt: number
   channelId: number
   channelName?: string
+  lineUrl?: string
+  via?: string
   model: string
   upstreamModel?: string
   statusCode: number

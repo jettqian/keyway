@@ -292,12 +292,14 @@ type StatsSummary struct {
 	Unpriced         bool    `json:"unpriced"`
 }
 
-// LatestUsage 最近生效流量（成功请求命中的渠道与模型）
+// LatestUsage 最近生效流量（成功请求命中的渠道、线路与模型）
 type LatestUsage struct {
 	ID            int64  `json:"id"`
 	CreatedAt     int64  `json:"createdAt"`
 	ChannelID     int64  `json:"channelId"`
 	ChannelName   string `json:"channelName,omitempty"`
+	LineURL       string `json:"lineUrl,omitempty"` // 实际路由线路（base_url）
+	Via           string `json:"via,omitempty"`     // 连接路径：direct | personal | proxy:{id}
 	Model         string `json:"model"`
 	UpstreamModel string `json:"upstreamModel,omitempty"`
 	StatusCode    int    `json:"statusCode"`
@@ -415,7 +417,7 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 	applyIDNames(st.ByUser, userNames)
 
 	// 最近生效流量（不受统计窗口限制）：同渠道同模型只占一行——按（渠道, 模型）
-	// 分组取最新一条成功日志，展示最近 5 个组合
+	// 分组取最新一条成功日志，展示最近 5 个组合（含实际路由线路与连接路径）
 	var recent []struct {
 		ID            int64
 		CreatedAt     int64
@@ -423,6 +425,8 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 		Model         string
 		UpstreamModel string
 		StatusCode    int
+		LineURL       string
+		Via           string
 	}
 	sub := db.Model(&store.Log{}).
 		Select("MAX(id) AS id").
@@ -431,7 +435,7 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 		Group("channel_id, model")
 	err := db.Model(&store.Log{}).
 		Where("id IN (?)", sub).
-		Select("id, created_at, channel_id, COALESCE(model,'') AS model, COALESCE(upstream_model,'') AS upstream_model, COALESCE(status_code,0) AS status_code").
+		Select("id, created_at, channel_id, COALESCE(model,'') AS model, COALESCE(upstream_model,'') AS upstream_model, COALESCE(status_code,0) AS status_code, COALESCE(line_url,'') AS line_url, COALESCE(via,'') AS via").
 		Order("id DESC").Limit(5).
 		Scan(&recent).Error
 	if err != nil {
@@ -445,6 +449,8 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 			ID:            recent[i].ID,
 			CreatedAt:     recent[i].CreatedAt,
 			ChannelID:     recent[i].ChannelID,
+			LineURL:       recent[i].LineURL,
+			Via:           recent[i].Via,
 			Model:         recent[i].Model,
 			UpstreamModel: recent[i].UpstreamModel,
 			StatusCode:    recent[i].StatusCode,

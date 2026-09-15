@@ -22,21 +22,21 @@ func TestQueryStatsRecent(t *testing.T) {
 	db := st.DB()
 
 	// 用户 1：6 个不同（渠道,模型）组合，其中 (1,m1)、(2,m2) 各重复一次
-	//（重复只占一行、时间取最新），另 1 条失败；用户 2：1 条成功
+	//（重复只占一行、时间与线路取最新），另 1 条失败；用户 2：1 条成功
 	logs := []store.Log{
-		{CreatedAt: 100, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200)},
-		{CreatedAt: 200, UserID: 1, ChannelID: i64p(2), Model: strp("m2"), StatusCode: intp(200)},
+		{CreatedAt: 100, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200), LineURL: strp("https://old.example.com"), Via: strp("direct")},
+		{CreatedAt: 200, UserID: 1, ChannelID: i64p(2), Model: strp("m2"), StatusCode: intp(200), LineURL: strp("https://b.example.com"), Via: strp("proxy:3")},
 		{CreatedAt: 300, UserID: 1, ChannelID: i64p(3), Model: strp("m3"), StatusCode: intp(200)},
-		// 同渠道同模型重复：只占一行，展示最新这条（350）
-		{CreatedAt: 350, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200)},
+		// 同渠道同模型重复：只占一行，展示最新这条（350，线路同取最新）
+		{CreatedAt: 350, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200), LineURL: strp("https://a.example.com"), Via: strp("personal")},
 		{CreatedAt: 400, UserID: 1, ChannelID: i64p(4), Model: strp("m4"), StatusCode: intp(200)},
-		// 同渠道同模型重复：只占一行，展示最新这条（450）
-		{CreatedAt: 450, UserID: 1, ChannelID: i64p(2), Model: strp("m2"), StatusCode: intp(200)},
+		// 同渠道同模型重复：只占一行，展示最新这条（450，线路取最新、旧行线路不残留）
+		{CreatedAt: 450, UserID: 1, ChannelID: i64p(2), Model: strp("m2"), StatusCode: intp(200), LineURL: strp("https://b2.example.com"), Via: strp("direct")},
 		{CreatedAt: 500, UserID: 1, ChannelID: i64p(5), Model: strp("m5"), StatusCode: intp(200)},
 		{CreatedAt: 600, UserID: 1, ChannelID: i64p(6), Model: strp("m6"), StatusCode: intp(200)},
 		// 失败请求（不进最近生效流量）
 		{CreatedAt: 700, UserID: 1, ChannelID: i64p(7), Model: strp("m7"), StatusCode: intp(500)},
-		{CreatedAt: 800, UserID: 2, ChannelID: i64p(8), Model: strp("m8"), StatusCode: intp(200)},
+		{CreatedAt: 800, UserID: 2, ChannelID: i64p(8), Model: strp("m8"), StatusCode: intp(200), LineURL: strp("https://c.example.com"), Via: strp("direct")},
 	}
 	for i := range logs {
 		if err := db.Create(&logs[i]).Error; err != nil {
@@ -77,16 +77,27 @@ func TestQueryStatsRecent(t *testing.T) {
 		channel int64
 		model   string
 		at      int64
+		lineURL string
+		via     string
 	}{
-		{1, "m1", 350},
-		{2, "m2", 450},
+		{1, "m1", 350, "https://a.example.com", "personal"},
+		{2, "m2", 450, "https://b2.example.com", "direct"},
 	} {
 		r := find(tc.channel, tc.model)
 		if r == nil {
 			t.Errorf("期望包含组合 (%d,%s)，实际 %+v", tc.channel, tc.model, st1.Recent)
-		} else if r.CreatedAt != tc.at {
-			t.Errorf("组合 (%d,%s) 期望展示最新一条（时间 %d），实际 %d", tc.channel, tc.model, tc.at, r.CreatedAt)
+		} else {
+			if r.CreatedAt != tc.at {
+				t.Errorf("组合 (%d,%s) 期望展示最新一条（时间 %d），实际 %d", tc.channel, tc.model, tc.at, r.CreatedAt)
+			}
+			if r.LineURL != tc.lineURL || r.Via != tc.via {
+				t.Errorf("组合 (%d,%s) 期望展示最新一条的线路 %s / %s，实际 %s / %s", tc.channel, tc.model, tc.lineURL, tc.via, r.LineURL, r.Via)
+			}
 		}
+	}
+	// 无线路的历史日志回退空值（COALESCE 不产生 "null" 字符串）
+	if r := find(6, "m6"); r != nil && (r.LineURL != "" || r.Via != "") {
+		t.Errorf("无线路日志期望线路字段为空，实际 %s / %s", r.LineURL, r.Via)
 	}
 
 	uid2 := int64(2)
