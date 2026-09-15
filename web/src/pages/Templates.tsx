@@ -3,9 +3,11 @@ import { Table, Button, message } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { listTemplates, copyTemplate } from '../api'
 import type { ChannelTemplate } from '../api/types'
+import { useI18n } from '../i18n'
 
 const TemplatesPage: React.FC = () => {
   const nav = useNavigate()
+  const { t } = useI18n()
   const [templates, setTemplates] = React.useState<ChannelTemplate[]>([])
   const [loading, setLoading] = React.useState(true)
 
@@ -16,10 +18,10 @@ const TemplatesPage: React.FC = () => {
       .finally(() => setLoading(false))
   }, [])
 
-  const copy = async (t: ChannelTemplate) => {
+  const copy = async (tpl: ChannelTemplate) => {
     try {
-      const r = await copyTemplate(t.id)
-      message.success('已复制为渠道草稿，绑定密钥并启用后生效')
+      const r = await copyTemplate(tpl.id)
+      message.success(t('templates.copiedDraft'))
       nav(`/channels/${r.channel.id}`)
     } catch (e) {
       message.error((e as Error).message)
@@ -28,29 +30,29 @@ const TemplatesPage: React.FC = () => {
 
   return (
     <div>
-      <div className="page-heading"><div><h2>预制模板</h2><p>复制管理员维护的线路配置，绑定密钥后即可快速接入。</p></div></div>
+      <div className="page-heading"><div><h2>{t('templates.title')}</h2><p>{t('templates.subtitle')}</p></div></div>
       <Table<ChannelTemplate>
         rowKey="id"
         loading={loading}
         dataSource={templates}
         scroll={{ x: 'max-content' }}
         columns={[
-          { title: '名称', dataIndex: 'name' },
-          { title: '线路数', width: 90, align: 'right', render: (_, t) => t.baseUrls.length },
-          { title: '模型数', width: 90, align: 'right', render: (_, t) => t.models.length },
-          { title: '复制次数', dataIndex: 'copyCount', width: 90, align: 'right' },
-          { title: '说明', dataIndex: 'note', ellipsis: true },
+          { title: t('common.name'), dataIndex: 'name' },
+          { title: t('templates.baseUrlsCount'), width: 90, align: 'right', render: (_, tpl) => tpl.baseUrls.length },
+          { title: t('templates.modelsCount'), width: 90, align: 'right', render: (_, tpl) => tpl.models.length },
+          { title: t('templates.copyCount'), dataIndex: 'copyCount', width: 90, align: 'right' },
+          { title: t('common.description'), dataIndex: 'note', ellipsis: true },
           {
-            title: '操作',
+            title: t('common.action'),
             width: 140,
-            render: (_, t) => (
-              <Button type="primary" size="small" onClick={() => copy(t)}>
-                复制到我的渠道
+            render: (_, tpl) => (
+              <Button type="primary" size="small" onClick={() => copy(tpl)}>
+                {t('templates.copyToChannels')}
               </Button>
             ),
           },
         ]}
-        locale={{ emptyText: '暂无模板（管理员尚未配置）' }}
+        locale={{ emptyText: t('templates.empty') }}
       />
     </div>
   )

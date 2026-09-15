@@ -9,14 +9,15 @@ import { listTokens, createToken, updateToken, revokeToken, deleteToken, revealT
 import type { GatewayToken, Channel } from '../api/types'
 import { formatDateTime } from '../format'
 import { copyText } from '../copy'
+import { useI18n } from '../i18n'
 
 // 渠道行样式（渠道面板列表行）
 const rowStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
-  border: '1px solid #e3e9eb', borderRadius: 6, marginBottom: 6, background: '#fbfcfd',
+  border: '1px solid var(--kw-border)', borderRadius: 6, marginBottom: 6, background: 'var(--kw-soft-bg)',
 }
 // 已关闭渠道：原位保留、置灰显示（顺序不变，只是不参与路由）
-const closedStyle: React.CSSProperties = { color: '#8a979d', background: '#f6f8f9' }
+const closedStyle: React.CSSProperties = { color: 'var(--kw-tertiary)', background: 'var(--kw-soft-bg)' }
 
 // 可排序渠道行：拖拽只认行首手柄（dnd-kit listeners 绑定在手柄上），
 // 名称/开关区域不可拖，天然杜绝误触；拖动时其余行自动让位（transform 动画）
@@ -28,6 +29,7 @@ const ChannelRow: React.FC<{
   onToggle: (id: number, on: boolean) => void
   onMove: (from: number, to: number) => void
 }> = ({ c, on, i, total, onToggle, onMove }) => {
+  const { t } = useI18n()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: c.id })
   return (
     <div
@@ -38,17 +40,17 @@ const ChannelRow: React.FC<{
         {...attributes}
         {...listeners}
         style={{ display: 'inline-flex', alignItems: 'center', cursor: 'grab', padding: '6px 6px 6px 2px', marginLeft: -8 }}
-        title="拖动调整顺序"
+        title={t('tokens.dragToReorder')}
       >
-        <HolderOutlined style={{ color: on ? '#176b87' : '#b7c4c9' }} />
+        <HolderOutlined style={{ color: on ? 'var(--kw-primary)' : 'var(--kw-tertiary)' }} />
       </span>
       <span style={{ flex: 1 }}>{c.name}</span>
-      {c.enabled ? null : <Tag>渠道停用</Tag>}
+      {c.enabled ? null : <Tag>{t('tokens.channelDisabled')}</Tag>}
       <Space size={2}>
-        <Button type="text" size="small" icon={<CaretUpOutlined />} disabled={i === 0} onClick={() => onMove(i, i - 1)} title="上移" />
-        <Button type="text" size="small" icon={<CaretDownOutlined />} disabled={i === total - 1} onClick={() => onMove(i, i + 1)} title="下移" />
+        <Button type="text" size="small" icon={<CaretUpOutlined />} disabled={i === 0} onClick={() => onMove(i, i - 1)} title={t('tokens.moveUp')} />
+        <Button type="text" size="small" icon={<CaretDownOutlined />} disabled={i === total - 1} onClick={() => onMove(i, i + 1)} title={t('tokens.moveDown')} />
       </Space>
-      <Switch size="small" checked={on} onChange={(v) => onToggle(c.id, v)} title={on ? '关闭后保持原位' : '打开'} />
+      <Switch size="small" checked={on} onChange={(v) => onToggle(c.id, v)} title={on ? t('tokens.closeKeepsPosition') : t('tokens.open')} />
     </div>
   )
 }
@@ -59,6 +61,7 @@ const ChannelRow: React.FC<{
 // 只作为只读过渡态——以全部渠道按优先级预览，任何调整都会把令牌固化为所选渠道，
 // 从此不再有两套优先级规则的歧义。面板操作走乐观更新 + onSaved 静默更新列表。
 const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSaved: (t: GatewayToken) => void }> = ({ token, channels, onSaved }) => {
+  const { t } = useI18n()
   const boundIds = token.channelIds ?? []
   const boundOrder = token.channelOrder ?? []
   // 服务端 order 为空（旧数据）时用启用集合兜底，保证顺序信息自愈
@@ -143,7 +146,7 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
   }
 
   if (channels.length === 0) {
-    return <span className="text-tertiary">暂无渠道，请先在渠道页创建后再回来配置。</span>
+    return <span className="text-tertiary">{t('tokens.noChannels')}</span>
   }
 
   return (
@@ -153,18 +156,18 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
           type="warning"
           showIcon
           style={{ marginBottom: 8 }}
-          message="该令牌当前未限定：路由到所有启用渠道，按渠道优先级。下方为按渠道优先级的预览，任何调整（开关或排序）都会把令牌固定为所选渠道。"
+          message={t('tokens.unrestrictedAlert')}
         />
       ) : ids.length === 0 ? (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 8 }}
-          message="已启用 0 个渠道：该令牌的所有渠道均已临时关闭，请求不会命中任何渠道（无候选时回退默认渠道，未配置则报错）。打开渠道开关即可恢复；与「吊销」不同，令牌与配置保持有效。"
+          message={t('tokens.allClosedAlert')}
         />
       ) : (
         <div className="text-secondary" style={{ fontSize: 12, marginBottom: 6 }}>
-          已启用 {ids.length}/{rows.length}，按列表顺序路由（自上而下依次尝试）；拖动行首手柄或用 ↑↓ 调整，关闭的渠道保持原位、只是不参与路由。
+          {t('tokens.panelSummary', { enabled: ids.length, total: rows.length })}
         </div>
       )}
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
@@ -176,14 +179,14 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
       </DndContext>
       {rest.length > 0 ? (
         <>
-          <div className="text-secondary" style={{ fontSize: 12, margin: '4px 0 6px' }}>未加入（打开开关将追加到列表末尾）</div>
+          <div className="text-secondary" style={{ fontSize: 12, margin: '4px 0 6px' }}>{t('tokens.notAdded')}</div>
           {rest.map((id) => {
             const c = byId.get(id)!
             return (
               <div key={id} className="text-secondary" style={{ ...rowStyle, borderStyle: 'dashed' }}>
-                <PlusOutlined style={{ color: '#c5ced3' }} />
+                <PlusOutlined style={{ color: 'var(--kw-tertiary)' }} />
                 <span style={{ flex: 1 }}>{c.name}</span>
-                {c.enabled ? null : <Tag>渠道停用</Tag>}
+                {c.enabled ? null : <Tag>{t('tokens.channelDisabled')}</Tag>}
                 <Switch size="small" checked={false} onChange={() => addNew(id)} />
               </div>
             )
@@ -196,6 +199,7 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
 
 const TokensPage: React.FC = () => {
   const nav = useNavigate()
+  const { t, locale } = useI18n()
   const [tokens, setTokens] = React.useState<GatewayToken[]>([])
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -251,17 +255,17 @@ const TokensPage: React.FC = () => {
       .catch(() => {})
   }
 
-  const copyKey = async (t: GatewayToken) => {
+  const copyKey = async (tk: GatewayToken) => {
     try {
-      let plaintext = revealedRef.current.get(t.id)
+      let plaintext = revealedRef.current.get(tk.id)
       if (!plaintext) {
-        plaintext = (await revealToken(t.id)).plaintext
-        revealedRef.current.set(t.id, plaintext)
+        plaintext = (await revealToken(tk.id)).plaintext
+        revealedRef.current.set(tk.id, plaintext)
       }
       if (await copyText(plaintext)) {
-        message.success('已复制到剪贴板')
+        message.success(t('tokens.copiedToClipboard'))
       } else {
-        message.error('复制失败，请重试')
+        message.error(t('tokens.copyFailed'))
       }
     } catch (e) {
       message.error((e as Error).message)
@@ -271,9 +275,9 @@ const TokensPage: React.FC = () => {
   return (
     <div>
       <div className="page-heading">
-        <div><h2>网关令牌</h2><p>为客户端创建访问凭证；「限定渠道」列点开即可配置范围与优先级。</p></div>
+        <div><h2>{t('tokens.title')}</h2><p>{t('tokens.subtitle')}</p></div>
         <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ name: '', channelIds: [], modelScope: '', expiresAt: undefined }); setModalOpen(true) }}>
-          新建令牌
+          {t('tokens.create')}
         </Button>
       </div>
       </div>
@@ -282,29 +286,29 @@ const TokensPage: React.FC = () => {
         loading={loading}
         dataSource={tokens}
         scroll={{ x: 'max-content' }}
-        locale={{ emptyText: '暂无令牌，点击右上角「新建令牌」创建' }}
+        locale={{ emptyText: t('tokens.empty') }}
         columns={[
-          { title: '名称', dataIndex: 'name' },
-          { title: '前缀', dataIndex: 'keyPrefix', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
+          { title: t('common.name'), dataIndex: 'name' },
+          { title: t('tokens.prefix'), dataIndex: 'keyPrefix', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
           {
-            title: '限定渠道',
+            title: t('tokens.channelRestriction'),
             dataIndex: 'channelIds',
             width: 230,
-            render: (_: number[] | undefined, t: GatewayToken) => {
-              const ids = t.channelIds ?? (t.channelId ? [t.channelId] : [])
+            render: (_: number[] | undefined, tk: GatewayToken) => {
+              const ids = tk.channelIds ?? (tk.channelId ? [tk.channelId] : [])
               const names = ids.map((id) => channels.find((c) => c.id === id)?.name ?? `#${id}`)
-              const head = names.slice(0, 2).join('、')
-              const summary = ids.length === 0 ? (t.restricted ? '全部已关闭' : '不限（全部渠道）') : names.length > 2 ? `${head} 等 ${names.length} 个` : head
-              if (t.revoked) return <span className="text-tertiary">{summary}</span>
+              const head = names.slice(0, 2).join(locale === 'zh' ? '、' : ', ')
+              const summary = ids.length === 0 ? (tk.restricted ? t('tokens.allClosed') : t('tokens.unrestrictedAll')) : names.length > 2 ? t('tokens.andMore', { head, count: names.length }) : head
+              if (tk.revoked) return <span className="text-tertiary">{summary}</span>
               return (
                 <Popover
                   trigger="click"
                   placement="rightTop"
                   overlayStyle={{ maxWidth: 600 }}
-                  title={`渠道范围与顺序：${t.name}`}
-                  content={<TokenChannels token={t} channels={channels} onSaved={applyTokenUpdate} />}
+                  title={t('tokens.channelScopeOrder', { name: tk.name })}
+                  content={<TokenChannels token={tk} channels={channels} onSaved={applyTokenUpdate} />}
                 >
-                  <a className="channel-pill" title="点击配置渠道范围与优先级">
+                  <a className="channel-pill" title={t('tokens.clickToConfigure')}>
                     <span className="channel-pill-text">{summary}</span>
                     <DownOutlined />
                   </a>
@@ -312,81 +316,81 @@ const TokensPage: React.FC = () => {
               )
             },
           },
-          { title: '模型范围', dataIndex: 'modelScope', render: (v?: string) => v ?? '不限' },
-          { title: '创建时间', dataIndex: 'createdAt', render: (v: number | string) => formatDateTime(v) },
-          { title: '过期时间', dataIndex: 'expiresAt', render: (v?: number | string) => v ? formatDateTime(v) : '永不过期' },
+          { title: t('tokens.modelScope'), dataIndex: 'modelScope', render: (v?: string) => v ?? t('tokens.unrestricted') },
+          { title: t('common.createdAt'), dataIndex: 'createdAt', render: (v: number | string) => formatDateTime(v) },
+          { title: t('tokens.expiresAt'), dataIndex: 'expiresAt', render: (v?: number | string) => v ? formatDateTime(v) : t('tokens.neverExpires') },
           {
-            title: '状态',
+            title: t('common.status'),
             dataIndex: 'revoked',
-            render: (r: boolean) => (r ? <Tag>已吊销</Tag> : <Tag color="green">有效</Tag>),
+            render: (r: boolean) => (r ? <Tag>{t('tokens.revoked')}</Tag> : <Tag color="green">{t('tokens.valid')}</Tag>),
           },
           {
-            title: '操作',
+            title: t('common.action'),
             width: 200,
-            render: (_, t) =>
+            render: (_, tk) =>
               <Space>
-                <Button size="small" onClick={() => copyKey(t)} onPointerDown={() => prefetchKey(t.id)} onMouseEnter={() => prefetchKey(t.id)}>复制密钥</Button>
-                {t.revoked ? (
+                <Button size="small" onClick={() => copyKey(tk)} onPointerDown={() => prefetchKey(tk.id)} onMouseEnter={() => prefetchKey(tk.id)}>{t('tokens.copyKey')}</Button>
+                {tk.revoked ? (
                   <Popconfirm
-                    title="删除该令牌记录？删除后不可恢复"
+                    title={t('tokens.deleteConfirm')}
                     onConfirm={async () => {
-                      await deleteToken(t.id)
-                      message.success('已删除')
+                      await deleteToken(tk.id)
+                      message.success(t('common.deleted'))
                       refresh()
                     }}
                   >
-                    <Button size="small" danger>删除</Button>
+                    <Button size="small" danger>{t('common.delete')}</Button>
                   </Popconfirm>
                 ) : (
                   <Popconfirm
-                    title="吊销后立即生效？"
+                    title={t('tokens.revokeConfirm')}
                     onConfirm={async () => {
-                      await revokeToken(t.id)
-                      message.success('已吊销')
+                      await revokeToken(tk.id)
+                      message.success(t('tokens.revoked'))
                       refresh()
                     }}
                   >
-                    <Button size="small" danger>吊销</Button>
+                    <Button size="small" danger>{t('tokens.revoke')}</Button>
                   </Popconfirm>
                 )}
               </Space>,
           },
         ]}
       />
-      <Modal title="新建令牌" open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
+      <Modal title={t('tokens.create')} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
-            <Input placeholder="如 claude-code" />
+          <Form.Item name="name" label={t('common.name')} rules={[{ required: true, message: t('common.nameRequired') }]}>
+            <Input placeholder={t('tokens.namePlaceholder')} />
           </Form.Item>
-          <Form.Item name="channelIds" label="限定渠道" extra={<span className="form-hint">留空则暂不限定（路由到所有启用渠道，按渠道优先级）；创建后可在列表「限定渠道」中调整，首次调整即固定为所选渠道。</span>}>
+          <Form.Item name="channelIds" label={t('tokens.channelRestriction')} extra={<span className="form-hint">{t('tokens.channelIdsHint')}</span>}>
             <Select
               mode="multiple"
               allowClear
               options={channels.map((c) => ({ value: c.id, label: c.name }))}
-              placeholder="不限定则路由到所有启用渠道"
+              placeholder={t('tokens.channelIdsPlaceholder')}
             />
           </Form.Item>
-          <Form.Item name="modelScope" label="模型范围（可选）" extra={<span className="form-hint">支持前缀通配，例如 claude-*。</span>}>
-            <Input placeholder="如 claude-*" />
+          <Form.Item name="modelScope" label={t('tokens.modelScopeOptional')} extra={<span className="form-hint">{t('tokens.modelScopeHint')}</span>}>
+            <Input placeholder={t('tokens.modelScopePlaceholder')} />
           </Form.Item>
-          <Form.Item name="expiresAt" label="过期时间（可选）">
+          <Form.Item name="expiresAt" label={t('tokens.expiresAtOptional')}>
             <DatePicker showTime style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>
       <Modal
         open={created !== null}
-        title="令牌已创建"
-        okText="我已保存，关闭"
+        title={t('tokens.createdTitle')}
+        okText={t('tokens.savedClose')}
         onCancel={() => setCreated(null)}
         onOk={() => setCreated(null)}
       >
-        <Typography.Paragraph>请复制保存；之后也可在令牌列表中复制：</Typography.Paragraph>
+        <Typography.Paragraph>{t('tokens.copyPrompt')}</Typography.Paragraph>
         <Typography.Paragraph copyable={{ text: created ?? '' }} code>
           {created}
         </Typography.Paragraph>
         <Typography.Paragraph style={{ marginBottom: 0 }}>
-          客户端配置方法见 <a onClick={() => { setCreated(null); nav('/guide') }}>接入指南</a>。
+          {t('tokens.clientConfigPrefix')} <a onClick={() => { setCreated(null); nav('/guide') }}>{t('tokens.guideLink')}</a>{t('tokens.clientConfigSuffix')}
         </Typography.Paragraph>
       </Modal>
     </div>
