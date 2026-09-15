@@ -35,6 +35,8 @@ export const feishuLoginUrl = () => get<{ url: string }>('/api/auth/feishu/url')
 export const listKeys = () => get<{ keys: ApiKey[] }>('/api/keys')
 export const createKey = (input: ApiKeyInput) => post<{ key: ApiKey }>('/api/keys', input)
 export const updateKey = (id: number, input: ApiKeyInput) => put<{ key: ApiKey }>(`/api/keys/${id}`, input)
+export const updateKeyStatus = (id: number, status: 1 | 2) =>
+  put<void>(`/api/keys/${id}/status`, { status })
 export const deleteKey = (id: number) => del<void>(`/api/keys/${id}`)
 
 // ---------- 渠道 ----------
@@ -62,6 +64,8 @@ export const listTemplates = () => get<{ templates: ChannelTemplate[] }>('/api/t
 export const listTokens = () => get<{ tokens: GatewayToken[] }>('/api/tokens')
 export const createToken = (input: { name: string; channelIds?: number[]; modelScope?: string; expiresAt?: string }) =>
   post<GatewayTokenCreated>('/api/tokens', input)
+export const updateToken = (id: number, input: { name?: string; channelIds?: number[] }) =>
+  put<{ token: GatewayToken }>(`/api/tokens/${id}`, input)
 export const revokeToken = (id: number) => del<void>(`/api/tokens/${id}`)
 export const revealToken = (id: number) => post<{ plaintext: string }>(`/api/tokens/${id}/reveal`)
 

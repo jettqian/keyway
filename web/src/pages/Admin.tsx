@@ -347,13 +347,13 @@ const TemplatesTab: React.FC = () => {
   const openCreate = () => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ type: 'openai', baseUrls: [''], models: [], lineStrategy: 'auto', priorityDefault: 0, allowPublicProxyDefault: false, note: '', enabled: true })
+    form.setFieldsValue({ baseUrls: [''], models: [], lineStrategy: 'auto', priorityDefault: 0, allowPublicProxyDefault: false, note: '', enabled: true })
     setModalOpen(true)
   }
   const openEdit = (t: ChannelTemplate) => {
     setEditing(t)
     form.setFieldsValue({
-      name: t.name, type: t.type, baseUrls: t.baseUrls, lineStrategy: t.lineStrategy,
+      name: t.name, baseUrls: t.baseUrls, lineStrategy: t.lineStrategy,
       models: t.models, modelMapping: Object.entries(t.modelMapping).map(([from, to]) => ({ from, to })),
       priorityDefault: t.priorityDefault, allowPublicProxyDefault: t.allowPublicProxyDefault,
       note: t.note, enabled: t.enabled,
@@ -367,7 +367,7 @@ const TemplatesTab: React.FC = () => {
       if (from && to) mapping[from] = to
     }
     const input = {
-      name: v.name, type: v.type, baseUrls: (v.baseUrls as string[]).filter(Boolean),
+      name: v.name, baseUrls: (v.baseUrls as string[]).filter(Boolean),
       lineStrategy: v.lineStrategy, models: v.models || [], modelMapping: mapping,
       priorityDefault: v.priorityDefault, allowPublicProxyDefault: v.allowPublicProxyDefault,
       note: v.note, enabled: v.enabled,
@@ -397,8 +397,8 @@ const TemplatesTab: React.FC = () => {
         dataSource={templates}
         columns={[
           { title: '名称', dataIndex: 'name' },
-          { title: '类型', dataIndex: 'type' },
           { title: '线路数', render: (_, t) => t.baseUrls.length },
+          { title: '模型数', render: (_, t) => t.models.length },
           { title: '复制次数', dataIndex: 'copyCount' },
           { title: '说明', dataIndex: 'note', ellipsis: true },
           {
@@ -431,14 +431,6 @@ const TemplatesTab: React.FC = () => {
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
             <Input />
-          </Form.Item>
-          <Form.Item name="type" label="协议类型" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'openai', label: 'openai（OpenAI 兼容）' },
-                { value: 'anthropic', label: 'anthropic（Anthropic 兼容）' },
-              ]}
-            />
           </Form.Item>
           <Form.Item label="线路（base_url，按优先顺序，≤5 条）" required>
             <Form.List name="baseUrls">

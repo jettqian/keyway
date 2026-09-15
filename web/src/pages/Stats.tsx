@@ -1,7 +1,8 @@
 import React from 'react'
-import { Card, Col, Row, Statistic, Table, Segmented, message } from 'antd'
+import { Card, Col, Row, Space, Statistic, Table, Segmented, Tag, message } from 'antd'
 import { myStats } from '../api'
 import type { StatsResponse, StatsGroup } from '../api/types'
+import { formatDateTime } from '../format'
 
 const StatsPage: React.FC = () => {
   const [days, setDays] = React.useState(7)
@@ -51,6 +52,25 @@ const StatsPage: React.FC = () => {
           onChange={(v) => setDays(v as number)}
         />
       </div>
+      <Card title="最近生效流量" loading={loading} style={{ marginBottom: 16 }}>
+        {data?.latest ? (
+          <Space size="large" wrap>
+            <span>
+              渠道：<b>{data.latest.channelName || `#${data.latest.channelId}`}</b>
+            </span>
+            <span>
+              模型：<b>{data.latest.model}</b>
+              {data.latest.upstreamModel && data.latest.upstreamModel !== data.latest.model ? (
+                <span style={{ color: '#999' }}>（上游 {data.latest.upstreamModel}）</span>
+              ) : null}
+            </span>
+            <span style={{ color: '#999' }}>{formatDateTime(data.latest.createdAt)}</span>
+            <Tag color="green">{data.latest.statusCode}</Tag>
+          </Space>
+        ) : (
+          <span style={{ color: '#999' }}>暂无流量</span>
+        )}
+      </Card>
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={6}>
           <Card loading={loading}>

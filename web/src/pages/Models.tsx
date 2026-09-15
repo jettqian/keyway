@@ -1,32 +1,19 @@
 import React from 'react'
-import { Button, Form, Modal, Select, Space, Table, Tag, message } from 'antd'
-import { EditOutlined } from '@ant-design/icons'
-import { listChannels, updateChannel } from '../api'
-import type { Channel, ChannelInput } from '../api/types'
+import { Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, message } from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
+import { listChannels, updateModelBindings } from '../api'
+import type { Channel } from '../api/types'
 
-const toInput = (c: Channel, models: string[]): ChannelInput => ({
-  name: c.name,
-  type: c.type,
-  baseUrls: c.baseUrls,
-  keyIds: c.keyIds,
-  keyStrategy: c.keyStrategy,
-  lineStrategy: c.lineStrategy,
-  allowPublicProxy: c.allowPublicProxy,
-  models,
-  modelMapping: c.modelMapping,
-  priority: c.priority,
-  priceMultiplier: c.priceMultiplier ?? 1,
-  pricingMode: c.pricingMode ?? 'usd',
-  cnyRatio: c.cnyRatio ?? 0,
-  isDefault: c.isDefault,
-  enabled: c.enabled,
-  forwardMode: c.forwardMode ?? 'passthrough',
-})
+interface ModelRow {
+  name: string
+  channels: Channel[]
+}
 
 const ModelsPage: React.FC = () => {
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [loading, setLoading] = React.useState(true)
-  const [editing, setEditing] = React.useState<Channel | null>(null)
+  const [mode, setMode] = React.useState<'create' | 'edit' | 'rename'>('create')
+  const [current, setCurrent] = React.useState<ModelRow | null>(null)
   const [modalOpen, setModalOpen] = React.useState(false)
   const [form] = Form.useForm()
 
@@ -40,19 +27,61 @@ const ModelsPage: React.FC = () => {
 
   React.useEffect(refresh, [refresh])
 
-  const openEdit = (channel: Channel) => {
-    setEditing(channel)
-    form.setFieldsValue({ models: Array.isArray(channel.models) ? channel.models : [] })
+  const rows: ModelRow[] = React.useMemo(() => {
+    const map = new Map<string, Channel[]>()
+    for (const c of channels) {
+      for (const m of Array.isArray(c.models) ? c.models : []) {
+        const name = m.trim()
+        if (!name) continue
+        if (!map.has(name)) map.set(name, [])
+        map.get(name)!.push(c)
+      }
+    }
+    return [...map.entries()]
+      .map(([name, chs]) => ({ name, channels: chs }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [channels])
+
+  const openCreate = () => {
+    setMode('create')
+    setCurrent(null)
+    form.resetFields()
+    form.setFieldsValue({ name: '', channelIds: [] })
+    setModalOpen(true)
+  }
+
+  const openEdit = (row: ModelRow) => {
+    setMode('edit')
+    setCurrent(row)
+    form.setFieldsValue({ channelIds: row.channels.map((c) => c.id) })
+    setModalOpen(true)
+  }
+
+  const openRename = (row: ModelRow) => {
+    setMode('rename')
+    setCurrent(row)
+    form.setFieldsValue({ name: row.name })
     setModalOpen(true)
   }
 
   const submit = async () => {
-    if (!editing) return
-    const values = await form.validateFields()
-    const models = [...new Set(((values.models ?? []) as string[]).map((m) => m.trim()).filter(Boolean))]
+    const v = await form.validateFields()
     try {
-      await updateChannel(editing.id, toInput(editing, models))
-      message.success('渠道模型已保存，下一个请求生效')
+      if (mode === 'create') {
+        await updateModelBindings({ name: v.name.trim(), previousName: '', channelIds: v.channelIds || [] })
+        message.success('模型已创建')
+      } else if (mode === 'edit' && current) {
+        await updateModelBindings({ name: current.name, previousName: current.name, channelIds: v.channelIds || [] })
+        message.success('绑定已保存，下一个请求生效')
+      } else if (mode === 'rename' && current) {
+        const name = (v.name as string).trim()
+        if (name === current.name) {
+          setModalOpen(false)
+          return
+        }
+        await updateModelBindings({ name, previousName: current.name, channelIds: current.channels.map((c) => c.id) })
+        message.success('模型已重命名')
+      }
       setModalOpen(false)
       refresh()
     } catch (e) {
@@ -60,38 +89,94 @@ const ModelsPage: React.FC = () => {
     }
   }
 
+  const removeModel = async (row: ModelRow) => {
+    try {
+      await updateModelBindings({ name: row.name, previousName: row.name, channelIds: [] })
+      message.success('模型已删除')
+      refresh()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
+  const channelOptions = channels.map((c) => ({
+    label: (
+      <Space>
+        <span>{c.name}</span>
+        {c.enabled ? null : <Tag>停用</Tag>}
+        <span style={{ color: '#999' }}>优先级 {c.priority}</span>
+      </Space>
+    ),
+    value: c.id,
+  }))
+
+  const modalTitle =
+    mode === 'create' ? '新建模型' : mode === 'rename' ? `重命名模型：${current?.name}` : `绑定渠道：${current?.name}`
+
   return (
     <div>
       <div className="page-heading">
-        <div><h2>渠道模型</h2><p>以渠道为主维护模型列表。一个渠道可以选择多个模型，同一模型也可以出现在多个渠道。</p></div>
+        <div><h2>模型管理</h2><p>维护模型目录及其与渠道的绑定关系；渠道本身的配置在渠道页维护。</p></div>
+        <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建模型</Button></div>
       </div>
-      <Table<Channel>
-        rowKey="id"
+      <Table<ModelRow>
+        rowKey="name"
         loading={loading}
-        dataSource={channels}
+        dataSource={rows}
+        locale={{ emptyText: '暂无模型：直接新建，或在渠道页为渠道填写模型列表' }}
         columns={[
+          { title: '模型', dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
           {
-            title: '渠道',
-            render: (_: unknown, c: Channel) => <Space><span>{c.name}</span><Tag color={c.enabled ? 'green' : undefined}>{c.enabled ? '启用' : '停用'}</Tag></Space>,
+            title: '绑定渠道',
+            render: (_: unknown, row: ModelRow) =>
+              row.channels.length ? (
+                <Space wrap>
+                  {row.channels.map((c) => (
+                    <Tag key={c.id} color={c.enabled ? 'blue' : undefined}>
+                      {c.name}
+                      {!c.enabled ? '（停用）' : ''}
+                    </Tag>
+                  ))}
+                </Space>
+              ) : (
+                <span style={{ color: '#999' }}>未绑定渠道</span>
+              ),
           },
-          { title: '协议', dataIndex: 'type', render: (type: string) => <Tag>{type}</Tag> },
-          { title: '优先级', dataIndex: 'priority' },
           {
-            title: '已选模型',
-            render: (_: unknown, c: Channel) => {
-              const models = Array.isArray(c.models) ? c.models : []
-              return models.length ? <Space wrap>{models.map((m) => <Tag key={m}>{m}</Tag>)}</Space> : <span style={{ color: '#999' }}>未选择模型</span>
-            },
+            title: '操作',
+            width: 220,
+            render: (_: unknown, row: ModelRow) => (
+              <Space>
+                <a onClick={() => openEdit(row)}>绑定渠道</a>
+                <a onClick={() => openRename(row)}>重命名</a>
+                <Popconfirm title={`删除模型 ${row.name}？将从所有渠道移除`} onConfirm={() => removeModel(row)}>
+                  <a style={{ color: 'red' }}>删除</a>
+                </Popconfirm>
+              </Space>
+            ),
           },
-          { title: '操作', width: 130, render: (_: unknown, c: Channel) => <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(c)}>选择模型</Button> },
         ]}
       />
-      <Modal title={editing ? `选择模型：${editing.name}` : '选择模型'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
+      <Modal title={modalTitle} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
         <Form form={form} layout="vertical">
-          <Form.Item name="models" label="该渠道提供的模型" extra="模型列表属于渠道基础配置；回车即可添加多个模型。">
-            <Select mode="tags" tokenSeparators={[',']} placeholder="输入模型名并回车" open={false} />
-          </Form.Item>
-          <div style={{ color: '#777', fontSize: 13 }}>渠道优先级：{editing?.priority ?? 0}。同一模型出现在多个渠道时，网关按渠道优先级选择。</div>
+          {mode === 'create' ? (
+            <>
+              <Form.Item name="name" label="模型名" rules={[{ required: true, message: '请输入模型名' }]}>
+                <Input placeholder="如 claude-sonnet-4.5" />
+              </Form.Item>
+              <Form.Item name="channelIds" label="绑定渠道" extra={<span className="form-hint">点选该模型可路由到的渠道；同一模型可绑定多个渠道，按渠道优先级路由。</span>}>
+                <Checkbox.Group options={channelOptions} style={{ display: 'flex', flexDirection: 'column', gap: 4 }} />
+              </Form.Item>
+            </>
+          ) : mode === 'rename' ? (
+            <Form.Item name="name" label="新模型名" rules={[{ required: true, message: '请输入新模型名' }]} extra={<span className="form-hint">重命名会同步更新所有绑定渠道及模型映射。</span>}>
+              <Input placeholder="如 claude-sonnet-4.5" />
+            </Form.Item>
+          ) : (
+            <Form.Item name="channelIds" label="绑定渠道" extra={<span className="form-hint">点选该模型可路由到的渠道；不选则该模型对所有渠道不生效。</span>}>
+              <Checkbox.Group options={channelOptions} style={{ display: 'flex', flexDirection: 'column', gap: 4 }} />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
     </div>

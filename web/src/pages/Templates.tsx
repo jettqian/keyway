@@ -1,5 +1,5 @@
 import React from 'react'
-import { Table, Button, Tag, message, Modal } from 'antd'
+import { Table, Button, message } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { listTemplates, copyTemplate } from '../api'
 import type { ChannelTemplate } from '../api/types'
@@ -35,12 +35,6 @@ const TemplatesPage: React.FC = () => {
         dataSource={templates}
         columns={[
           { title: '名称', dataIndex: 'name' },
-          {
-            title: '类型',
-            dataIndex: 'type',
-            width: 100,
-            render: (t: string) => <Tag color={t === 'anthropic' ? 'purple' : 'geekblue'}>{t}</Tag>,
-          },
           { title: '线路数', width: 90, render: (_, t) => t.baseUrls.length },
           { title: '模型数', width: 90, render: (_, t) => t.models.length },
           { title: '复制次数', dataIndex: 'copyCount', width: 90 },
@@ -57,7 +51,6 @@ const TemplatesPage: React.FC = () => {
         ]}
         locale={{ emptyText: '暂无模板（管理员尚未配置）' }}
       />
-      <Modal open={false} title="" footer={null} />
     </div>
   )
 }

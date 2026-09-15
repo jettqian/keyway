@@ -27,7 +27,7 @@ export interface ApiKeyInput {
 export interface Channel {
   id: number
   name: string
-  type: 'openai' | 'anthropic'
+  type: '' | 'openai' | 'anthropic'
   baseUrls: string[]
   keyIds: number[]
   keyStrategy: 'ordered' | 'round_robin'
@@ -50,7 +50,7 @@ export interface Channel {
 
 export interface ChannelInput {
   name: string
-  type: 'openai' | 'anthropic'
+  type: '' | 'openai' | 'anthropic'
   baseUrls: string[]
   keyIds: number[]
   keyStrategy: 'ordered' | 'round_robin'
@@ -71,7 +71,7 @@ export interface ChannelInput {
 export interface ChannelTemplate {
   id: number
   name: string
-  type: 'openai' | 'anthropic'
+  type: '' | 'openai' | 'anthropic'
   baseUrls: string[]
   lineStrategy: 'auto' | 'manual'
   models: string[]
@@ -157,6 +157,16 @@ export interface StatsResponse {
   byChannel: StatsGroup[]
   byModel: StatsGroup[]
   byKey: StatsGroup[]
+  latest?: LatestUsage | null
+}
+
+export interface LatestUsage {
+  createdAt: number
+  channelId: number
+  channelName?: string
+  model: string
+  upstreamModel?: string
+  statusCode: number
 }
 
 export interface ModelPricing {
@@ -198,7 +208,7 @@ export interface ProxyInput {
 
 export interface TemplateInput {
   name: string
-  type: 'openai' | 'anthropic'
+  type?: '' | 'openai' | 'anthropic'
   baseUrls: string[]
   lineStrategy: 'auto' | 'manual'
   models: string[]

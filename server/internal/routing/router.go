@@ -38,8 +38,9 @@ func DecodeKeyValue(secret string, k *store.Key) (string, error) {
 	return string(b), nil
 }
 
-// Resolve 按模型名解析用户可用渠道（priority 降序）；
-// channelIDs 非空时限定该渠道集合（令牌多渠道绑定）；
+// Resolve 按模型名解析用户可用渠道；
+// channelIDs 非空时限定该渠道集合（令牌多渠道绑定），候选按令牌绑定顺序排列
+// （令牌级路由优先级，由令牌页拖拽控制）；为空时按渠道 priority 降序。
 // modelScope 非空时按前缀通配过滤。
 // 无命中时回落默认渠道（模型名透传）；仍无则返回空列表。
 func (s *Service) Resolve(userID int64, model string, channelIDs []int64, modelScope string) ([]*ResolvedChannel, []*ResolvedChannel, error) {
@@ -75,6 +76,16 @@ func (s *Service) Resolve(userID int64, model string, channelIDs []int64, modelS
 		}
 	}
 
+	if len(channelIDs) > 0 {
+		// 令牌限定了渠道：按令牌绑定顺序排序（稳定，越靠前优先级越高）
+		pos := make(map[int64]int, len(channelIDs))
+		for i, id := range channelIDs {
+			pos[id] = i
+		}
+		sortByTokenOrder(matched, pos)
+		sortByTokenOrder(defaults, pos)
+		return matched, defaults, nil
+	}
 	// priority 降序稳定排序
 	sortByPriority(matched)
 	return matched, defaults, nil
@@ -191,6 +202,15 @@ func matchScope(scope, model string) bool {
 func sortByPriority(list []*ResolvedChannel) {
 	for i := 1; i < len(list); i++ {
 		for j := i; j > 0 && list[j].Channel.Priority > list[j-1].Channel.Priority; j-- {
+			list[j], list[j-1] = list[j-1], list[j]
+		}
+	}
+}
+
+// sortByTokenOrder 令牌限定渠道时按绑定顺序排序（稳定）
+func sortByTokenOrder(list []*ResolvedChannel, pos map[int64]int) {
+	for i := 1; i < len(list); i++ {
+		for j := i; j > 0 && pos[list[j].Channel.ID] < pos[list[j-1].Channel.ID]; j-- {
 			list[j], list[j-1] = list[j-1], list[j]
 		}
 	}

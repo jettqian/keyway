@@ -1,6 +1,7 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.5（与 PRD v1.3 对应；补充统一模型管理、令牌回看和透明转发边界）
+- 版本：v1.6（与 PRD v1.4 对应；密钥启停、协议类型仅 convert 必填、模型页模型为中心、
+  令牌渠道开关/拖拽顺序、统计最近生效流量）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
 - 本文档解决：架构、技术选型、数据模型落地、核心机制设计、协议转换决策表（PRD 开放
@@ -99,7 +100,8 @@ CREATE TABLE keys (                        -- 上游密钥池
 );
 
 CREATE TABLE channel_templates (
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL,  -- openai|anthropic
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT '',            -- 兼容保留；模板不再配置协议类型，新模板存空串
   base_urls_json TEXT NOT NULL,            -- 线路数组 ≤5
   line_strategy TEXT NOT NULL DEFAULT 'auto',
   models_json TEXT NOT NULL, model_mapping_json TEXT DEFAULT '{}',
@@ -113,7 +115,8 @@ CREATE TABLE channel_templates (
 CREATE TABLE channels (
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
   copied_from_template_id INTEGER,          -- 仅来源标记，不参与路由
-  name TEXT NOT NULL, type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT '',            -- 目标协议，仅 forward_mode=convert 时必填；透明转发存空串
   base_urls_json TEXT NOT NULL,             -- ≤5
   key_ids_json TEXT NOT NULL,               -- ≤5 有序
   key_strategy TEXT NOT NULL DEFAULT 'ordered',  -- ordered|round_robin
@@ -237,8 +240,9 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
 resolve(model, user, token) → []RouteCandidate
   1. 按 user_id + name 查启用模型
   2. 查绑定该模型的启用渠道，并过滤 channel.enabled=1 与 token.channel_ids
-  3. 按 channel.priority 降序，稳定顺序作为平局规则
-  4. 每个候选携带 channel.type、channel_id、channel.forward_mode 和上游模型名
+  3. 排序：token 限定渠道集合非空 → 按令牌绑定顺序（令牌级优先级，令牌页拖拽控制）；
+     否则按 channel.priority 降序，稳定顺序作为平局规则
+  4. 每个候选携带 channel.type（仅 convert 使用）、channel_id、channel.forward_mode 和上游模型名
   5. 为空且存在 is_default 渠道 → [default_channel]（模型名透传）
   6. 仍为空 → 404（错误契约见 PRD 7.3）
 ```
@@ -265,8 +269,11 @@ flowchart TD
     I -->|是| J[使用默认渠道\n模型名透传]
     I -->|否| E404[返回 404\n模型未配置]
 
-    H -->|是| K[按渠道 priority 降序排列]
-    K --> L[依次尝试候选渠道]
+    H -->|是| K{令牌是否限定渠道}
+    K -->|是| K1[按令牌绑定顺序排列]
+    K -->|否| K2[按渠道 priority 降序排列]
+    K1 --> L[依次尝试候选渠道]
+    K2 --> L
 
     L --> M[选择线路与出站路径]
     M --> N[选择可用上游密钥]
@@ -387,7 +394,8 @@ graph LR
 
 `forward_mode=passthrough` 是默认路径：网关保留入站协议和报文结构，仅替换线路、鉴权信息
 和必要的模型映射。只有渠道高级设置选择 `convert` 时，才使用 `channels.type` 选择跨协议
-转换器。模型列表属于渠道基础配置，协议类型不出现在模型管理页。
+转换器；`channels.type` 仅在该模式下必填（其余存储为空，对路由无影响）。模型列表属于渠道
+基础配置，协议类型不出现在模型管理页和预制模板页。
 
 ### 7.1 请求字段映射（OI→AN）
 
@@ -520,13 +528,17 @@ new-api 的已知语义（仅参考行为，代码自研）。
 
 - 用户页/管理员页均直接 `GROUP BY` logs（30 天 × ≤百用户 ≈ 10^6 行，命中索引足够）
 - 维度：user / model / channel / key / 天；管理员追加全员与公共代理流量（proxy_usage）
+- 最近生效流量（`stats.latest`）：`ORDER BY id DESC LIMIT 1` 取该用户最新一条成功
+  （status_code < 400 且 channel_id 非空）日志，回传渠道名/模型/时间；不受 days 窗口限制，
+  API 层按 channel_id 补渠道名
 - CSV：服务端流式生成 `text/csv` 下载
 - 若 v1.1 出现慢查询 → 增加 daily rollup 表（计划内，不在 MVP）
 
 ### 8.4 渠道模型列表批量写入
 
-- 模型管理页读取各渠道的 `models_json` 并集，按渠道维度批量编辑；保存时通过事务同时更新
-  所选渠道的 `models_json` 和 `model_mapping_json`。
+- 模型管理页读取各渠道的 `models_json` 并集，以模型为中心展示；新建/重命名/删除/改绑定
+  均走 `PUT /api/models/bindings`，事务内同时更新所选渠道的 `models_json` 和
+  `model_mapping_json`（重命名顺带迁移映射）。
 - 模型页不创建独立模型实体；空绑定模型不会出现在列表中。渠道详情页和模型管理页共享同一
   数据来源，避免两套配置产生分歧。
 
@@ -568,6 +580,7 @@ GET /oauth/feishu/callback?code&state
 | GET /api/auth/me；PUT /api/auth/password | 当前用户 / 改密 |
 | GET /api/auth/feishu/url；PUT /api/auth/feishu/bind | 登录跳转 / 绑定解绑 |
 | GET/POST/PUT/DELETE /api/keys[/:id] | 密钥池 CRUD |
+| PUT /api/keys/:id/status | 密钥启用/停用（停用后不参与渠道轮换） |
 | GET/POST/PUT/DELETE /api/channels[/:id] | 渠道 CRUD |
 | GET /api/channels | 读取渠道及其模型列表（模型管理页数据源） |
 | PUT /api/models/bindings | 原子批量加入、移出或重命名渠道模型 |
@@ -575,9 +588,10 @@ GET /oauth/feishu/callback?code&state
 | POST /api/channels/:id/test；POST /api/channels/:id/test_keys | 矩阵测试 / 逐密钥测试 |
 | GET /api/templates | 模板列表（用户侧，含复制数） |
 | GET/POST/PUT/DELETE /api/tokens[/:id] | 令牌 CRUD（列表仅返回前缀） |
-| POST /api/tokens/:id/reveal | 所属用户二次确认后回看完整令牌 |
+| PUT /api/tokens/:id | 更新令牌（名称 / 限定渠道集合，集合顺序即令牌级路由优先级） |
+| POST /api/tokens/:id/reveal | 所属用户回看完整令牌（复制密钥按钮数据源） |
 | GET /api/logs | 自己的日志（分页/过滤） |
-| GET /api/stats | 自己的统计 |
+| GET /api/stats | 自己的统计（含最近生效流量 latest） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/templates、
   /api/admin/proxies、/api/admin/pricing(+import)、/api/admin/stats、/api/admin/invites | 见 PRD §5.9 |
 

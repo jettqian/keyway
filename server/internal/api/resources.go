@@ -111,6 +111,25 @@ func (s *Server) handleDeleteKey(c *gin.Context) {
 	s.ok(c, gin.H{})
 }
 
+// handleUpdateKeyStatus 启用/停用密钥（停用后不参与渠道轮换）
+func (s *Server) handleUpdateKeyStatus(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var req struct {
+		Status int `json:"status"`
+	}
+	if err := c.BindJSON(&req); err != nil || (req.Status != 1 && req.Status != 2) {
+		s.fail(c, http.StatusBadRequest, "status 须为 1（启用）或 2（停用）")
+		return
+	}
+	res := s.Store.DB().Model(&store.Key{}).
+		Where("id = ? AND user_id = ?", id, currentUser(c).ID).Update("status", req.Status)
+	if res.RowsAffected == 0 {
+		s.fail(c, http.StatusNotFound, "密钥不存在")
+		return
+	}
+	s.ok(c, gin.H{})
+}
+
 // ---------- 渠道 ----------
 
 type channelInput struct {
@@ -137,8 +156,15 @@ func (s *Server) validateChannel(in *channelInput) string {
 	if trimOrEmpty(in.Name) == "" {
 		return "名称不能为空"
 	}
-	if in.Type != "openai" && in.Type != "anthropic" {
-		return "类型必须为 openai 或 anthropic"
+	if in.ForwardMode == "" {
+		in.ForwardMode = "passthrough"
+	}
+	if in.ForwardMode != "passthrough" && in.ForwardMode != "convert" {
+		return "转发模式必须为 passthrough 或 convert"
+	}
+	// 协议类型只在跨协议转换时才需要；透明转发沿用入站协议，无需选择
+	if in.ForwardMode == "convert" && in.Type != "openai" && in.Type != "anthropic" {
+		return "跨协议转换模式必须指定目标协议（openai 或 anthropic）"
 	}
 	if n := len(nonEmpty(in.BaseURLs)); n < 1 || n > 5 {
 		return "线路数量须为 1~5"
@@ -159,12 +185,6 @@ func (s *Server) validateChannel(in *channelInput) string {
 	}
 	if in.PricingMode == "" {
 		in.PricingMode = "usd"
-	}
-	if in.ForwardMode == "" {
-		in.ForwardMode = "passthrough"
-	}
-	if in.ForwardMode != "passthrough" && in.ForwardMode != "convert" {
-		return "转发模式必须为 passthrough 或 convert"
 	}
 	if in.PricingMode != "usd" && in.PricingMode != "cny_ratio" {
 		return "计价模式须为 usd 或 cny_ratio"
@@ -528,6 +548,68 @@ func (s *Server) handleRevokeToken(c *gin.Context) {
 		return
 	}
 	s.ok(c, gin.H{})
+}
+
+// handleUpdateToken 更新令牌（名称 / 限定渠道集合，集合顺序即令牌级路由优先级）
+func (s *Server) handleUpdateToken(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var t store.Token
+	if err := s.Store.DB().Where("id = ? AND user_id = ?", id, currentUser(c).ID).First(&t).Error; err != nil {
+		s.fail(c, http.StatusNotFound, "令牌不存在")
+		return
+	}
+	var req struct {
+		Name       *string  `json:"name"`
+		ChannelIDs *[]int64 `json:"channelIds"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		s.fail(c, http.StatusBadRequest, "非法请求体")
+		return
+	}
+	updates := map[string]any{}
+	if req.Name != nil {
+		name := trimOrEmpty(*req.Name)
+		if name == "" {
+			s.fail(c, http.StatusBadRequest, "名称不能为空")
+			return
+		}
+		updates["name"] = name
+	}
+	if req.ChannelIDs != nil {
+		filter := *req.ChannelIDs
+		if filter == nil {
+			filter = []int64{}
+		}
+		seen := map[int64]bool{}
+		uniq := make([]int64, 0, len(filter))
+		for _, cid := range filter {
+			if cid > 0 && !seen[cid] {
+				seen[cid] = true
+				uniq = append(uniq, cid)
+			}
+		}
+		if len(uniq) > 20 {
+			s.fail(c, http.StatusBadRequest, "限定渠道数量过多（≤20）")
+			return
+		}
+		if len(uniq) > 0 {
+			var count int64
+			s.Store.DB().Model(&store.Channel{}).
+				Where("user_id = ? AND id IN ?", currentUser(c).ID, uniq).Count(&count)
+			if count != int64(len(uniq)) {
+				s.fail(c, http.StatusBadRequest, "包含不存在或不属于你的渠道")
+				return
+			}
+		}
+		updates["channel_ids_json"] = string(mustJSONStr(uniq))
+		// 更新集合时清除旧单渠道字段，避免两者合并产生歧义
+		updates["channel_id"] = nil
+	}
+	if len(updates) > 0 {
+		s.Store.DB().Model(&t).Updates(updates)
+		s.Store.DB().Where("id = ?", t.ID).First(&t)
+	}
+	s.ok(c, gin.H{"token": tokenDTO(&t)})
 }
 
 // handleRevealToken 返回令牌所有者保存的完整令牌。

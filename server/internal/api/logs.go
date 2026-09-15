@@ -93,6 +93,7 @@ func (s *Server) handleStats(c *gin.Context) {
 		s.fail(c, http.StatusInternalServerError, "查询失败")
 		return
 	}
+	s.fillLatestChannelName(st)
 	s.ok(c, st)
 }
 
@@ -102,7 +103,21 @@ func (s *Server) handleAdminStats(c *gin.Context) {
 		s.fail(c, http.StatusInternalServerError, "查询失败")
 		return
 	}
+	s.fillLatestChannelName(st)
 	s.ok(c, st)
+}
+
+// fillLatestChannelName 为最近生效流量补充渠道名（日志行已按用户隔离，渠道按 ID 查名即可）
+func (s *Server) fillLatestChannelName(st *usage.Stats) {
+	if st == nil || st.Latest == nil {
+		return
+	}
+	var ch store.Channel
+	if err := s.Store.DB().Select("name").Where("id = ?", st.Latest.ChannelID).First(&ch).Error; err != nil {
+		st.Latest.ChannelName = "#" + strconv.FormatInt(st.Latest.ChannelID, 10)
+		return
+	}
+	st.Latest.ChannelName = ch.Name
 }
 
 // ---------- 管理员：用户 ----------
@@ -316,8 +331,10 @@ func (t *templateInput) validate() string {
 	if trimOrEmpty(t.Name) == "" {
 		return "名称不能为空"
 	}
+	// 协议类型不再对外暴露：模板默认透明转发，复制出的渠道沿用入站协议；
+	// 兼容历史模板已存的 openai/anthropic 值，其余一律按空（透明）处理
 	if t.Type != "openai" && t.Type != "anthropic" {
-		return "类型必须为 openai 或 anthropic"
+		t.Type = ""
 	}
 	if n := len(nonEmpty(t.BaseURLs)); n < 1 || n > 5 {
 		return "线路数量须为 1~5"

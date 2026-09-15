@@ -219,12 +219,23 @@ type StatsSummary struct {
 	Unpriced         bool    `json:"unpriced"`
 }
 
+// LatestUsage 最近一次生效流量（成功请求命中的渠道与模型）
+type LatestUsage struct {
+	CreatedAt     int64  `json:"createdAt"`
+	ChannelID     int64  `json:"channelId"`
+	ChannelName   string `json:"channelName,omitempty"`
+	Model         string `json:"model"`
+	UpstreamModel string `json:"upstreamModel,omitempty"`
+	StatusCode    int    `json:"statusCode"`
+}
+
 // Stats 完整统计响应
 type Stats struct {
-	Summary   StatsSummary `json:"summary"`
-	ByChannel []StatsGroup `json:"byChannel"`
-	ByModel   []StatsGroup `json:"byModel"`
-	ByKey     []StatsGroup `json:"byKey"`
+	Summary   StatsSummary  `json:"summary"`
+	ByChannel []StatsGroup  `json:"byChannel"`
+	ByModel   []StatsGroup  `json:"byModel"`
+	ByKey     []StatsGroup  `json:"byKey"`
+	Latest    *LatestUsage  `json:"latest,omitempty"`
 }
 
 // QueryStats 用量/花费统计（userID 为 nil 时全员）
@@ -295,6 +306,30 @@ func QueryStats(db *gorm.DB, userID *int64, days int) (*Stats, error) {
 	st.ByChannel = group("channel_id")
 	st.ByModel = group("model")
 	st.ByKey = group("key_id")
+
+	// 最近一次生效流量（不受 days 窗口限制，取最新成功请求）
+	var latest struct {
+		CreatedAt     int64
+		ChannelID     int64
+		Model         string
+		UpstreamModel string
+		StatusCode    int
+	}
+	err := db.Model(&store.Log{}).
+		Where("channel_id IS NOT NULL AND status_code < 400").
+		Scopes(whereUser(userID)).
+		Select("created_at, channel_id, COALESCE(model,'') AS model, COALESCE(upstream_model,'') AS upstream_model, COALESCE(status_code,0) AS status_code").
+		Order("id DESC").Limit(1).
+		Scan(&latest).Error
+	if err == nil && latest.ChannelID != 0 {
+		st.Latest = &LatestUsage{
+			CreatedAt:     latest.CreatedAt,
+			ChannelID:     latest.ChannelID,
+			Model:         latest.Model,
+			UpstreamModel: latest.UpstreamModel,
+			StatusCode:    latest.StatusCode,
+		}
+	}
 	return st, nil
 }
 

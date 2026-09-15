@@ -1,7 +1,7 @@
 import React from 'react'
 import { Table, Button, Modal, Form, Input, Tag, message, Popconfirm, Space } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
-import { listKeys, createKey, updateKey, deleteKey } from '../api'
+import { listKeys, createKey, updateKey, updateKeyStatus, deleteKey } from '../api'
 import type { ApiKey } from '../api/types'
 import { formatDateTime } from '../format'
 
@@ -75,7 +75,7 @@ const KeysPage: React.FC = () => {
               ) : s === 1 ? (
                 <Tag color="green">启用</Tag>
               ) : (
-                <Tag>禁用</Tag>
+                <Tag>已停用</Tag>
               ),
           },
           {
@@ -87,10 +87,23 @@ const KeysPage: React.FC = () => {
           { title: '创建时间', dataIndex: 'createdAt', width: 180, render: (v: number | string) => formatDateTime(v) },
           {
             title: '操作',
-            width: 160,
+            width: 200,
             render: (_, k) => (
               <Space>
                 <a onClick={() => openEdit(k)}>编辑</a>
+                <a
+                  onClick={async () => {
+                    try {
+                      await updateKeyStatus(k.id, k.status === 1 ? 2 : 1)
+                      message.success(k.status === 1 ? '已停用，不再参与渠道轮换' : '已启用')
+                      refresh()
+                    } catch (e) {
+                      message.error((e as Error).message)
+                    }
+                  }}
+                >
+                  {k.status === 1 ? '停用' : '启用'}
+                </a>
                 <Popconfirm
                   title="删除该密钥？绑定它的渠道将失效"
                   onConfirm={async () => {

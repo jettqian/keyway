@@ -23,7 +23,7 @@ import type { Channel, ChannelInput, ApiKey } from '../api/types'
 
 const emptyInput: ChannelInput = {
   name: '',
-  type: 'openai',
+  type: '',
   baseUrls: [''],
   keyIds: [],
   keyStrategy: 'ordered',
@@ -102,7 +102,8 @@ const ChannelsPage: React.FC = () => {
     }
     const input: ChannelInput = {
       name: v.name,
-      type: v.type,
+      // 透明转发不需要协议类型；仅跨协议转换时提交所选目标协议
+      type: v.forwardMode === 'convert' ? v.type : '',
       baseUrls: (v.baseUrls as string[]).filter(Boolean),
       keyIds: v.keyIds || [],
       keyStrategy: v.keyStrategy,
@@ -165,10 +166,15 @@ const ChannelsPage: React.FC = () => {
             ),
           },
           {
-            title: '类型',
-            dataIndex: 'type',
-            width: 100,
-            render: (t: string) => <Tag color={t === 'anthropic' ? 'purple' : 'geekblue'}>{t}</Tag>,
+            title: '转发',
+            dataIndex: 'forwardMode',
+            width: 120,
+            render: (m: string, c: Channel) =>
+              m === 'convert' ? (
+                <Tag color="orange">转换 → {c.type || '?'}</Tag>
+              ) : (
+                <Tag>透明</Tag>
+              ),
           },
           { title: '线路数', width: 90, render: (_, c) => c.baseUrls.length },
           { title: '密钥数', width: 90, render: (_, c) => c.keyIds.length },
@@ -267,13 +273,34 @@ const ChannelsPage: React.FC = () => {
           </Form.Item>
           <Collapse ghost defaultActiveKey={[]} style={{ marginTop: 4, marginBottom: 8 }}>
             <Collapse.Panel header="高级选项" key="advanced">
-          <Form.Item name="type" label="目标协议（仅跨协议转换时使用）" tooltip="透明转发模式下沿用入站协议，无需关注此项。" rules={[{ required: true }]}>
+          <Form.Item name="forwardMode" label="转发模式" extra="默认透明转发：沿用入站协议，无需选择协议类型；跨协议转换为特殊需求，显式开启。">
             <Select
+              style={{ width: 260 }}
               options={[
-                { value: 'openai', label: 'openai' },
-                { value: 'anthropic', label: 'anthropic' },
+                { value: 'passthrough', label: '透明转发（默认）' },
+                { value: 'convert', label: '跨协议转换（高级）' },
               ]}
             />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(a, b) => a.forwardMode !== b.forwardMode}>
+            {({ getFieldValue }) =>
+              getFieldValue('forwardMode') === 'convert' ? (
+                <Form.Item
+                  name="type"
+                  label="目标协议"
+                  tooltip="跨协议转换时上游使用的协议；透明转发模式下不涉及此项。"
+                  rules={[{ required: true, message: '跨协议转换须指定目标协议' }]}
+                >
+                  <Select
+                    style={{ width: 260 }}
+                    options={[
+                      { value: 'openai', label: 'openai' },
+                      { value: 'anthropic', label: 'anthropic' },
+                    ]}
+                  />
+                </Form.Item>
+              ) : null
+            }
           </Form.Item>
           <Form.Item name="proxyUrl" label="个人出站代理" extra={<span className="form-hint">支持 http 或 socks5；不需要代理时留空。</span>}>
             <Input placeholder="socks5://127.0.0.1:7890" />
@@ -318,15 +345,6 @@ const ChannelsPage: React.FC = () => {
               />
             </Form.Item>
           </Space>
-          <Form.Item name="forwardMode" label="转发模式" extra="默认透明转发；跨协议转换仅在高级设置中显式开启。">
-            <Select
-              style={{ width: 260 }}
-              options={[
-                { value: 'passthrough', label: '透明转发（默认）' },
-                { value: 'convert', label: '跨协议转换（高级）' },
-              ]}
-            />
-          </Form.Item>
           <Form.Item noStyle shouldUpdate={(a, b) => a.pricingMode !== b.pricingMode}>
             {({ getFieldValue }) =>
               getFieldValue('pricingMode') === 'cny_ratio' ? (

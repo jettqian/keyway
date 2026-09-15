@@ -153,6 +153,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/keys", s.handleListKeys)
 	r.POST("/keys", s.handleCreateKey)
 	r.PUT("/keys/:id", s.handleUpdateKey)
+	r.PUT("/keys/:id/status", s.handleUpdateKeyStatus)
 	r.DELETE("/keys/:id", s.handleDeleteKey)
 
 	r.GET("/channels", s.handleListChannels)
@@ -168,6 +169,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 
 	r.GET("/tokens", s.handleListTokens)
 	r.POST("/tokens", s.handleCreateToken)
+	r.PUT("/tokens/:id", s.handleUpdateToken)
 	r.POST("/tokens/:id/reveal", s.handleRevealToken)
 	r.DELETE("/tokens/:id", s.handleRevokeToken)
 
