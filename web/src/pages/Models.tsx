@@ -1,5 +1,5 @@
 import React from 'react'
-import { Button, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, message } from 'antd'
+import { Button, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Tooltip, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { listChannels, updateModelBindings, listCatalogModels } from '../api'
 import type { Channel, CatalogModel } from '../api/types'
@@ -143,6 +143,7 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
     <div>
       <div style={{ color: '#777', fontSize: 13, marginBottom: 12 }}>
         管理员预置的模型目录，作为渠道表单中的点选数据源；未列出的模型仍可在渠道表单中手动输入。
+        单价按模型名关联价目表（费用统计同口径）。
       </div>
       <Table<CatalogModel>
         rowKey="id"
@@ -151,6 +152,20 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
         locale={{ emptyText: '管理员尚未配置模型目录' }}
         columns={[
           { title: '模型', dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
+          {
+            title: '单价（$/百万 tokens）',
+            width: 190,
+            render: (_: unknown, m: CatalogModel) =>
+              m.inputPerM != null ? (
+                <span>
+                  输入 {m.inputPerM} / 输出 {m.outputPerM}
+                </span>
+              ) : (
+                <Tooltip title="价目表中无同名条目，使用该模型的请求费用将记为未定价">
+                  <span style={{ color: '#999' }}>未定价</span>
+                </Tooltip>
+              ),
+          },
           { title: '备注', dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
           {
             title: '使用情况',

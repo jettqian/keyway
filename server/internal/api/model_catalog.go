@@ -20,13 +20,39 @@ func catalogModelDTO(m *store.CatalogModel) gin.H {
 	}
 }
 
-// handleListCatalogModels 用户侧：启用的目录模型（点选数据源，只读）
+// catalogModelDTOWithPricing 附带关联价目：按模型名精确匹配 model_pricing
+// （费用计算同口径：未命中时该模型费用记未定价）
+func catalogModelDTOWithPricing(m *store.CatalogModel, p *store.ModelPricing) gin.H {
+	dto := catalogModelDTO(m)
+	if p == nil {
+		return dto
+	}
+	dto["inputPerM"] = p.InputPerM
+	dto["outputPerM"] = p.OutputPerM
+	dto["cachedInputPerM"] = p.CachedInputPerM
+	dto["cacheWritePerM"] = p.CacheWritePerM
+	return dto
+}
+
+// pricingMap 全量价目按模型名索引（目录页展示关联价用）
+func (s *Server) pricingMap() map[string]*store.ModelPricing {
+	var pricing []store.ModelPricing
+	s.Store.DB().Find(&pricing)
+	out := make(map[string]*store.ModelPricing, len(pricing))
+	for i := range pricing {
+		out[pricing[i].Model] = &pricing[i]
+	}
+	return out
+}
+
+// handleListCatalogModels 用户侧：启用的目录模型（点选数据源，只读；含关联单价）
 func (s *Server) handleListCatalogModels(c *gin.Context) {
 	var models []store.CatalogModel
 	s.Store.DB().Where("enabled = 1 ORDER BY name").Find(&models)
+	prices := s.pricingMap()
 	out := make([]gin.H, 0, len(models))
 	for i := range models {
-		out = append(out, catalogModelDTO(&models[i]))
+		out = append(out, catalogModelDTOWithPricing(&models[i], prices[models[i].Name]))
 	}
 	s.ok(c, gin.H{"models": out})
 }
@@ -34,9 +60,10 @@ func (s *Server) handleListCatalogModels(c *gin.Context) {
 func (s *Server) handleAdminListCatalogModels(c *gin.Context) {
 	var models []store.CatalogModel
 	s.Store.DB().Order("name").Find(&models)
+	prices := s.pricingMap()
 	out := make([]gin.H, 0, len(models))
 	for i := range models {
-		out = append(out, catalogModelDTO(&models[i]))
+		out = append(out, catalogModelDTOWithPricing(&models[i], prices[models[i].Name]))
 	}
 	s.ok(c, gin.H{"models": out})
 }

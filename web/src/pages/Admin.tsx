@@ -1,5 +1,5 @@
 import React from 'react'
-import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography, Radio } from 'antd'
+import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography, Radio, Tooltip } from 'antd'
 import {
   adminUsers,
   adminSetUserStatus,
@@ -208,8 +208,26 @@ const PricingTab: React.FC = () => {
         columns={[
           { title: '模型', dataIndex: 'model' },
           { title: '输入 $/M', dataIndex: 'inputPerM' },
-          { title: '缓存读 $/M', dataIndex: 'cachedInputPerM', render: (v: number | null) => (v ?? '（同输入价）') },
-          { title: '缓存写 $/M', dataIndex: 'cacheWritePerM', render: (v: number | null) => (v ?? '（同输入价）') },
+          {
+            title: '缓存读 $/M',
+            dataIndex: 'cachedInputPerM',
+            render: (v: number | null, p: ModelPricing) =>
+              v != null ? v : (
+                <Tooltip title="未配置，按输入价回退">
+                  <span style={{ color: '#999' }}>{p.inputPerM}</span>
+                </Tooltip>
+              ),
+          },
+          {
+            title: '缓存写 $/M',
+            dataIndex: 'cacheWritePerM',
+            render: (v: number | null, p: ModelPricing) =>
+              v != null ? v : (
+                <Tooltip title="未配置，按输入价回退">
+                  <span style={{ color: '#999' }}>{p.inputPerM}</span>
+                </Tooltip>
+              ),
+          },
           { title: '输出 $/M', dataIndex: 'outputPerM' },
           {
             title: '操作',
@@ -428,6 +446,20 @@ const CatalogModelsTab: React.FC = () => {
         pagination={{ pageSize: 20 }}
         columns={[
           { title: '模型', dataIndex: 'name' },
+          {
+            title: '单价（$/百万 tokens）',
+            width: 190,
+            render: (_: unknown, m: CatalogModel) =>
+              m.inputPerM != null ? (
+                <span>
+                  输入 {m.inputPerM} / 输出 {m.outputPerM}
+                </span>
+              ) : (
+                <Tooltip title="价目表中无同名条目；该模型费用将记为未定价">
+                  <span style={{ color: '#999' }}>未定价</span>
+                </Tooltip>
+              ),
+          },
           { title: '备注', dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
           {
             title: '状态',

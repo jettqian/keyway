@@ -183,6 +183,10 @@ export interface CatalogModel {
   note: string
   enabled: boolean
   updatedAt: number
+  inputPerM?: number
+  outputPerM?: number
+  cachedInputPerM?: number | null
+  cacheWritePerM?: number | null
 }
 
 export interface Proxy {
