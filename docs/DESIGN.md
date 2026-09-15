@@ -1,8 +1,11 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.23（与 PRD v1.5.25 对应；探测覆盖 /v1/responses 端点形态——gpt 系模型
-  形态序列补 responses（Codex 客户端端点，覆盖 responses-only team 网关），失败
-  摘要按端点路径汇报（见 §6）；
+- 版本：v1.24（与 PRD v1.5.26 对应；限定渠道面板**移除"限定范围"主开关**——令牌
+  始终按面板列表顺序路由，消除"不限按渠道优先级 / 限定按面板顺序"两套规则的歧义；
+  存量"不限"令牌打开面板以全部渠道按优先级预览、首次调整即固化（后端"空=不限"
+  数据语义保留仅作存量兼容）；拖拽引入 **@dnd-kit/sortable**（首个前端交互类
+  运行时依赖，按压 4px 进入拖拽、让位动画、触屏可用），替换原生 HTML5 DnD；
+  前版 v1.23：探测覆盖 /v1/responses 端点形态；
   前版 v1.22：限定渠道面板交互逻辑修正——胶囊入口固定宽度、至少保留一个启用渠道、
   主开关重开恢复上次启用集合（会话级记忆）、拖拽热区收敛到行首手柄；
   前版 v1.21：探测模型回退与错误摘要；v1.20：探测协议判定对齐真实转发、探测矩阵
@@ -51,7 +54,7 @@ Agent ──HTTPS 443──▶ 反代 ─▶│ gin Router                      
 | 语言 | Go 1.23+ | 单二进制、流式/并发模型成熟、CGO-free 交叉编译 |
 | Web 框架 | gin | 生态熟、中间件模型清晰 |
 | 存储 | SQLite（glebarez/sqlite，modernc 纯 Go 驱动）+ GORM | 无 CGO，docker 镜像可 distroless；WAL 满足写并发 |
-| 前端 | Vite + React + TS + Ant Design 5 | 控制台型 UI 开发效率 |
+| 前端 | Vite + React + TS + Ant Design 5 + @dnd-kit/sortable | 控制台型 UI 开发效率；排序拖拽（手柄热区、让位动画、触屏） |
 | 会话 | DB-backed 不透明 token（HttpOnly Cookie） | 服务端可即时吊销（用户禁用即全端下线） |
 | 密钥加密 | AES-256-GCM，主密钥来自环境变量 | PRD G4：防拖库 |
 | 流式 | 自定义 handler + http.Flusher，不缓冲 | PRD FR-R4 |
