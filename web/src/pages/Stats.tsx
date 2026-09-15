@@ -115,16 +115,16 @@ const StatsPage: React.FC = () => {
                 render: (v: number) => <span className="text-tertiary">{formatDateTime(v)}</span>,
               },
               {
-                title: '渠道',
-                dataIndex: 'channelName',
-                render: (v: string, r: LatestUsage) => v || `#${r.channelId}`,
-              },
-              {
                 title: '线路',
                 dataIndex: 'lineUrl',
                 width: 240,
                 ellipsis: { showTitle: false },
                 render: (v: string, r: LatestUsage) => <LineUrl url={v} via={r.via} />,
+              },
+              {
+                title: '渠道',
+                dataIndex: 'channelName',
+                render: (v: string, r: LatestUsage) => v || `#${r.channelId}`,
               },
               {
                 title: '模型',
