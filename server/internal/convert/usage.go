@@ -277,3 +277,29 @@ func EstimateTokens(req *AnthropicMessagesRequest) int {
 	}
 	return int(total)
 }
+
+// EstimateOpenAITokens OpenAI 请求本地近似 token 数（口径与 EstimateTokens 一致：
+// Σ ceil(runes/3.6)；含消息文本与工具定义）
+func EstimateOpenAITokens(req *OpenAIChatRequest) int {
+	total := 0.0
+	count := func(s string) {
+		if s != "" {
+			total += math.Ceil(float64(len([]rune(s))) / 3.6)
+		}
+	}
+	for _, m := range req.Messages {
+		for _, s := range openAITexts(m.Content) {
+			count(s)
+		}
+		count(m.ReasoningContent)
+		count(m.Name)
+		for _, tc := range m.ToolCalls {
+			count(tc.Function.Name + tc.Function.Arguments)
+		}
+	}
+	for _, t := range req.Tools {
+		count(t.Function.Name + t.Function.Description)
+		count(string(marshalCompact(t.Function.Parameters)))
+	}
+	return int(total)
+}

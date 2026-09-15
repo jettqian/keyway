@@ -52,6 +52,7 @@ docker compose up -d          # 默认 0.0.0.0:20170，SQLite 落在 ./data
 | `KEYWAY_BASE_URL` | — | 对外地址（OAuth 回调/链接展示），如 `https://keyway.example.com` |
 | `KEYWAY_PROBE_INTERVAL_MIN` | — | 线路探测周期（分钟），默认 10 |
 | `KEYWAY_RESPONSE_HEADER_TIMEOUT_S` | — | 上游响应头等待超时（秒），默认 1800，0=不限制；仅覆盖响应头阶段，流式响应不受影响 |
+| `KEYWAY_IDLE_STREAM_TIMEOUT_S` | — | 流式空闲超时（秒），默认 300，0=关闭；流式期间每 15s 发 SSE 注释 ping 保活，上游持续无数据则关闭上游止损 |
 | `KEYWAY_LOG_RETENTION_DAYS` | — | 请求日志保留期（天），默认 30 |
 | `KEYWAY_FX_SOURCE_URL` | — | 覆盖汇率同步源（默认 frankfurter → jsdelivr → er-api 三源回退，每 24h；管理员亦可在设置页选固定值） |
 

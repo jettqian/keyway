@@ -1,11 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.16（与 PRD v1.5.18 对应；撤销模型目录"从价目表导入"（价目表经远程同步
-  后近 3000 条，一键导入会淹没目录，用户只关心常用模型）；价格展示优化——fmtPrice
-  4 位有效数字格式化、价目表数字列右对齐等宽、目录单价"标签 + $ 数值"两行且缓存档
-  直接显示回退生效数值；
-  前版 v1.15：令牌渠道顺序与启用集合分离；v1.14：统计页名称化/补算/时间窗/最近流量；
-  v1.13：限定渠道面板交互优化；
+- 版本：v1.17（与 PRD v1.5.19 对应；流式保活与止损（15s ping + KEYWAY_IDLE_STREAM_TIMEOUT_S
+  空闲超时接线，修订 v1.5.12 决策）、客户端断开即关上游、openai 透传注入
+  include_usage、usage 兜底本地估算（relay/estimate.go）、ComputeCost 价目快照查询；
+  前版 v1.16：撤销目录价目导入与价格展示优化；v1.15：令牌渠道顺序与启用集合分离；
+  v1.14：统计页名称化/补算/时间窗/最近流量；v1.13：限定渠道面板交互优化；
   历史变更见文档各节与 PRD 变更记录）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
@@ -477,9 +476,25 @@ tool_use→tool_calls；usage input/output→prompt/completion。
 message_delta / message_stop 事件序列（含 event id 与递增序号，符合 anthropic wire 格式）；
 `delta.reasoning_content` → thinking 块；`delta.tool_calls` 增量 → input_json_delta。
 
-**usage 抽取**（透传/转换通用）：openai 流式取末尾 usage chunk（建议上游开启
-include_usage；无则 tokens 记 NULL）；anthropic 流式取 message_delta.usage。缓存字段
-（cached_tokens / cache_write_tokens）按 §8.2.1 归一化。
+**usage 抽取**（透传/转换通用）：openai 流式取末尾 usage chunk（透传 openai 入站时
+注入 `stream_options.include_usage`，避免依赖客户端默认携带；无则走本地兜底）；
+anthropic 流式取 message_delta.usage。缓存字段（cached_tokens / cache_write_tokens）
+按 §8.2.1 归一化。
+
+**usage 兜底估算**（`relay/estimate.go`）：上游未回传 usage（对应字段为 0）时本地补齐，
+**绝不覆盖真实值**——prompt 侧按入站请求文本估算（openai chat / anthropic messages，
+口径与 count_tokens 一致：Σ ceil(runes/3.6)，含消息文本与工具定义）；completion 侧由
+`streamTally` 累计流式增量文本（覆盖 OpenAI chunk delta、Anthropic content_block_delta、
+Responses output_text.delta 三种形态）同口径估算。仅用于统计补齐，日志与账单标注口径
+为上游返回优先。
+
+**流式保活与止损**：流式响应期间每 15s 向客户端发送 SSE 注释行 `: ping\n\n` 保活，
+防中间层（反代/CDN）空闲断连；上游持续无数据超过 `KEYWAY_IDLE_STREAM_TIMEOUT_S`
+（默认 300s，0 关闭）时发送注释 `: keyway: upstream idle timeout` 并关闭上游连接止损；
+客户端断开（request context 取消）立即关闭上游。写客户端经互斥锁串行化（读循环与
+保活协程并发写），每次写出后立即 Flush。**修订 v1.5.12"不做流式空闲超时"的决策**：
+保活 ping 消除误杀场景（客户端侧不再因无字节而断），空闲超时仅在上游真正无输出时
+触发并止损。
 
 **count_tokens（AI 侧）**：本地估算 `Σ ceil(text_chars/3.6)`，响应格式符合 anthropic；
 文档明示为近似值。
@@ -708,7 +723,7 @@ text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无�
 | KEYWAY_DEFAULT_MAX_TOKENS | 8192 | OI→AN 缺省 max_tokens |
 | KEYWAY_BODY_LIMIT_MB | 50 | 请求体上限 |
 | KEYWAY_RESPONSE_HEADER_TIMEOUT_S | 1800 | 上游响应头等待超时（秒），0=不限制；对齐 new-api `RELAY_RESPONSE_HEADER_TIMEOUT`。仅覆盖响应头阶段，流式 body 不受影响（不用 Client.Timeout 整体超时，避免切断长流式） |
-| KEYWAY_IDLE_STREAM_TIMEOUT_S | 300 | 流式空闲超时（**规划中，当前未接线**：与 new-api 行为一致，流式阶段依赖客户端断开取消） |
+| KEYWAY_IDLE_STREAM_TIMEOUT_S | 300 | 流式空闲超时（秒，0 关闭）：上游持续无数据即发送保活注释并关闭上游止损；期间每 15s 向客户端发 SSE 注释 ping 防中间层断连 |
 | KEYWAY_LOG_RETENTION_DAYS | 30 | 日志保留期 |
 | KEYWAY_PRICING_SYNC_HOURS | 24 | 官方价目远程同步周期（小时，LiteLLM + OpenRouter；0 关闭；启动先执行一次） |
 | KEYWAY_FX_SOURCE_URL | 空 | 覆盖汇率同步源（单一源无回退，自建镜像/测试用；留空用 frankfurter→jsdelivr→er-api 三源回退） |

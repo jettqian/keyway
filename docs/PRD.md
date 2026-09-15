@@ -1,12 +1,21 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.18
+- 版本：v1.5.19
 - 日期：2026-09-15
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.19：流式保活、止损与 usage 兜底——① 流式响应每 15s 发送 SSE 注释 ping 保活
+>   （防反代/CDN 空闲断连）；② `KEYWAY_IDLE_STREAM_TIMEOUT_S`（默认 300s，0 关闭）
+>   流式空闲超时**接线**（DESIGN 规划项落地：上游持续无数据即关上游止损；**修订
+>   v1.5.12"不做流式空闲超时"的决策**——保活 ping 下仅切断上游真正无输出的连接）；
+>   ③ 客户端断开立即关闭上游连接止损；④ openai 透传流式注入
+>   `stream_options.include_usage`（不再依赖客户端默认携带）；⑤ usage 兜底估算：
+>   上游未回传 usage 时按请求文本与累计流式增量本地估算（口径同 count_tokens，
+>   Σ ceil(runes/3.6)），仅补 0 值字段不覆盖真实值；⑥ ComputeCost 改用价目
+>   快照批量查询（多档价目一次性载入）
 > - v1.5.18：模型目录与价格展示修正——① **撤销"从价目表导入"功能**（含 API
 >   `POST /api/admin/models/import_pricing` 与管理页按钮）：价目表经远程同步后体量庞大
 >   （近 3000 条），一键导入会把目录淹没，而用户只关心自己用到的常用模型；目录回归
@@ -467,8 +476,11 @@ US13 统一管理模型（P7）
     - 入站 OpenAI → 出站 anthropic 型：完整转换（含流式 SSE 事件、工具调用）
     - 入站 Anthropic（/v1/messages）→ 出站 anthropic 型：透传改写鉴权
     - 入站 Anthropic → 出站 openai 型：完整转换（含 tool use 双向往返、流式增量、thinking/reasoning 映射）
-- FR-R4 流式：逐字节透传不缓冲；流式阶段不设整体/空闲超时（对齐 new-api：
-  Client.Timeout 式整体超时会切断合法长流式），依赖客户端断开取消
+- FR-R4 流式：逐字节透传不缓冲；**不设整体超时**（Client.Timeout 式会切断合法长流式）；
+  流式期间每 15s 向客户端发送 SSE 注释 ping 保活，上游持续无数据超过
+  `KEYWAY_IDLE_STREAM_TIMEOUT_S`（默认 300s，0 关闭）关闭上游止损；客户端断开
+  立即关闭上游（v1.5.19 修订：v1.5.12 曾决策不做流式空闲超时，保活 ping 落地后
+  空闲超时仅切断上游真正无输出的连接）
 - FR-R5 超时：连接上游（拨号/TLS）10s 默认，可按渠道覆盖；上游响应头等待
   `KEYWAY_RESPONSE_HEADER_TIMEOUT_S` 默认 1800s（0=不限制）——非流式长推理的
   响应头可能远超 60s，默认值对齐 new-api `RELAY_RESPONSE_HEADER_TIMEOUT`

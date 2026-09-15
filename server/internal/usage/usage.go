@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"database/sql"
 	"fmt"
 	"strconv"
 	"sync"
@@ -92,21 +93,12 @@ func ComputeCost(db *gorm.DB, model, upstreamModel, pricingMode string, multipli
 	if pricingMode != "cny_ratio" {
 		pricingMode = "usd"
 	}
-	name := upstreamModel
-	if name == "" {
-		name = model
+	snap := pricingSnapshot(db)
+	p, ok := lookupPricing(snap.table, model, upstreamModel)
+	if !ok {
+		return nil, nil
 	}
-	var p store.ModelPricing
-	if err := db.Where("model = ?", name).First(&p).Error; err != nil {
-		// 回退入站模型名
-		if err := db.Where("model = ?", model).First(&p).Error; err != nil {
-			return nil, nil
-		}
-	}
-	var fx float64
-	if pricingMode == "cny_ratio" {
-		fx = usdCNYRate(db)
-	}
+	fx := snap.fx
 	ic, oc := applyPricing(&p, pricingMode, multiplier, cnyRatio, fx, u)
 	return &ic, &oc
 }
@@ -148,15 +140,56 @@ func applyPricing(p *store.ModelPricing, pricingMode string, multiplier, cnyRati
 	return ic, oc
 }
 
-// pricingTable 一次性载入价目表（统计补算用，避免逐行查库）
-func pricingTable(db *gorm.DB) map[string]store.ModelPricing {
+// ---------- 价目/汇率内存缓存（DESIGN §8.2：写日志时不再逐请求查库）----------
+
+// priceCaches 按底层数据库实例缓存的价目+汇率快照。
+// 生产为单实例；测试的内存库各自独立、互不污染。
+// 快照不可变（读侧拿到引用后仅遍历），TTL 兜底 + 写路径显式失效双保险。
+var priceCaches sync.Map // *sql.DB → *priceSnapshot
+
+type priceSnapshot struct {
+	table map[string]store.ModelPricing
+	fx    float64
+	at    time.Time
+}
+
+const priceCacheTTL = time.Minute
+
+// pricingSnapshot 取价目与汇率快照：命中且未过期直接用，否则全量重建
+func pricingSnapshot(db *gorm.DB) *priceSnapshot {
+	key := sqlDBOf(db)
+	if key != nil {
+		if v, ok := priceCaches.Load(key); ok {
+			if s := v.(*priceSnapshot); time.Since(s.at) < priceCacheTTL {
+				return s
+			}
+		}
+	}
 	var list []store.ModelPricing
 	db.Find(&list)
-	m := make(map[string]store.ModelPricing, len(list))
+	table := make(map[string]store.ModelPricing, len(list))
 	for i := range list {
-		m[list[i].Model] = list[i]
+		table[list[i].Model] = list[i]
 	}
-	return m
+	s := &priceSnapshot{table: table, fx: usdCNYRate(db), at: time.Now()}
+	if key != nil {
+		priceCaches.Store(key, s)
+	}
+	return s
+}
+
+// InvalidatePricingCache 价目或汇率写入后按库失效（管理端 CRUD / 远程同步 / 汇率更新）
+func InvalidatePricingCache(db *gorm.DB) {
+	if key := sqlDBOf(db); key != nil {
+		priceCaches.Delete(key)
+	}
+}
+
+func sqlDBOf(db *gorm.DB) *sql.DB {
+	if raw, err := db.DB(); err == nil && raw != nil {
+		return raw
+	}
+	return nil
 }
 
 // lookupPricing 与 ComputeCost 同口径取价：upstream 优先、回退入站名
@@ -418,13 +451,13 @@ func recomputeUnpricedCost(db *gorm.DB, base func() *gorm.DB, chParams map[int64
 	if len(rows) == 0 {
 		return res, 0
 	}
-	pricing := pricingTable(db)
-	fx := usdCNYRate(db)
+	snap := pricingSnapshot(db)
+	fx := snap.fx
 	var unpriced int64
 	for i := range rows {
 		l := &rows[i]
 		model, upstream := derefStr(l.Model), derefStr(l.UpstreamModel)
-		p, ok := lookupPricing(pricing, model, upstream)
+		p, ok := lookupPricing(snap.table, model, upstream)
 		if !ok {
 			unpriced++
 			continue

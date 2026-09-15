@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -174,9 +176,9 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			var u convert.Usage
 			ttft, total := int64(0), int64(0)
 			if probe.Stream {
-				u, ttft, total = s.streamResponse(c, a, "openai", resp, reqStart)
+				u, ttft, total = s.streamResponse(c, a, "openai", resp, reqStart, 0)
 			} else {
-				u, ttft, total = s.bodyResponse(c, a, "openai", resp, reqStart)
+				u, ttft, total = s.bodyResponse(c, a, "openai", resp, reqStart, 0)
 			}
 			s.submitLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, u, ttft, total)
 			return
@@ -362,10 +364,11 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		}
 		var u convert.Usage
 		ttft, total := int64(0), int64(0)
+		promptEst := estimateRequestTokens(inbound, rawBody)
 		if stream {
-			u, ttft, total = s.streamResponse(c, a, inbound, resp, reqStart)
+			u, ttft, total = s.streamResponse(c, a, inbound, resp, reqStart, promptEst)
 		} else {
-			u, ttft, total = s.bodyResponse(c, a, inbound, resp, reqStart)
+			u, ttft, total = s.bodyResponse(c, a, inbound, resp, reqStart, promptEst)
 		}
 		s.submitLog(c, a, inbound, model, upstreamModel, resp.StatusCode, u, ttft, total)
 		return
@@ -392,6 +395,7 @@ func (s *Server) buildUpstreamRequest(inbound, channelType string, rawBody []byt
 				return nil, "", nil, false, fmt.Errorf("非法 JSON: %w", e)
 			}
 			m["model"] = upstreamModel
+			ensureIncludeUsage(m)
 			sendBody, _ = json.Marshal(m)
 			return sendBody, httpx.UpstreamEndpoint(a.lineURL, "/chat/completions"), nil, false, nil
 		}
@@ -428,6 +432,23 @@ func (s *Server) buildUpstreamRequest(inbound, channelType string, rawBody []byt
 	oi.Model = upstreamModel
 	sendBody, _ = json.Marshal(oi)
 	return sendBody, httpx.UpstreamEndpoint(a.lineURL, "/chat/completions"), dr, true, nil
+}
+
+// ensureIncludeUsage 流式请求且未显式拒绝 usage 回传时注入 stream_options.include_usage，
+// 让上游在末帧回带 usage（统计兜底，DESIGN §7.3）；客户端显式传 false 时尊重原值
+func ensureIncludeUsage(m map[string]any) {
+	stream, _ := m["stream"].(bool)
+	if !stream {
+		return
+	}
+	if so, ok := m["stream_options"].(map[string]any); ok {
+		if inc, ok := so["include_usage"].(bool); ok && !inc {
+			return
+		}
+		so["include_usage"] = true
+		return
+	}
+	m["stream_options"] = map[string]any{"include_usage": true}
 }
 
 // sendUpstream 发送上游请求（含鉴权头、代理客户端、超时）
@@ -493,8 +514,14 @@ func copyForwardHeaders(dst, src http.Header) {
 }
 
 // streamResponse 流式回写：跨协议走转换器，同协议逐行透传（flush）；公共代理统计出站字节。
+// 保活与止损（对齐 new-api 的 SSE 处理经验）：
+//   - ping：每 15s 向客户端写一行 SSE 注释（": ping"），防中间代理掐断长空闲连接
+//   - 空闲超时：上游连续 IdleStreamTimeoutSec 无数据 → 关闭上游 body 唤醒读循环并告知客户端
+//   - 客户端断开：立即关闭上游 body 止损（不等 transport 传播）
+//   - usage 兜底：上游未回传 usage 时按入站请求与累计输出文本本地估算
+//
 // 返回 usage、首字节耗时（自请求开始到首个写出块）、总耗时
-func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time) (convert.Usage, int64, int64) {
+func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time, promptEst int) (convert.Usage, int64, int64) {
 	channelType := a.protocol
 	if channelType == "" {
 		channelType = inbound
@@ -502,7 +529,6 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
-	flusher := c.Writer
 
 	c.Writer.WriteHeader(resp.StatusCode)
 
@@ -517,9 +543,50 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 		conv = convert.NewOpenAIToAnthropicStream()
 	}
 
+	// 写互斥：读循环与保活协程都可能写客户端
+	var writeMu sync.Mutex
+	writeOut := func(b []byte) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		written, err := c.Writer.Write(b)
+		if written > 0 {
+			c.Writer.Flush()
+		}
+		_ = err
+	}
+
+	// 保活/止损协程
+	done := make(chan struct{})
+	var lastUpstream atomic.Int64
+	lastUpstream.Store(time.Now().UnixMilli())
+	idle := time.Duration(s.Cfg.IdleStreamTimeoutSec) * time.Second
+	go func() {
+		ping := time.NewTicker(15 * time.Second)
+		defer ping.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-c.Request.Context().Done():
+				// 客户端断开：立即关闭上游止损
+				resp.Body.Close()
+				return
+			case <-ping.C:
+				if idle > 0 && time.Since(time.UnixMilli(lastUpstream.Load())) > idle {
+					writeOut([]byte(": keyway: upstream idle timeout\n\n"))
+					resp.Body.Close()
+					return
+				}
+				writeOut([]byte(": ping\n\n"))
+			}
+		}
+	}()
+	defer close(done)
+
 	buf := make([]byte, 32*1024)
 	var lineBuf []byte
 	var u convert.Usage
+	var tally streamTally
 	var totalBytes int64
 	ttft := int64(0)
 	markTTFT := func() {
@@ -530,6 +597,7 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
+			lastUpstream.Store(time.Now().UnixMilli())
 			totalBytes += int64(n)
 			markTTFT()
 			lineBuf = append(lineBuf, buf[:n]...)
@@ -540,16 +608,18 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 				}
 				line := lineBuf[:idx+1]
 				lineBuf = lineBuf[idx+1:]
-				s.writeStreamLine(c, flusher, conv, line, &u, markTTFT)
+				s.writeStreamLine(conv, line, &u, markTTFT, writeOut)
+				tally.feed(line)
 			}
 		}
 		if readErr != nil {
 			if len(lineBuf) > 0 {
-				s.writeStreamLine(c, flusher, conv, lineBuf, &u, markTTFT)
+				s.writeStreamLine(conv, lineBuf, &u, markTTFT, writeOut)
+				tally.feed(lineBuf)
 			}
 			if conv != nil {
 				if out, err := conv.Finish(); err == nil && len(out) > 0 {
-					flusher.Write(out)
+					writeOut(out)
 				}
 				u = conv.Usage()
 			}
@@ -557,40 +627,50 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 		}
 	}
 	resp.Body.Close()
+	writeMu.Lock()
 	c.Writer.Flush()
+	writeMu.Unlock()
 	if a.proxyID != 0 {
 		if _, user := ctxTokenUser(c); user != nil {
 			s.PM.Record(user.ID, a.proxyID, totalBytes)
+		}
+	}
+	// usage 兜底：上游未回传的字段用本地估算补齐（不覆盖真实值）
+	if u.PromptTokens == 0 && promptEst > 0 {
+		u.PromptTokens = promptEst
+	}
+	if u.CompletionTokens == 0 {
+		if est := tally.tokens(); est > 0 {
+			u.CompletionTokens = est
 		}
 	}
 	total := time.Since(reqStart).Milliseconds()
 	return u, ttft, total
 }
 
-func (s *Server) writeStreamLine(c *gin.Context, w io.Writer, conv interface {
+func (s *Server) writeStreamLine(conv interface {
 	Feed([]byte) ([]byte, bool, error)
 	Finish() ([]byte, error)
 	Usage() convert.Usage
-}, line []byte, u *convert.Usage, markTTFT func()) {
+}, line []byte, u *convert.Usage, markTTFT func(), writeOut func([]byte)) {
 	if conv != nil {
 		out, _, err := conv.Feed(line)
 		if err == nil && len(out) > 0 {
 			markTTFT()
-			w.Write(out)
-			c.Writer.Flush()
+			writeOut(out)
 		}
 		return
 	}
 	// 同协议透传，并嗅探 usage
 	markTTFT()
 	*u = sniffUsage(*u, line)
-	w.Write(line)
-	c.Writer.Flush()
+	writeOut(line)
 }
 
 // bodyResponse 非流式回写：跨协议转换响应体；公共代理统计出站字节。
+// 上游未回传 usage 时按入站请求与响应文本本地估算兜底。
 // 返回 usage、首字节耗时（自请求开始到开始写出）、总耗时
-func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time) (convert.Usage, int64, int64) {
+func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time, promptEst int) (convert.Usage, int64, int64) {
 	channelType := a.protocol
 	if channelType == "" {
 		channelType = inbound
@@ -604,10 +684,22 @@ func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *h
 	}
 	ttft := time.Since(reqStart).Milliseconds()
 
+	estimate := func(u convert.Usage) convert.Usage {
+		if u.PromptTokens == 0 && promptEst > 0 {
+			u.PromptTokens = promptEst
+		}
+		if u.CompletionTokens == 0 {
+			if est := estimateResponseTokens(body); est > 0 {
+				u.CompletionTokens = est
+			}
+		}
+		return u
+	}
+
 	if inbound == "openai" && channelType == "anthropic" {
 		var an convert.AnthropicMessagesResponse
 		if err := json.Unmarshal(body, &an); err == nil {
-			u := convert.NormalizeAnthropicUsage(&an.Usage)
+			u := estimate(convert.NormalizeAnthropicUsage(&an.Usage))
 			oi := convert.AnthropicToOpenAIResponse(&an)
 			oi.Model = modelFromUpstream(body)
 			c.Data(resp.StatusCode, "application/json", mustJSON(oi))
@@ -616,14 +708,14 @@ func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *h
 	} else if inbound == "anthropic" && channelType == "openai" {
 		var oi convert.OpenAIChatResponse
 		if err := json.Unmarshal(body, &oi); err == nil {
-			u := convert.NormalizeOpenAIUsage(oi.Usage)
+			u := estimate(convert.NormalizeOpenAIUsage(oi.Usage))
 			an := convert.OpenAIToAnthropicResponse(&oi)
 			c.Data(resp.StatusCode, "application/json", mustJSON(an))
 			return u, ttft, time.Since(reqStart).Milliseconds()
 		}
 	}
 	// 同协议或转换失败：原样透传
-	u := sniffUsage(convert.Usage{}, body)
+	u := estimate(sniffUsage(convert.Usage{}, body))
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
 	return u, ttft, time.Since(reqStart).Milliseconds()
 }
