@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/auth"
+	"keyway/internal/fxrate"
 	"keyway/internal/probe"
 	"keyway/internal/proxyman"
 	"keyway/internal/store"
@@ -19,11 +20,12 @@ type Server struct {
 	Auth    *auth.Service
 	Probe   *probe.Engine
 	PM      *proxyman.Manager
+	Fx      *fxrate.Engine
 	BaseURL string
 }
 
-func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *proxyman.Manager, baseURL string) *Server {
-	return &Server{Store: st, Secret: secret, Auth: a, Probe: p, PM: pm, BaseURL: baseURL}
+func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *proxyman.Manager, fx *fxrate.Engine, baseURL string) *Server {
+	return &Server{Store: st, Secret: secret, Auth: a, Probe: p, PM: pm, Fx: fx, BaseURL: baseURL}
 }
 
 const sessionCookie = "keyway_session"
@@ -206,6 +208,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 		admin.DELETE("/templates/:id", s.handleAdminDeleteTemplate)
 		admin.GET("/settings", s.handleAdminSettings)
 		admin.PUT("/settings", s.handleAdminUpdateSettings)
+		admin.POST("/exchange-rate/sync", s.handleAdminSyncExchangeRate)
 		admin.GET("/invites", s.handleAdminListInvites)
 		admin.POST("/invites", s.handleAdminCreateInvites)
 		admin.DELETE("/invites/:code", s.handleAdminDeleteInvite)

@@ -1,5 +1,5 @@
 import React from 'react'
-import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography } from 'antd'
+import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography, Radio } from 'antd'
 import {
   adminUsers,
   adminSetUserStatus,
@@ -23,9 +23,10 @@ import {
   adminImportCatalogFromPricing,
   adminSettings,
   adminUpdateSettings,
+  adminSyncExchangeRate,
   adminStats,
 } from '../api'
-import type { User, ModelPricing, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup } from '../api/types'
+import type { User, ModelPricing, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings } from '../api/types'
 import { formatDateTime } from '../format'
 
 const UsersTab: React.FC = () => {
@@ -680,7 +681,11 @@ const StatsTab: React.FC = () => {
 const SettingsTab: React.FC = () => {
   const [form] = Form.useForm()
   const [loading, setLoading] = React.useState(true)
+  const [saving, setSaving] = React.useState(false)
+  const [syncing, setSyncing] = React.useState(false)
   const [hasSecret, setHasSecret] = React.useState(false)
+  const [fxMode, setFxMode] = React.useState<'auto' | 'manual'>('manual')
+  const [fxInfo, setFxInfo] = React.useState<{ rate?: number; source?: string; updatedAt?: string }>({})
   React.useEffect(() => {
     adminSettings()
       .then((r) => {
@@ -690,23 +695,56 @@ const SettingsTab: React.FC = () => {
           feishuAppId: r.settings.feishuAppId,
           feishuBaseUrl: r.settings.feishuBaseUrl,
           exchangeRate: r.settings.exchangeRate ?? 7.2,
+          exchangeRateMode: r.settings.exchangeRateMode ?? 'manual',
+        })
+        setFxMode(r.settings.exchangeRateMode ?? 'manual')
+        setFxInfo({
+          rate: r.settings.exchangeRate,
+          source: r.settings.exchangeRateSource,
+          updatedAt: r.settings.exchangeRateUpdatedAt,
         })
         setHasSecret(r.settings.feishuHasSecret ?? false)
       })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
   }, [form])
+
+  // doSync 立即同步汇率：apply=true 写入生效；apply=false 仅获取最新值填充表单
+  const doSync = async (apply: boolean) => {
+    setSyncing(true)
+    try {
+      const r = await adminSyncExchangeRate(apply)
+      const res = r.result
+      if (apply) {
+        setFxInfo((prev) => ({ rate: res.rate, source: res.source, updatedAt: res.updatedAt ?? prev.updatedAt }))
+        message.success(`已同步：1 USD = ${res.rate} CNY（来源 ${res.source}）`)
+      } else {
+        form.setFieldValue('exchangeRate', res.rate)
+        message.success(`已获取最新汇率 ${res.rate}，确认后保存`)
+      }
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <Form
       form={form}
       layout="vertical"
       style={{ maxWidth: 520 }}
       onFinish={async (v) => {
+        setSaving(true)
         try {
-          await adminUpdateSettings(v)
-          message.success('已保存')
+          await adminUpdateSettings(v as AdminSettings)
+          // 切到自动同步后立即拉一次，避免等到下个周期
+          if (v.exchangeRateMode === 'auto') await doSync(true)
+          else message.success('已保存')
         } catch (e) {
           message.error((e as Error).message)
+        } finally {
+          setSaving(false)
         }
       }}
     >
@@ -732,13 +770,46 @@ const SettingsTab: React.FC = () => {
         <Input placeholder="https://open.feishu.cn" />
       </Form.Item>
       <Form.Item
-        name="exchangeRate"
+        name="exchangeRateMode"
         label="美元兑人民币汇率"
-        extra="人民币渠道（cny_ratio）的费用折算用，默认 7.2"
+        extra="人民币渠道（cny_ratio）的费用折算用；自动同步每 24 小时从公共汇率源拉取"
       >
-        <InputNumber min={0.5} max={20} step={0.1} style={{ width: 160 }} />
+        <Radio.Group
+          onChange={(e) => setFxMode(e.target.value)}
+          options={[
+            { value: 'auto', label: '自动同步' },
+            { value: 'manual', label: '固定值' },
+          ]}
+        />
       </Form.Item>
-      <Button type="primary" htmlType="submit" loading={loading}>保存</Button>
+      {fxMode === 'auto' ? (
+        <Form.Item label="当前汇率">
+          <Space wrap>
+            <span>
+              1 USD = <Typography.Text strong>{fxInfo.rate ?? 7.2}</Typography.Text> CNY
+            </span>
+            {fxInfo.source && <Tag>{fxInfo.source}</Tag>}
+            <Typography.Text type="secondary">更新于 {formatDateTime(fxInfo.updatedAt)}</Typography.Text>
+            <Button size="small" loading={syncing} onClick={() => doSync(true)}>
+              立即同步
+            </Button>
+          </Space>
+        </Form.Item>
+      ) : (
+        <Form.Item label="固定值" required>
+          <Space>
+            <Form.Item name="exchangeRate" noStyle rules={[{ required: true, message: '请输入汇率固定值' }]}>
+              <InputNumber min={0.5} max={20} step={0.1} style={{ width: 160 }} />
+            </Form.Item>
+            <Button size="small" loading={syncing} onClick={() => doSync(false)}>
+              获取最新
+            </Button>
+          </Space>
+        </Form.Item>
+      )}
+      <Button type="primary" htmlType="submit" loading={loading || saving}>
+        保存
+      </Button>
     </Form>
   )
 }

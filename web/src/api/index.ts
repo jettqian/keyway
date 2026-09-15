@@ -17,6 +17,7 @@ import type {
   Proxy,
   ProxyInput,
   AdminSettings,
+  ExchangeRateSyncResult,
   PublicInfo,
 } from './types'
 
@@ -108,6 +109,8 @@ export const adminUpdateTemplate = (id: number, input: TemplateInput) =>
 export const adminDeleteTemplate = (id: number) => del<void>(`/api/admin/templates/${id}`)
 export const adminSettings = () => get<{ settings: AdminSettings }>('/api/admin/settings')
 export const adminUpdateSettings = (s: AdminSettings) => put<{ settings: AdminSettings }>('/api/admin/settings', s)
+export const adminSyncExchangeRate = (apply: boolean) =>
+  post<{ result: ExchangeRateSyncResult }>('/api/admin/exchange-rate/sync', { apply })
 
 function qs(q: Record<string, unknown>): string {
   const params = new URLSearchParams()

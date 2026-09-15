@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/crypto"
+	"keyway/internal/fxrate"
 	"keyway/internal/httpx"
 	"keyway/internal/pricing"
 	"keyway/internal/store"
@@ -451,6 +452,27 @@ type adminSettingsDTO struct {
 	FeishuHasSecret bool    `json:"feishuHasSecret"`
 	FeishuBaseURL   string  `json:"feishuBaseUrl"`
 	ExchangeRate    float64 `json:"exchangeRate"` // USD→CNY，人民币渠道费用折算用
+	// 汇率模式：auto = 定时同步（每 24h 拉取公共 API 覆盖）；manual = 管理员固定值
+	ExchangeRateMode      string `json:"exchangeRateMode,omitempty"`
+	ExchangeRateSource   string `json:"exchangeRateSource,omitempty"`   // frankfurter/jsdelivr/erapi/manual
+	ExchangeRateUpdatedAt string `json:"exchangeRateUpdatedAt,omitempty"` // RFC3339
+}
+
+// settingsDTO 从 settings 表组装当前生效的管理员设置（GET 与 PUT 回显共用）
+func (s *Server) settingsDTO() adminSettingsDTO {
+	mode := s.Fx.Mode()
+	updatedAt, _ := s.Store.GetSetting(fxrate.KeyUpdatedAt)
+	source, _ := s.Store.GetSetting(fxrate.KeySource)
+	rate := 7.2
+	if v, err := strconv.ParseFloat(mustSetting(s.Store, fxrate.KeyRate), 64); err == nil && v > 0 {
+		rate = v
+	}
+	return adminSettingsDTO{
+		ExchangeRate:          rate,
+		ExchangeRateMode:      mode,
+		ExchangeRateSource:    source,
+		ExchangeRateUpdatedAt: updatedAt,
+	}
 }
 
 func (s *Server) handleAdminSettings(c *gin.Context) {
@@ -462,18 +484,13 @@ func (s *Server) handleAdminSettings(c *gin.Context) {
 	appID, _ := s.Store.GetSetting("feishu_app_id")
 	baseURL, _ := s.Store.GetSetting("feishu_base_url")
 	secretEnc, _ := s.Store.GetSetting("feishu_app_secret")
-	rate := 7.2
-	if v, err := strconv.ParseFloat(mustSetting(s.Store, "usd_cny_rate"), 64); err == nil && v > 0 {
-		rate = v
-	}
-	s.ok(c, gin.H{"settings": adminSettingsDTO{
-		RegisterMode:    mode,
-		FeishuEnabled:   feishuEnabled == "1",
-		FeishuAppID:     appID,
-		FeishuHasSecret: secretEnc != "",
-		FeishuBaseURL:   baseURL,
-		ExchangeRate:    rate,
-	}})
+	dto := s.settingsDTO()
+	dto.RegisterMode = mode
+	dto.FeishuEnabled = feishuEnabled == "1"
+	dto.FeishuAppID = appID
+	dto.FeishuHasSecret = secretEnc != ""
+	dto.FeishuBaseURL = baseURL
+	s.ok(c, gin.H{"settings": dto})
 }
 
 func (s *Server) handleAdminUpdateSettings(c *gin.Context) {
@@ -505,13 +522,51 @@ func (s *Server) handleAdminUpdateSettings(c *gin.Context) {
 		}
 		dto.FeishuAppSecret = ""
 	}
-	if dto.ExchangeRate >= 0.5 && dto.ExchangeRate <= 20 {
-		s.Store.SetSetting("usd_cny_rate", strconv.FormatFloat(dto.ExchangeRate, 'f', 4, 64))
+	// 汇率模式：空串不改（兼容旧客户端）；切 auto 由后台定时同步覆盖，切 manual 用固定值
+	mode := s.Fx.Mode()
+	if dto.ExchangeRateMode != "" {
+		if dto.ExchangeRateMode != fxrate.ModeAuto && dto.ExchangeRateMode != fxrate.ModeManual {
+			s.fail(c, http.StatusBadRequest, "exchangeRateMode 须为 auto/manual")
+			return
+		}
+		mode = dto.ExchangeRateMode
+		s.Store.SetSetting(fxrate.KeyMode, mode)
 	}
-	// 回显不含密钥
-	resp := dto
+	if mode == fxrate.ModeManual && dto.ExchangeRate >= 0.5 && dto.ExchangeRate <= 20 {
+		s.Fx.SaveManualRate(dto.ExchangeRate)
+	}
+	// 回显不含密钥，汇率相关字段按库内实际生效值回显
+	resp := s.settingsDTO()
+	resp.RegisterMode = dto.RegisterMode
+	resp.FeishuEnabled = dto.FeishuEnabled
+	resp.FeishuAppID = dto.FeishuAppID
 	resp.FeishuHasSecret = true
+	resp.FeishuBaseURL = dto.FeishuBaseURL
 	s.ok(c, gin.H{"settings": resp})
+}
+
+// handleAdminSyncExchangeRate 手动同步汇率：apply=true 拉取并立即写入；
+// apply=false 仅预览（manual 模式下供表单填充固定值）
+func (s *Server) handleAdminSyncExchangeRate(c *gin.Context) {
+	var req struct {
+		Apply bool `json:"apply"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		s.fail(c, http.StatusBadRequest, "非法请求体")
+		return
+	}
+	rate, src, err := s.Fx.Sync()
+	if err != nil {
+		s.fail(c, http.StatusBadGateway, "汇率源拉取失败："+err.Error())
+		return
+	}
+	result := gin.H{"rate": rate, "source": src, "applied": false}
+	if req.Apply {
+		at := s.Fx.ApplyRate(rate, src)
+		result["applied"] = true
+		result["updatedAt"] = at.Format(time.RFC3339)
+	}
+	s.ok(c, gin.H{"result": result})
 }
 
 func mustSetting(st *store.Store, key string) string {

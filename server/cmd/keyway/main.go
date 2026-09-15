@@ -15,6 +15,7 @@ import (
 	"keyway/internal/api"
 	"keyway/internal/auth"
 	"keyway/internal/config"
+	"keyway/internal/fxrate"
 	"keyway/internal/pricing"
 	"keyway/internal/probe"
 	"keyway/internal/proxyman"
@@ -45,7 +46,9 @@ func buildApp(cfg config.Config) (*app, error) {
 	logWriter := usage.NewWriter(st.DB())
 	pm := proxyman.New(st, cfg.Secret)
 	probeEngine := probe.New(st, cfg.Secret, routingSvc, pm, cfg)
-	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm, cfg.BaseURL)
+	// 汇率定时同步（USD→CNY，auto 模式下每 24h 覆盖，manual 保留固定值）
+	fxEngine := fxrate.New(st, cfg.FxSourceURL)
+	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm, fxEngine, cfg.BaseURL)
 	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, pm, cfg)
 
 	stopWriter := make(chan struct{})
@@ -74,6 +77,13 @@ func buildApp(cfg config.Config) (*app, error) {
 	go func() {
 		logWriter.StartRetention(retentionStop, cfg.LogRetentionDays)
 		close(retentionDone)
+	}()
+
+	fxStop := make(chan struct{})
+	fxDone := make(chan struct{})
+	go func() {
+		fxEngine.Start(fxStop)
+		close(fxDone)
 	}()
 
 	// 官方价目定期同步（LiteLLM + OpenRouter，只补缺；KEYWAY_PRICING_SYNC_HOURS=0 关闭）
@@ -150,6 +160,11 @@ func buildApp(cfg config.Config) (*app, error) {
 			close(pricingStop)
 			select {
 			case <-pricingDone:
+			case <-time.After(5 * time.Second):
+			}
+			close(fxStop)
+			select {
+			case <-fxDone:
 			case <-time.After(5 * time.Second):
 			}
 		},

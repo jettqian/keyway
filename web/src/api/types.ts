@@ -200,6 +200,18 @@ export interface AdminSettings {
   feishuHasSecret?: boolean
   feishuBaseUrl?: string
   exchangeRate?: number
+  /** auto = 定时同步；manual = 固定值 */
+  exchangeRateMode?: 'auto' | 'manual'
+  exchangeRateSource?: string
+  exchangeRateUpdatedAt?: string
+}
+
+/** 汇率手动同步结果（apply=false 时仅预览） */
+export interface ExchangeRateSyncResult {
+  rate: number
+  source: string
+  applied: boolean
+  updatedAt?: string
 }
 
 export interface PublicInfo {

@@ -1,9 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.9（与 PRD v1.5.8 对应；新增 /v1/responses Responses API 透传、
-  上游端点统一拼 /v1 前缀（`httpx.UpstreamEndpoint`，转发与探测同规则）、
-  上游 2xx+text/html 视为 SPA 回退不再当成功透传、
-  NoRoute 对非 GET/HEAD 请求返回 404 JSON 而非前端 SPA 回退）
+- 版本：v1.11（与 PRD v1.5.12 对应；上游响应头超时从固定 60s 改为
+  `KEYWAY_RESPONSE_HEADER_TIMEOUT_S` 默认 1800s（对齐 new-api
+  `RELAY_RESPONSE_HEADER_TIMEOUT`），0=不限制，流式 body 阶段不受影响；
+  前版 v1.10：汇率自动同步；
+  历史变更见文档各节与 PRD 变更记录）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
 - 本文档解决：架构、技术选型、数据模型落地、核心机制设计、协议转换决策表（PRD 开放
@@ -24,12 +25,13 @@ Agent ──HTTPS 443──▶ 反代 ─▶│ gin Router                      
                            │  └─ /healthz                                                     │
                            │                                                            │
                            │  核心服务：                                                  │
-                           │  routing   路由/优选/失败切换（内存缓存 + 写失效）            │
-                           │  convert   OpenAI ↔ Anthropic 双向转换（含流式）             │
-                           │  proxyman  出站代理池（按代理复用连接、字节统计）             │
-                           │  probe     线路×路径后台探测器                                 │
-                           │  usage     异步日志批写 + 费用快照 + 保留期清理               │
-                           │  store     GORM + SQLite(WAL)                                │
+                            │  routing   路由/优选/失败切换（内存缓存 + 写失效）            │
+                            │  convert   OpenAI ↔ Anthropic 双向转换（含流式）             │
+                            │  proxyman  出站代理池（按代理复用连接、字节统计）             │
+                            │  probe     线路×路径后台探测器                                 │
+                            │  fxrate    USD→CNY 汇率定时同步（auto 模式生效）              │
+                            │  usage     异步日志批写 + 费用快照 + 保留期清理               │
+                            │  store     GORM + SQLite(WAL)                                │
                            └────────────────────────────────────────────────────────────┘
                                      │ 直连 / 个人代理 / 公共代理
                                      ▼
@@ -66,6 +68,7 @@ keyway/
 │       ├── routing/         # 渠道模型路由、attempt plan、失败切换、缓存失效
 │       ├── probe/           # 探测调度器
 │       ├── proxyman/        # http.Client 池（按代理 URL）、流量计数
+│       ├── fxrate/          # USD→CNY 汇率定时同步（多源回退）
 │       ├── usage/           # 异步日志写、价目、聚合查询
 │       └── webui/           # go:embed dist
 ├── web/                     # Vite React 前端源码
@@ -365,7 +368,7 @@ graph LR
  ├ 逐组合执行：
  │   ├ convert.In{openai|anthropic} → channel.type 对应出站结构
  │   ├ http.Client（按 path 从 proxyman 取，连接池复用）
- │   ├ 拨号/TLS 超时 10s（渠道可覆盖）；响应头超时 60s
+ │   ├ 拨号/TLS 超时 10s（渠道可覆盖）；响应头超时默认 1800s 可配
  │   ├ 流式：SSE 逐块转换写出（http.Flusher，无缓冲）
  │   └ 非流式：读全 body 转换写出
  ├ usage 抽取：openai 取最后 chunk usage / anthropic 取 message_delta.usage
@@ -513,7 +516,8 @@ new-api 的已知语义（仅参考行为，代码自研）。
   - `pricing_mode = usd`（默认）：`cost = base × price_multiplier`（美元渠道折扣）
   - `pricing_mode = cny_ratio`：`cost = base × cny_ratio ÷ usd_cny_rate`
     （人民币渠道：$1 官方用量实收 ¥cny_ratio，如 micu 渠道 0.5 表示 $1 → ¥0.5；
-    汇率 `settings.usd_cny_rate` 默认 7.2，管理员可改）
+    汇率 `settings.usd_cny_rate` 默认 7.2，支持 manual 固定值 / auto 定时同步，
+    见 §8.5）
 - 缓存档回退：`cached_input_per_m` 为 NULL → 取 `input_per_m`；`cache_write_per_m`
   为 NULL → 取 `input_per_m`（Anthropic 实际 1.25×，在价目中显式配置）
 - 未命中价目 → 费用 NULL；统计页区分"已定价/未定价"两档展示
@@ -554,6 +558,25 @@ new-api 的已知语义（仅参考行为，代码自研）。
   `model_mapping_json`（重命名顺带迁移映射）。
 - 不创建用户级模型实体；空绑定模型不会出现在路由与 `/v1/models` 中。渠道表单和模型管理页
   共享同一数据来源，避免两套配置产生分歧。
+
+### 8.5 汇率同步（fxrate，FR-M7）
+
+- **模式**（`settings.usd_cny_rate_mode`）：`manual`（缺省，管理员固定值，兼容存量
+  行为）/ `auto`（定时同步覆盖）。切换由 `PUT /api/admin/settings` 持久化；auto 模式下
+  表单提交的汇率固定值被忽略（仅同步写入）。
+- **数据源**（三源顺序回退，任一成功即止）：frankfurter.dev（ECB 数据）→
+  jsdelivr CDN（@fawazahmed0/currency-api）→ open.er-api.com；拉取超时 15s、响应上限
+  1MB；值域 0.5~20 之外视为源异常继续回退（与管理员手动设置的有效范围一致）。
+  `KEYWAY_FX_SOURCE_URL` 非空时覆盖为单一源（无回退，自建镜像/测试用）。
+- **定时循环**（`Engine.Start`，main 后台协程，与 probe 同 stop/done 模式）：启动 30s
+  后首跑、此后每 24h 一次；仅 auto 模式写入，manual 模式跳过；失败保留现有值并打日志，
+  下个周期自动重试。
+- **手动同步**（`POST /api/admin/exchange-rate/sync`）：`apply=true` 拉取并立即写入
+  （不区分模式，auto 模式「立即同步」按钮）；`apply=false` 仅预览返回
+  （manual 模式「获取最新」填充表单，确认后随保存落库）。全部源失败返回 502。
+- **写入**：`usd_cny_rate` + 元数据三键（`usd_cny_rate_source` 来源 /
+  `usd_cny_rate_updated_at` RFC3339），usage 层每次读库计算，同步后即时生效；
+  写入经 mutex 串行化（手动同步与定时循环可能并发）。
 
 ## 9. 预制渠道复制（FR-X2/X3）
 
@@ -610,7 +633,8 @@ GET /oauth/feishu/callback?code&state
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
   （模型目录 CRUD + import_pricing 价目导入）、/api/admin/templates、
   /api/admin/proxies、/api/admin/pricing(+import、+sync_remote 远程同步)、
-  /api/admin/stats、/api/admin/invites | 见 PRD §5.9 |
+  /api/admin/stats、/api/admin/invites、
+  POST /api/admin/exchange-rate/sync（汇率手动同步，apply 写入/预览） | 见 PRD §5.9 |
 
 ### 11.2 中转 `/v1`（令牌鉴权）
 
@@ -649,9 +673,11 @@ text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无�
 | KEYWAY_KEY_COOLDOWN_S | 60 | 429 默认冷却 |
 | KEYWAY_DEFAULT_MAX_TOKENS | 8192 | OI→AN 缺省 max_tokens |
 | KEYWAY_BODY_LIMIT_MB | 50 | 请求体上限 |
-| KEYWAY_IDLE_STREAM_TIMEOUT_S | 300 | 流式空闲超时 |
+| KEYWAY_RESPONSE_HEADER_TIMEOUT_S | 1800 | 上游响应头等待超时（秒），0=不限制；对齐 new-api `RELAY_RESPONSE_HEADER_TIMEOUT`。仅覆盖响应头阶段，流式 body 不受影响（不用 Client.Timeout 整体超时，避免切断长流式） |
+| KEYWAY_IDLE_STREAM_TIMEOUT_S | 300 | 流式空闲超时（**规划中，当前未接线**：与 new-api 行为一致，流式阶段依赖客户端断开取消） |
 | KEYWAY_LOG_RETENTION_DAYS | 30 | 日志保留期 |
 | KEYWAY_PRICING_SYNC_HOURS | 24 | 官方价目远程同步周期（小时，LiteLLM + OpenRouter；0 关闭；启动先执行一次） |
+| KEYWAY_FX_SOURCE_URL | 空 | 覆盖汇率同步源（单一源无回退，自建镜像/测试用；留空用 frankfurter→jsdelivr→er-api 三源回退） |
 
 ## 13. 部署
 

@@ -21,6 +21,7 @@ type Config struct {
 	IdleStreamTimeoutSec int
 	LogRetentionDays     int
 	PricingSyncHours     int
+	FxSourceURL          string
 }
 
 func Load() Config {
@@ -37,6 +38,7 @@ func Load() Config {
 		IdleStreamTimeoutSec: envInt("KEYWAY_IDLE_STREAM_TIMEOUT_S", 300),
 		LogRetentionDays:     envInt("KEYWAY_LOG_RETENTION_DAYS", 30),
 		PricingSyncHours:     envInt("KEYWAY_PRICING_SYNC_HOURS", 24),
+		FxSourceURL:          envStr("KEYWAY_FX_SOURCE_URL", ""),
 	}
 }
 
