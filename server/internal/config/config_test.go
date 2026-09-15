@@ -9,7 +9,8 @@ func TestLoadDefaults(t *testing.T) {
 	cfg := Load()
 	if cfg.DataDir != "./data" || cfg.Port != 8080 || cfg.ProbeIntervalMin != 10 ||
 		cfg.AttemptBudget != 3 || cfg.KeyCooldownSec != 60 || cfg.DefaultMaxTokens != 8192 ||
-		cfg.BodyLimitMB != 50 || cfg.IdleStreamTimeoutSec != 300 || cfg.LogRetentionDays != 30 {
+		cfg.BodyLimitMB != 50 || cfg.IdleStreamTimeoutSec != 300 || cfg.LogRetentionDays != 30 ||
+		cfg.ResponseHeaderTimeoutSec != 1800 {
 		t.Fatalf("默认值不符合 DESIGN §12: %+v", cfg)
 	}
 }

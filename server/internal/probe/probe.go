@@ -64,7 +64,7 @@ type Engine struct {
 func New(st *store.Store, secret string, r *routing.Service, pm *proxyman.Manager, cfg config.Config) *Engine {
 	return &Engine{
 		store: st, secret: secret, routing: r, pm: pm, cfg: cfg,
-		pool:     httpx.NewPool(),
+		pool:     httpx.NewPool(cfg.ResponseHeaderTimeoutSec),
 		next:     map[int64]time.Time{},
 		failMult: map[int64]int{},
 	}

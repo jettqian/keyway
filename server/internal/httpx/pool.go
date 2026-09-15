@@ -24,12 +24,18 @@ func UpstreamEndpoint(baseURL, path string) string {
 
 // Pool 按代理 URL 复用的 HTTP 客户端池（"" = 直连）
 type Pool struct {
-	mu      sync.Mutex
-	clients map[string]*http.Client
+	mu                    sync.Mutex
+	clients               map[string]*http.Client
+	responseHeaderTimeout time.Duration // ≤0 = 不限制
 }
 
-func NewPool() *Pool {
-	return &Pool{clients: map[string]*http.Client{}}
+// NewPool 创建客户端池；responseHeaderTimeoutSec 限制上游响应头等待
+// （默认场景见 config.KEYWAY_RESPONSE_HEADER_TIMEOUT_S），0 = 不限制
+func NewPool(responseHeaderTimeoutSec int) *Pool {
+	return &Pool{
+		clients:               map[string]*http.Client{},
+		responseHeaderTimeout: time.Duration(responseHeaderTimeoutSec) * time.Second,
+	}
 }
 
 // Get 获取（或创建）指定代理的客户端
@@ -41,12 +47,15 @@ func (p *Pool) Get(proxyURL string) (*http.Client, error) {
 	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
-		MaxIdleConns:          64,
-		MaxIdleConnsPerHost:   32,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
+		DialContext:         dialer.DialContext,
+		MaxIdleConns:        64,
+		MaxIdleConnsPerHost: 32,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+	// 仅限制响应头等待；流式 body 阶段不受影响（长流式不被切断）
+	if p.responseHeaderTimeout > 0 {
+		transport.ResponseHeaderTimeout = p.responseHeaderTimeout
 	}
 	if proxyURL != "" {
 		u, err := ParseProxyURL(proxyURL)

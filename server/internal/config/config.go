@@ -9,19 +9,20 @@ import (
 )
 
 type Config struct {
-	Secret               string
-	DataDir              string
-	Port                 int
-	BaseURL              string
-	ProbeIntervalMin     int
-	AttemptBudget        int
-	KeyCooldownSec       int
-	DefaultMaxTokens     int
-	BodyLimitMB          int
-	IdleStreamTimeoutSec int
-	LogRetentionDays     int
-	PricingSyncHours     int
-	FxSourceURL          string
+	Secret                   string
+	DataDir                  string
+	Port                     int
+	BaseURL                  string
+	ProbeIntervalMin         int
+	AttemptBudget            int
+	KeyCooldownSec           int
+	DefaultMaxTokens         int
+	BodyLimitMB              int
+	IdleStreamTimeoutSec     int
+	ResponseHeaderTimeoutSec int
+	LogRetentionDays         int
+	PricingSyncHours         int
+	FxSourceURL              string
 }
 
 func Load() Config {
@@ -36,9 +37,12 @@ func Load() Config {
 		DefaultMaxTokens:     envInt("KEYWAY_DEFAULT_MAX_TOKENS", 8192),
 		BodyLimitMB:          envInt("KEYWAY_BODY_LIMIT_MB", 50),
 		IdleStreamTimeoutSec: envInt("KEYWAY_IDLE_STREAM_TIMEOUT_S", 300),
-		LogRetentionDays:     envInt("KEYWAY_LOG_RETENTION_DAYS", 30),
-		PricingSyncHours:     envInt("KEYWAY_PRICING_SYNC_HOURS", 24),
-		FxSourceURL:          envStr("KEYWAY_FX_SOURCE_URL", ""),
+		// 对齐 new-api RELAY_RESPONSE_HEADER_TIMEOUT（默认 1800s）：
+		// 非流式长推理响应头可能远超 60s；0 = 不限制
+		ResponseHeaderTimeoutSec: envInt("KEYWAY_RESPONSE_HEADER_TIMEOUT_S", 1800),
+		LogRetentionDays:         envInt("KEYWAY_LOG_RETENTION_DAYS", 30),
+		PricingSyncHours:         envInt("KEYWAY_PRICING_SYNC_HOURS", 24),
+		FxSourceURL:              envStr("KEYWAY_FX_SOURCE_URL", ""),
 	}
 }
 

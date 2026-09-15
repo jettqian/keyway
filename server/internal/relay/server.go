@@ -38,7 +38,7 @@ type Server struct {
 func NewServer(st *store.Store, secret string, a *auth.Service, r *routing.Service, w *usage.Writer, pm *proxyman.Manager, cfg config.Config) *Server {
 	return &Server{
 		Store: st, Secret: secret, Auth: a, Routing: r, Logs: w, PM: pm, Cfg: cfg,
-		pool: *httpx.NewPool(),
+		pool: *httpx.NewPool(cfg.ResponseHeaderTimeoutSec),
 		rr:   map[int64]int64{},
 	}
 }
