@@ -1,7 +1,7 @@
 import React from 'react'
 import { Tooltip } from 'antd'
 import type { CatalogModel } from '../api/types'
-import { fmtPrice } from '../format'
+import Money from './Money'
 
 /**
  * 模型目录关联单价展示（用户页与管理员页共用）：
@@ -19,14 +19,14 @@ const CatalogPrice: React.FC<{ m: CatalogModel }> = ({ m }) => {
   return (
     <div className="catalog-price" style={{ lineHeight: 1.7 }}>
       <div>
-        <span className="catalog-price-label">输入</span> ${fmtPrice(m.inputPerM)}
+        <span className="catalog-price-label">输入</span> <Money value={m.inputPerM} />
         <span className="catalog-price-sep">·</span>
-        <span className="catalog-price-label">输出</span> ${fmtPrice(m.outputPerM)}
+        <span className="catalog-price-label">输出</span> <Money value={m.outputPerM} />
       </div>
       <div>
-        <span className="catalog-price-label">缓存读</span> ${fmtPrice(m.cachedInputPerM ?? m.inputPerM)}
+        <span className="catalog-price-label">缓存读</span> <Money value={m.cachedInputPerM ?? m.inputPerM} />
         <span className="catalog-price-sep">·</span>
-        <span className="catalog-price-label">缓存写</span> ${fmtPrice(m.cacheWritePerM ?? m.inputPerM)}
+        <span className="catalog-price-label">缓存写</span> <Money value={m.cacheWritePerM ?? m.inputPerM} />
       </div>
     </div>
   )

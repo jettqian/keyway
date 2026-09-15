@@ -29,8 +29,9 @@ import {
   adminStats,
 } from '../api'
 import type { User, ModelPricing, PricingSource, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings } from '../api/types'
-import { formatDateTime, fmtCost, fmtInt, fmtPrice } from '../format'
+import { formatDateTime, fmtInt } from '../format'
 import CatalogPrice from '../components/CatalogPrice'
+import Money from '../components/Money'
 import { rangePresets } from './Stats'
 
 const UsersTab: React.FC = () => {
@@ -277,7 +278,7 @@ const PricingTab: React.FC = () => {
             dataIndex: 'inputPerM',
             align: 'right',
             width: 100,
-            render: (v: number) => <span className="price-cell">{fmtPrice(v)}</span>,
+            render: (v: number) => <Money value={v} />,
           },
           {
             title: '缓存读 $/M',
@@ -286,10 +287,10 @@ const PricingTab: React.FC = () => {
             width: 110,
             render: (v: number | null, p: ModelPricing) =>
               v != null ? (
-                <span className="price-cell">{fmtPrice(v)}</span>
+                <Money value={v} />
               ) : (
                 <Tooltip title="未配置，按输入价回退">
-                  <span className="price-cell text-tertiary">{fmtPrice(p.inputPerM)}</span>
+                  <span className="text-tertiary"><Money value={p.inputPerM} /></span>
                 </Tooltip>
               ),
           },
@@ -300,10 +301,10 @@ const PricingTab: React.FC = () => {
             width: 110,
             render: (v: number | null, p: ModelPricing) =>
               v != null ? (
-                <span className="price-cell">{fmtPrice(v)}</span>
+                <Money value={v} />
               ) : (
                 <Tooltip title="未配置，按输入价回退">
-                  <span className="price-cell text-tertiary">{fmtPrice(p.inputPerM)}</span>
+                  <span className="text-tertiary"><Money value={p.inputPerM} /></span>
                 </Tooltip>
               ),
           },
@@ -312,7 +313,7 @@ const PricingTab: React.FC = () => {
             dataIndex: 'outputPerM',
             align: 'right',
             width: 100,
-            render: (v: number) => <span className="price-cell">{fmtPrice(v)}</span>,
+            render: (v: number) => <Money value={v} />,
           },
           {
             title: '操作',
@@ -495,7 +496,7 @@ const CatalogModelsTab: React.FC = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.model}</span>
             <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-              输入 ${fmtPrice(p.inputPerM)} / 输出 ${fmtPrice(p.outputPerM)}
+              输入 <Money value={p.inputPerM} /> / 输出 <Money value={p.outputPerM} />
             </span>
           </div>
         ),
@@ -589,9 +590,9 @@ const CatalogModelsTab: React.FC = () => {
             extra={
               picked ? (
                 <span>
-                  价目关联：输入 ${fmtPrice(picked.inputPerM)} · 输出 ${fmtPrice(picked.outputPerM)} ·
-                  缓存读 ${fmtPrice(picked.cachedInputPerM ?? picked.inputPerM)} ·
-                  缓存写 ${fmtPrice(picked.cacheWritePerM ?? picked.inputPerM)}
+                  价目关联：输入 <Money value={picked.inputPerM} /> · 输出 <Money value={picked.outputPerM} /> ·
+                  缓存读 <Money value={picked.cachedInputPerM ?? picked.inputPerM} /> ·
+                  缓存写 <Money value={picked.cacheWritePerM ?? picked.inputPerM} />
                 </span>
               ) : (
                 <span className="form-hint">可从价目表搜索点选，也可直接输入目录外名称（费用将记为未定价）</span>
@@ -829,7 +830,7 @@ const StatsTab: React.FC = () => {
     { title: '请求数', dataIndex: 'requests', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.requests - b.requests },
     { title: '输入 tokens', dataIndex: 'promptTokens', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.promptTokens - b.promptTokens },
     { title: '输出 tokens', dataIndex: 'completionTokens', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.completionTokens - b.completionTokens },
-    { title: '费用估算', dataIndex: 'cost', align: 'right' as const, render: (v: number) => fmtCost(v), sorter: (a: StatsGroup, b: StatsGroup) => a.cost - b.cost },
+    { title: '费用估算', dataIndex: 'cost', align: 'right' as const, render: (v: number) => <Money value={v} mode="cost" />, sorter: (a: StatsGroup, b: StatsGroup) => a.cost - b.cost },
   ]
 
   const exportUrl = `/api/admin/stats/export?start=${range[0].format('YYYY-MM-DD')}&end=${range[1].format('YYYY-MM-DD')}`
@@ -863,7 +864,7 @@ const StatsTab: React.FC = () => {
             <Statistic title="tokens（入/出）" value={`${fmtInt(data?.summary.promptTokens ?? 0)} / ${fmtInt(data?.summary.completionTokens ?? 0)}`} />
           </div>
           <div className="stat-cell">
-            <Statistic title="费用估算" value={fmtCost(data?.summary.cost ?? 0)} />
+            <Statistic title="费用估算" value={data?.summary.cost ?? 0} formatter={(v) => <Money value={v as number} mode="cost" big />} />
             {data?.summary.unpriced ? <span className="stat-note">部分未定价</span> : null}
           </div>
         </div>

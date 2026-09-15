@@ -61,6 +61,8 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
 .stat-strip > .stat-cell:first-child { padding-left: 0; }
 .stat-strip > .stat-cell + .stat-cell { border-left: 1px solid var(--kw-border); }
 .stat-strip .stat-note { color: var(--kw-tertiary); font-size: 12px; margin-left: 6px; }
+/* 单位后缀（如错误率的 %）：小一号弱色，避免与数值同大的笨重感 */
+.stat-strip .ant-statistic-content-suffix { font-size: 16px; color: var(--kw-secondary); }
 
 /* 令牌列表「限定渠道」入口：胶囊按钮，明确可点击展开配置面板。
    宽度固定（列宽 230 - 单元格 padding 32）：摘要文本变化既不引起表格列宽重排，
@@ -77,8 +79,11 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
 .channel-pill:hover > .anticon { color: #176b87; }
 .channel-pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 价目表数字单元格：等宽数字，右对齐下逐位可比 */
-.price-cell { font-variant-numeric: tabular-nums; }
+/* 货币展示（Money 组件）：$ 符号小一号、弱色，数字主体突出；
+   big 模式（统计带大数字）额外弱化小数拖尾，避免 4 位小数与整数等权的琐碎感 */
+.money { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.money-sym { font-size: .8em; font-weight: 500; color: var(--kw-tertiary); margin-right: 1px; }
+.money-big .money-dec { font-size: .72em; color: var(--kw-tertiary); }
 
 /* 模型目录单价展示：标签浅色、数字等宽，两行档位一目了然 */
 .catalog-price { font-variant-numeric: tabular-nums; white-space: nowrap; }

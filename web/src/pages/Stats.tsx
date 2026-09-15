@@ -5,7 +5,8 @@ import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { myStats } from '../api'
 import type { LatestUsage, StatsResponse, StatsGroup } from '../api/types'
-import { formatDateTime, fmtCost, fmtInt } from '../format'
+import Money from '../components/Money'
+import { formatDateTime, fmtInt } from '../format'
 
 // 快捷时间项（自然日口径）
 export const rangePresets: { label: string; value: [Dayjs, Dayjs] }[] = [
@@ -56,7 +57,7 @@ const StatsPage: React.FC = () => {
     {
       title: '费用估算',
       dataIndex: 'cost',
-      render: (v: number) => fmtCost(v),
+      render: (v: number) => <Money value={v} mode="cost" />,
       align: 'right' as const,
       sorter: (a: StatsGroup, b: StatsGroup) => a.cost - b.cost,
     },
@@ -91,7 +92,7 @@ const StatsPage: React.FC = () => {
             <Statistic title="tokens（入/出）" value={`${fmtInt(data?.summary.promptTokens ?? 0)} / ${fmtInt(data?.summary.completionTokens ?? 0)}`} />
           </div>
           <div className="stat-cell">
-            <Statistic title="费用估算" value={fmtCost(data?.summary.cost ?? 0)} />
+            <Statistic title="费用估算" value={data?.summary.cost ?? 0} formatter={(v) => <Money value={v as number} mode="cost" big />} />
             {data?.summary.unpriced ? <span className="stat-note">部分未定价</span> : null}
           </div>
         </div>

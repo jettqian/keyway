@@ -2,7 +2,8 @@ import React from 'react'
 import { Table, Select, Input, InputNumber, Popover, Typography, message } from 'antd'
 import { listLogs, listChannels } from '../api'
 import type { LogEntry, Channel } from '../api/types'
-import { formatDateTime, fmtCost, fmtInt, fmtMs } from '../format'
+import Money from '../components/Money'
+import { formatDateTime, fmtInt, fmtMs } from '../format'
 
 const LogsPage: React.FC = () => {
   const [logs, setLogs] = React.useState<LogEntry[]>([])
@@ -94,7 +95,7 @@ const LogsPage: React.FC = () => {
             width: 100,
             align: 'right',
             render: (_, l) =>
-              l.inputCost == null ? <span className="text-tertiary">未定价</span> : fmtCost(l.inputCost + (l.outputCost ?? 0)),
+              l.inputCost == null ? <span className="text-tertiary">未定价</span> : <Money value={l.inputCost + (l.outputCost ?? 0)} mode="cost" />,
           },
           {
             title: '错误',

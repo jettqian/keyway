@@ -34,10 +34,19 @@ export function fmtMs(value: number | null | undefined): string {
   return `${m}m${String(s).padStart(2, '0')}s`
 }
 
-// 费用估算：固定 4 位小数便于列内对比；非零但低于显示下限时用 <$0.0001，
+// 费用分层结构：sym 为货币符号（含低于下限时的 "<$"），int/dec 拆分整数与小数，
+// 供 UI 将符号与小数弱化展示
+export interface CostParts {
+  sym: string
+  int: string
+  dec: string | null
+}
+
+// 费用估算分层：固定 4 位小数便于列内对比；非零但低于显示下限时用 <$0.0001，
 // 避免单条极小费用被 toFixed(4) 抹成 $0.0000 误读为分文未花
-export function fmtCost(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '—'
-  if (value > 0 && value < 0.0001) return '<$0.0001'
-  return `$${value.toFixed(4)}`
+export function fmtCostParts(value: number | null | undefined): CostParts | null {
+  if (value == null || !Number.isFinite(value)) return null
+  if (value > 0 && value < 0.0001) return { sym: '<$', int: '0.0001', dec: null }
+  const [int, dec] = value.toFixed(4).split('.')
+  return { sym: '$', int, dec: dec ?? null }
 }
