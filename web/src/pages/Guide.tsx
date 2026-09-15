@@ -1,6 +1,8 @@
 import React from 'react'
-import { Alert, Button, Card, Steps, Tabs, Typography, message } from 'antd'
-import { CopyOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Modal, Select, Steps, Tabs, Typography, message } from 'antd'
+import { CopyOutlined, RobotOutlined } from '@ant-design/icons'
+import { listTokens, revealToken } from '../api'
+import type { GatewayToken } from '../api/types'
 
 const TOKEN_PLACEHOLDER = 'sk-keyway-你的令牌'
 
@@ -29,6 +31,119 @@ const Note: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </Typography.Paragraph>
 )
 
+// 构建给 AI 的配置指令（含真实令牌与可用模型）
+const buildAIPrompt = (origin: string, plaintext: string, models: string[]): string => {
+  const modelLine = models.length
+    ? models.join(', ')
+    : '（在网关「模型管理」页查看，或 GET ' + origin + '/v1/models）'
+  return `请帮我配置 AI 网关（Keyway）客户端。以下信息已齐全，直接使用即可：
+
+## 网关信息
+- OpenAI 兼容地址: ${origin}/v1
+- Anthropic 协议地址: ${origin}（Claude Code 用，客户端自动拼接 /v1/messages）
+- 网关令牌: ${plaintext}
+- 可用模型: ${modelLine}
+
+## 任务（按需执行，改完逐项验证）
+1. Claude Code：编辑 ~/.claude/settings.json，在 env 中写入
+   ANTHROPIC_BASE_URL = "${origin}"、ANTHROPIC_AUTH_TOKEN = 上面的网关令牌。
+2. Codex：编辑 ~/.codex/config.toml，添加自定义 provider：
+   [model_providers.keyway] 使用 base_url = "${origin}/v1"、wire_api = "chat"、
+   experimental_bearer_token = 网关令牌；并在顶部设置 model = 一个可用模型、model_provider = "keyway"。
+   注意 wire_api 必须是 chat（网关暂未实现 Responses API）。
+3. opencode：编辑 ~/.config/opencode/opencode.json（或项目根目录 opencode.json），
+   添加 provider "keyway"（npm = "@ai-sdk/openai"，baseURL = "${origin}/v1"，apiKey = 网关令牌）
+   和 "keyway-anthropic"（npm = "@ai-sdk/anthropic"，baseURL = "${origin}/v1"，apiKey = 网关令牌），
+   models 按上面列出的可用模型填写。
+
+注意事项：令牌是敏感信息，只写入本机配置文件，不要提交到代码仓库；改完各发一条测试消息验证连通。`
+}
+
+const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
+  const [tokens, setTokens] = React.useState<GatewayToken[]>([])
+  const [tokenId, setTokenId] = React.useState<number | undefined>()
+  const [copying, setCopying] = React.useState(false)
+  const [fallback, setFallback] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    listTokens()
+      .then((r) => {
+        const valid = r.tokens.filter((t) => !t.revoked)
+        setTokens(valid)
+        setTokenId(valid[0]?.id)
+      })
+      .catch(() => {})
+  }, [])
+
+  const fetchModels = async (plaintext: string): Promise<string[]> => {
+    try {
+      const resp = await fetch(`${origin}/v1/models`, { headers: { Authorization: `Bearer ${plaintext}` } })
+      if (!resp.ok) return []
+      const data = await resp.json()
+      return (data?.data ?? []).map((m: { id: string }) => m.id).slice(0, 30)
+    } catch {
+      return []
+    }
+  }
+
+  const copyPrompt = async () => {
+    if (!tokenId) return
+    setCopying(true)
+    try {
+      const r = await revealToken(tokenId)
+      const models = await fetchModels(r.plaintext)
+      const text = buildAIPrompt(origin, r.plaintext, models)
+      try {
+        await navigator.clipboard.writeText(text)
+        message.success('已复制，粘贴给任意 AI 工具即可代为配置')
+      } catch {
+        setFallback(text)
+      }
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setCopying(false)
+    }
+  }
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <RobotOutlined style={{ fontSize: 20, color: '#176b87' }} />
+        <Typography.Title level={5} style={{ margin: 0 }}>让 AI 帮你配置</Typography.Title>
+        <div style={{ flex: 1 }} />
+        <Select
+          style={{ minWidth: 220 }}
+          placeholder={tokens.length ? '选择令牌' : '暂无有效令牌'}
+          value={tokenId}
+          onChange={setTokenId}
+          options={tokens.map((t) => ({ value: t.id, label: `${t.name}（${t.keyPrefix}…）` }))}
+          notFoundContent={<span>请先到「令牌」页创建令牌</span>}
+        />
+        <Button type="primary" icon={<CopyOutlined />} loading={copying} disabled={!tokenId} onClick={copyPrompt}>
+          复制配置指令（含令牌）
+        </Button>
+      </div>
+      <Note>
+        指令包含网关地址、所选令牌的完整明文和可用模型列表，直接粘贴给 AI 编程工具（Claude Code / Codex / opencode
+        本身或任意聊天 AI），它就能代为修改各客户端配置文件。内网环境可直接把令牌写入配置文件；若在意泄露，
+        各客户端也支持环境变量方式（见下方说明）。
+      </Note>
+      <Modal
+        open={fallback !== null}
+        title="剪贴板不可用，请手动复制"
+        onCancel={() => setFallback(null)}
+        onOk={() => setFallback(null)}
+        width={680}
+      >
+        <Typography.Paragraph copyable={{ text: fallback ?? '' }} style={{ whiteSpace: 'pre-wrap', fontSize: 12.5 }}>
+          {fallback}
+        </Typography.Paragraph>
+      </Modal>
+    </Card>
+  )
+}
+
 const GuidePage: React.FC = () => {
   const origin = window.location.origin
 
@@ -46,7 +161,7 @@ const GuidePage: React.FC = () => {
           items={[
             { title: '准备渠道', description: <>在<a href="#/channels">渠道</a>页创建或从<a href="#/templates">预制模板</a>复制渠道，绑定密钥并启用；模型列表从模型目录点选。</> },
             { title: '创建网关令牌', description: <>在<a href="#/tokens">令牌</a>页新建并复制 <Typography.Text code>sk-keyway-…</Typography.Text>，下游客户端只用这个令牌。</> },
-            { title: '配置客户端', description: '按下方对应客户端的说明配置；网关地址用本页显示的地址（生产环境替换为你的域名）。' },
+            { title: '配置客户端', description: '直接把令牌写进客户端配置文件（内网推荐），或使用下方「让 AI 帮你配置」。' },
           ]}
         />
         <Alert
@@ -58,6 +173,8 @@ const GuidePage: React.FC = () => {
         />
       </Card>
 
+      <AIHelpCard origin={origin} />
+
       <Card>
         <Tabs
           items={[
@@ -66,12 +183,12 @@ const GuidePage: React.FC = () => {
               label: 'Claude Code',
               children: (
                 <div>
-                  <Typography.Title level={5} style={{ marginTop: 0 }}>方式一：环境变量（推荐）</Typography.Title>
-                  <CodeBlock text={`export ANTHROPIC_BASE_URL=${origin}\nexport ANTHROPIC_AUTH_TOKEN=${TOKEN_PLACEHOLDER}\n\n# 然后直接运行\nclaude`} />
-                  <Note>BASE_URL 不带 <Typography.Text code>/v1</Typography.Text>，客户端会自动拼接 <Typography.Text code>/v1/messages</Typography.Text>。</Note>
-                  <Typography.Title level={5}>方式二：写入配置文件</Typography.Title>
-                  <CodeBlock text={`// ~/.claude/settings.json\n{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${origin}",\n    "ANTHROPIC_AUTH_TOKEN": "${TOKEN_PLACEHOLDER}"\n  }\n}`} />
-                  <Note>保存后重启 Claude Code 生效；模型名填渠道中配置的名称（如 <Typography.Text code>claude-sonnet-4.5</Typography.Text>）。</Note>
+                  <Typography.Title level={5} style={{ marginTop: 0 }}>推荐：写入 ~/.claude/settings.json</Typography.Title>
+                  <CodeBlock text={`{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${origin}",\n    "ANTHROPIC_AUTH_TOKEN": "${TOKEN_PLACEHOLDER}"\n  }\n}`} />
+                  <Note>密钥直接落在配置文件里，一次写入长期生效（内网环境推荐）；保存后重启 Claude Code。</Note>
+                  <Typography.Title level={5}>临时会话：环境变量</Typography.Title>
+                  <CodeBlock text={`export ANTHROPIC_BASE_URL=${origin}\nexport ANTHROPIC_AUTH_TOKEN=${TOKEN_PLACEHOLDER}\n\nclaude`} />
+                  <Note>BASE_URL 不带 <Typography.Text code>/v1</Typography.Text>，客户端会自动拼接 <Typography.Text code>/v1/messages</Typography.Text>；模型名填渠道中配置的名称（如 <Typography.Text code>claude-sonnet-4.5</Typography.Text>）。</Note>
                 </div>
               ),
             },
@@ -81,10 +198,12 @@ const GuidePage: React.FC = () => {
               children: (
                 <div>
                   <Typography.Title level={5} style={{ marginTop: 0 }}>配置文件 ~/.codex/config.toml</Typography.Title>
-                  <CodeBlock text={`model = "gpt-5.2"                 # 改成渠道中配置的模型名\nmodel_provider = "keyway"\n\n[model_providers.keyway]\nname = "keyway"\nbase_url = "${origin}/v1"\nwire_api = "chat"                # 网关走 chat/completions，必须为 chat\nenv_key = "KEYWAY_API_KEY"`} />
-                  <Typography.Title level={5}>设置密钥并启动</Typography.Title>
-                  <CodeBlock text={`export KEYWAY_API_KEY=${TOKEN_PLACEHOLDER}\n\n# 然后直接运行\ncodex`} />
-                  <Note><Typography.Text code>wire_api</Typography.Text> 必须为 <Typography.Text code>chat</Typography.Text>（网关暂未实现 Responses API）；也可以把密钥写入环境变量配置（如 shell profile）长期生效。</Note>
+                  <CodeBlock text={`model = "gpt-5.2"                 # 改成渠道中配置的模型名\nmodel_provider = "keyway"\n\n[model_providers.keyway]\nname = "keyway"\nbase_url = "${origin}/v1"\nwire_api = "chat"                # 网关走 chat/completions，必须为 chat\nexperimental_bearer_token = "${TOKEN_PLACEHOLDER}"   # 密钥直接写入（内网推荐）`} />
+                  <Note>
+                    <Typography.Text code>experimental_bearer_token</Typography.Text> 把密钥直接写在配置文件里，一次写入长期生效；
+                    公网环境可改用官方推荐的 <Typography.Text code>env_key = "KEYWAY_API_KEY"</Typography.Text> + 环境变量。
+                    <Typography.Text code>wire_api</Typography.Text> 必须为 <Typography.Text code>chat</Typography.Text>（网关暂未实现 Responses API）。
+                  </Note>
                 </div>
               ),
             },
@@ -94,13 +213,12 @@ const GuidePage: React.FC = () => {
               children: (
                 <div>
                   <Typography.Title level={5} style={{ marginTop: 0 }}>配置文件 opencode.json（项目根目录或 ~/.config/opencode/）</Typography.Title>
-                  <CodeBlock text={`{\n  "$schema": "https://opencode.ai/config.json",\n  "provider": {\n    "keyway": {\n      "npm": "@ai-sdk/openai-compatible",\n      "name": "Keyway",\n      "options": {\n        "baseURL": "${origin}/v1",\n        "apiKey": "{env:KEYWAY_API_KEY}"\n      },\n      "models": {\n        "gpt-5.2": {},\n        "claude-sonnet-4.5": {}\n      }\n    }\n  },\n  "model": "keyway/gpt-5.2"\n}`} />
-                  <Typography.Title level={5}>设置密钥并启动</Typography.Title>
-                  <CodeBlock text={`export KEYWAY_API_KEY=${TOKEN_PLACEHOLDER}\n\n# 然后直接运行\nopencode`} />
+                  <CodeBlock text={`{\n  "$schema": "https://opencode.ai/config.json",\n  "provider": {\n    "keyway": {\n      "npm": "@ai-sdk/openai",\n      "name": "Keyway",\n      "options": {\n        "baseURL": "${origin}/v1",\n        "apiKey": "${TOKEN_PLACEHOLDER}"\n      },\n      "models": {\n        "gpt-5.2": {}\n      }\n    },\n    "keyway-anthropic": {\n      "npm": "@ai-sdk/anthropic",\n      "name": "Keyway (Anthropic)",\n      "options": {\n        "baseURL": "${origin}/v1",\n        "apiKey": "${TOKEN_PLACEHOLDER}"\n      },\n      "models": {\n        "claude-sonnet-4.5": {}\n      }\n    }\n  },\n  "model": "keyway/gpt-5.2"\n}`} />
                   <Note>
-                    <Typography.Text code>models</Typography.Text> 中列出渠道实际配置的模型名；也可改用
-                    <Typography.Text code>@ai-sdk/anthropic</Typography.Text>（<Typography.Text code>baseURL</Typography.Text> 同样填
-                    <Typography.Text code>{origin}/v1</Typography.Text>）走 Anthropic 协议。
+                    优先使用 <Typography.Text code>@ai-sdk/openai</Typography.Text> / <Typography.Text code>@ai-sdk/anthropic</Typography.Text>
+                    两个包（OpenAI 与 Anthropic 协议各一个 provider，共用同一令牌）；<Typography.Text code>apiKey</Typography.Text> 直接写入配置文件（内网推荐），
+                    也可写 <Typography.Text code>{'{env:KEYWAY_API_KEY}'}</Typography.Text> 改用环境变量。
+                    <Typography.Text code>models</Typography.Text> 中列出渠道实际配置的模型名。
                   </Note>
                 </div>
               ),

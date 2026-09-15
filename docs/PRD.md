@@ -1,12 +1,18 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.2
+- 版本：v1.5.3
 - 日期：2026-09-15
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.3：接入指南调整——① 各客户端**优先推荐把密钥直接写进配置文件**
+>   （Claude Code settings.json / Codex `experimental_bearer_token` / opencode `apiKey`，
+>   内网场景泄露风险可控；环境变量降级为临时方案）；② opencode 优先推荐
+>   `@ai-sdk/openai` 与 `@ai-sdk/anthropic`（`@ai-sdk/openai-compatible` 为备选）；
+>   ③ 新增**「让 AI 帮你配置」**卡片：选择令牌后一键复制完整配置指令（含令牌明文、
+>   网关地址与该令牌可路由的模型列表），粘贴给任意 AI 工具即可代为修改配置
 > - v1.5.2：新增控制台**接入指南**页（/guide）——按客户端（Claude Code / Codex / opencode /
 >   通用 OpenAI 兼容）给出可复制的配置示例（自动填充当前网关地址），引导"渠道 → 令牌 →
 >   客户端"三步接入；令牌创建成功弹窗增加指南入口；README 同步扩充 Agent 配置章节
@@ -318,11 +324,17 @@ US13 统一管理模型（P7）
   一键复制完整值（剪贴板不可用时回退为弹窗展示）。仅令牌所有者可执行，管理员和其他
   用户永远只能看到前缀；回看不改变密钥，吊销后不可用于请求。
 - FR-T6 接入指南页（/guide）：按客户端给出可复制的配置示例——Claude Code
-  （`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` 或 settings.json）、Codex
-  （`~/.codex/config.toml`，`wire_api="chat"`）、opencode（opencode.json，
-  `@ai-sdk/openai-compatible` 或 `@ai-sdk/anthropic`）、通用 OpenAI 兼容
-  （Base URL + curl 验证）。示例自动填充当前网关地址（页面 origin，生产自行替换域名），
-  并以三步引导（渠道 → 令牌 → 客户端）说明前置条件；令牌创建成功弹窗提供指南入口
+  （`~/.claude/settings.json` 的 env 块，**优先直接写密钥**；环境变量为临时方案）、
+  Codex（`~/.codex/config.toml`，`wire_api="chat"`，优先 `experimental_bearer_token`
+  直写密钥，公网可改 `env_key`）、opencode（opencode.json，优先
+  `@ai-sdk/openai` / `@ai-sdk/anthropic` 双 provider 共用令牌，
+  `@ai-sdk/openai-compatible` 为备选）、通用 OpenAI 兼容（Base URL + curl 验证）。
+  示例自动填充当前网关地址（页面 origin，生产自行替换域名），并以三步引导
+  （渠道 → 令牌 → 客户端）说明前置条件；令牌创建成功弹窗提供指南入口
+- FR-T6.1 让 AI 帮你配置：指南页提供令牌选择器 + 一键复制配置指令；指令包含网关地址、
+  所选令牌完整明文、该令牌可路由的模型列表（用令牌实时调用 `/v1/models` 获取）与
+  Claude Code / Codex / opencode 三个客户端的改配任务说明，粘贴给任意 AI 工具即可代为
+  修改配置文件。指令含敏感明文，页面明确提示仅粘贴给信任的 AI 工具
 
 ### 5.6 路由与转发
 

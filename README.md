@@ -30,17 +30,20 @@ cd server && go run ./cmd/keyway      # 后端 :8080
 cd web && npm run dev                 # 前端 :5173（/api 代理到 8080）
 ```
 
-Agent 侧一次性配置（之后零改动；完整说明见控制台「接入指南」页）：
+Agent 侧一次性配置（之后零改动；控制台「接入指南」页自动填充本机地址并支持一键复制）：
 
-```bash
-# Claude Code（Anthropic 协议，BASE_URL 不带 /v1）
-export ANTHROPIC_BASE_URL=https://your-domain
-export ANTHROPIC_AUTH_TOKEN=sk-keyway-...
-claude
+```jsonc
+// Claude Code：~/.claude/settings.json（推荐直接写密钥）
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://your-domain",
+    "ANTHROPIC_AUTH_TOKEN": "sk-keyway-..."
+  }
+}
 ```
 
 ```toml
-# Codex：~/.codex/config.toml（wire_api 必须为 chat）
+# Codex：~/.codex/config.toml（wire_api 必须为 chat；密钥直接写入）
 model = "gpt-5.2"                 # 渠道中配置的模型名
 model_provider = "keyway"
 
@@ -48,24 +51,26 @@ model_provider = "keyway"
 name = "keyway"
 base_url = "https://your-domain/v1"
 wire_api = "chat"
-env_key = "KEYWAY_API_KEY"
-```
-
-```bash
-export KEYWAY_API_KEY=sk-keyway-...   # Codex / opencode 共用
-codex
+experimental_bearer_token = "sk-keyway-..."
 ```
 
 ```jsonc
 // opencode：项目根目录或 ~/.config/opencode/opencode.json
+// 优先 @ai-sdk/openai / @ai-sdk/anthropic（OpenAI 与 Anthropic 协议各一个，共用令牌）
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
     "keyway": {
-      "npm": "@ai-sdk/openai-compatible",
+      "npm": "@ai-sdk/openai",
       "name": "Keyway",
-      "options": { "baseURL": "https://your-domain/v1", "apiKey": "{env:KEYWAY_API_KEY}" },
-      "models": { "gpt-5.2": {}, "claude-sonnet-4.5": {} }
+      "options": { "baseURL": "https://your-domain/v1", "apiKey": "sk-keyway-..." },
+      "models": { "gpt-5.2": {} }
+    },
+    "keyway-anthropic": {
+      "npm": "@ai-sdk/anthropic",
+      "name": "Keyway (Anthropic)",
+      "options": { "baseURL": "https://your-domain/v1", "apiKey": "sk-keyway-..." },
+      "models": { "claude-sonnet-4.5": {} }
     }
   },
   "model": "keyway/gpt-5.2"
@@ -73,7 +78,7 @@ codex
 ```
 
 ```bash
-# 任意 OpenAI 兼容客户端 / SDK
+# 任意 OpenAI 兼容客户端 / SDK（或临时会话用环境变量）
 export OPENAI_BASE_URL=https://your-domain/v1
 export OPENAI_API_KEY=sk-keyway-...
 ```
