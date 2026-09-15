@@ -465,7 +465,8 @@ func tokenDTO(t *store.Token) gin.H {
 	dto := gin.H{
 		"id": t.ID, "name": t.Name, "keyPrefix": t.KeyPrefix,
 		"channelIds": t.ChannelFilter(), "channelOrder": t.ChannelOrder(),
-		"revoked": t.Revoked == 1, "createdAt": t.CreatedAt,
+		"restricted": t.Restricted == 1,
+		"revoked":    t.Revoked == 1, "createdAt": t.CreatedAt,
 	}
 	if t.ChannelID != nil {
 		dto["channelId"] = *t.ChannelID
@@ -537,10 +538,16 @@ func (s *Server) handleCreateToken(c *gin.Context) {
 		s.fail(c, http.StatusInternalServerError, "加密失败")
 		return
 	}
+	// 创建时显式选择渠道 = 限定；留空 = 不限（面板首次调整时固化为限定）
+	restricted := 0
+	if len(filter) > 0 {
+		restricted = 1
+	}
 	t := store.Token{
 		UserID: currentUser(c).ID, Name: trimOrEmpty(req.Name),
 		KeyEnc: enc, KeyPrefix: plaintext[:16], KeyHash: crypto.HashToken(plaintext),
-		ChannelIDsJSON: string(mustJSONStr(filter)), ChannelOrderJSON: string(mustJSONStr(filter)), CreatedAt: time.Now().Unix(),
+		ChannelIDsJSON: string(mustJSONStr(filter)), ChannelOrderJSON: string(mustJSONStr(filter)),
+		Restricted: restricted, CreatedAt: time.Now().Unix(),
 	}
 	if req.ModelScope != "" {
 		t.ModelScope = &req.ModelScope
@@ -599,6 +606,7 @@ func (s *Server) handleUpdateToken(c *gin.Context) {
 		Name         *string  `json:"name"`
 		ChannelIDs   *[]int64 `json:"channelIds"`
 		ChannelOrder *[]int64 `json:"channelOrder"`
+		Restricted   *bool    `json:"restricted"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		s.fail(c, http.StatusBadRequest, "非法请求体")
@@ -666,6 +674,11 @@ func (s *Server) handleUpdateToken(c *gin.Context) {
 			return
 		}
 		updates["channel_order_json"] = string(mustJSONStr(uniq))
+	}
+	if req.Restricted != nil {
+		// 限定标志与启用集合分离：restricted=1 + 空集合 = 限定范围内全部停用
+		// （路由零候选）；restricted=0 = 不限（路由所有启用渠道）
+		updates["restricted"] = *req.Restricted
 	}
 	if len(updates) > 0 {
 		if err := s.Store.DB().Model(&t).Updates(updates).Error; err != nil {

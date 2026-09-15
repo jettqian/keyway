@@ -64,19 +64,25 @@ func TestTokenChannelOrder与启用集合分离(t *testing.T) {
 		ID           int64   `json:"id"`
 		ChannelIDs   []int64 `json:"channelIds"`
 		ChannelOrder []int64 `json:"channelOrder"`
+		Restricted   bool    `json:"restricted"`
 	}
 
-	// 创建即带 channelIds：order 应等于选中集合
+	// 创建即带 channelIds：order 应等于选中集合，且为限定语义
 	var createResp struct {
-		Token tokenDTO `json:"token"`
+		Token     tokenDTO `json:"token"`
+		Plaintext string   `json:"plaintext"`
 	}
 	if w = c.do("POST", "/api/tokens", map[string]any{"name": "tk", "channelIds": []int64{ch1, ch2, ch3}}, true); w.Code != 200 {
 		t.Fatalf("建令牌失败: %d %s", w.Code, w.Body.String())
 	}
 	json.Unmarshal(w.Body.Bytes(), &createResp)
 	tokenID := createResp.Token.ID
+	c.token = createResp.Plaintext
 	assertIDs("创建后 channelIds", createResp.Token.ChannelIDs, []int64{ch1, ch2, ch3})
 	assertIDs("创建后 channelOrder", createResp.Token.ChannelOrder, []int64{ch1, ch2, ch3})
+	if !createResp.Token.Restricted {
+		t.Fatal("创建带渠道的令牌应为限定语义")
+	}
 
 	put := func(body map[string]any) tokenDTO {
 		w := c.do("PUT", fmt.Sprintf("/api/tokens/%d", tokenID), body, true)
@@ -105,6 +111,28 @@ func TestTokenChannelOrder与启用集合分离(t *testing.T) {
 	assertIDs("恢复后 channelIds", dto.ChannelIDs, []int64{ch1, ch2, ch3})
 	assertIDs("恢复后 channelOrder", dto.ChannelOrder, []int64{ch1, ch2, ch3})
 
+	// 全部关闭（临时停用 ≠ 吊销）：restricted=1 + 空启用集合，路由零候选
+	dto = put(map[string]any{"channelIds": []int64{}, "restricted": true, "channelOrder": []int64{ch1, ch2, ch3}})
+	assertIDs("全关后 channelIds", dto.ChannelIDs, nil)
+	assertIDs("全关后 channelOrder", dto.ChannelOrder, []int64{ch1, ch2, ch3})
+	if !dto.Restricted {
+		t.Fatal("全关后应保持限定语义（restricted=true）")
+	}
+	if w := c.do("POST", "/v1/chat/completions", map[string]any{
+		"model": "m-alpha", "messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, false); w.Code != 404 {
+		t.Fatalf("全关令牌请求应 404（无候选渠道），得到 %d %s", w.Code, w.Body.String())
+	}
+
+	// 重新打开渠道：立即恢复路由
+	dto = put(map[string]any{"channelIds": []int64{ch1}, "restricted": true, "channelOrder": []int64{ch1, ch2, ch3}})
+	assertIDs("重开 channelIds", dto.ChannelIDs, []int64{ch1})
+	if w := c.do("POST", "/v1/chat/completions", map[string]any{
+		"model": "m-alpha", "messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, false); w.Code != 200 {
+		t.Fatalf("重开后请求应恢复 200，得到 %d %s", w.Code, w.Body.String())
+	}
+
 	// 列表接口回显持久化结果
 	var listResp struct {
 		Tokens []tokenDTO `json:"tokens"`
@@ -116,7 +144,7 @@ func TestTokenChannelOrder与启用集合分离(t *testing.T) {
 	if len(listResp.Tokens) != 1 {
 		t.Fatalf("令牌数量 = %d，期望 1", len(listResp.Tokens))
 	}
-	assertIDs("列表 channelIds", listResp.Tokens[0].ChannelIDs, []int64{ch1, ch2, ch3})
+	assertIDs("列表 channelIds", listResp.Tokens[0].ChannelIDs, []int64{ch1})
 	assertIDs("列表 channelOrder", listResp.Tokens[0].ChannelOrder, []int64{ch1, ch2, ch3})
 
 	// channelOrder 含不属于当前用户的渠道 → 400

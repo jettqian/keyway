@@ -57,7 +57,8 @@ func DecodeKeyValue(secret string, k *store.Key) (string, error) {
 func (s *Service) Resolve(userID int64, model string, channelIDs []int64, modelScope string) ([]*ResolvedChannel, []*ResolvedChannel, error) {
 	var chans []store.Channel
 	q := s.store.DB().Where("user_id = ? AND enabled = 1", userID)
-	if len(channelIDs) > 0 {
+	// channelIDs != nil = 令牌限定（空切片 = 限定范围内全部停用，零候选）；nil = 不限
+	if channelIDs != nil {
 		q = q.Where("id IN ?", channelIDs)
 	}
 	if err := q.Find(&chans).Error; err != nil {
@@ -87,7 +88,7 @@ func (s *Service) Resolve(userID int64, model string, channelIDs []int64, modelS
 		}
 	}
 
-	if len(channelIDs) > 0 {
+	if channelIDs != nil {
 		// 令牌限定了渠道：按令牌绑定顺序排序（稳定，越靠前优先级越高）
 		pos := make(map[int64]int, len(channelIDs))
 		for i, id := range channelIDs {
@@ -102,10 +103,11 @@ func (s *Service) Resolve(userID int64, model string, channelIDs []int64, modelS
 	return matched, defaults, nil
 }
 
-// AllEnabledModels 用户可用渠道模型名并集（channelIDs 非空时限定集合，/v1/models 用）
+// AllEnabledModels 用户可用渠道模型名并集（channelIDs 非 nil 时限定集合，/v1/models 用；
+// 空切片 = 限定范围内全部停用 → 返回空并集）
 func (s *Service) AllEnabledModels(userID int64, channelIDs []int64) ([]string, error) {
 	q := s.store.DB().Where("user_id = ? AND enabled = 1", userID)
-	if len(channelIDs) > 0 {
+	if channelIDs != nil {
 		q = q.Where("id IN ?", channelIDs)
 	}
 	var chans []store.Channel

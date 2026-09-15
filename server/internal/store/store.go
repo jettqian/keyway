@@ -61,6 +61,10 @@ func Open(opts Options) (*Store, error) {
 	if err := seedModelPricing(db); err != nil {
 		return nil, err
 	}
+	// restricted 列迁移后回填：启用集合非空的存量令牌必然是限定语义。
+	// 幂等且安全：restricted=1 + 空集合（全部停用）不受影响；空集合 + restricted=0
+	// （从未限定/主开关时代的"不限"遗留）保持不限
+	db.Exec("UPDATE tokens SET restricted = 1 WHERE channel_ids_json IS NOT NULL AND channel_ids_json NOT IN ('', '[]')")
 	return &Store{db: db}, nil
 }
 

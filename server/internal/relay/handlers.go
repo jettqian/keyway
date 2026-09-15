@@ -54,7 +54,7 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			return
 		}
 		token, user := ctxTokenUser(c)
-		matched, defaults, err := s.Routing.Resolve(user.ID, probe.Model, token.ChannelFilter(), deref(token.ModelScope))
+		matched, defaults, err := s.Routing.Resolve(user.ID, probe.Model, token.RouteFilter(), deref(token.ModelScope))
 		if err != nil {
 			respondOpenAIError(c, http.StatusInternalServerError, err.Error())
 			return
@@ -135,7 +135,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 		return
 	}
 	token, user := ctxTokenUser(c)
-	matched, defaults, err := s.Routing.Resolve(user.ID, probe.Model, token.ChannelFilter(), deref(token.ModelScope))
+	matched, defaults, err := s.Routing.Resolve(user.ID, probe.Model, token.RouteFilter(), deref(token.ModelScope))
 	if err != nil {
 		respondOpenAIError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -286,7 +286,7 @@ func (s *Server) HandleAnthropicCountTokens(c *gin.Context) {
 // HandleModels GET /v1/models（OpenAI / Anthropic 双格式）
 func (s *Server) HandleModels(c *gin.Context) {
 	token, user := ctxTokenUser(c)
-	models, err := s.Routing.AllEnabledModels(user.ID, token.ChannelFilter())
+	models, err := s.Routing.AllEnabledModels(user.ID, token.RouteFilter())
 	if err != nil {
 		respondOpenAIError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -328,7 +328,7 @@ func (s *Server) HandleModels(c *gin.Context) {
 func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ any) {
 	token, user := ctxTokenUser(c)
 
-	matched, defaults, err := s.Routing.Resolve(user.ID, model, token.ChannelFilter(), deref(token.ModelScope))
+	matched, defaults, err := s.Routing.Resolve(user.ID, model, token.RouteFilter(), deref(token.ModelScope))
 	if err != nil {
 		respondProtocolError(c, inbound, http.StatusInternalServerError, err.Error())
 		return

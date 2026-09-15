@@ -152,8 +152,9 @@ type Token struct {
 	KeyPrefix        string  `gorm:"column:key_prefix;not null"`           // 展示与日志用
 	KeyHash          string  `gorm:"column:key_hash;not null;uniqueIndex"` // sha256，认证 O(1) 查找
 	ChannelID        *int64  `gorm:"column:channel_id"`                    // 限定单渠道（旧字段，兼容保留）
-	ChannelIDsJSON   string  `gorm:"column:channel_ids_json;default:''"`   // 启用的限定渠道（空 = 不限，路由用；顺序无关）
+	ChannelIDsJSON   string  `gorm:"column:channel_ids_json;default:''"`   // 启用的限定渠道（空 = 不限或全停，见 restricted；顺序即路由优先级）
 	ChannelOrderJSON string  `gorm:"column:channel_order_json;default:''"` // 面板配置顺序（含已关闭渠道，纯 UI，路由不读）
+	Restricted       int     `gorm:"column:restricted;not null;default:0"` // 1 = 限定（按启用集合过滤，空集合 = 全部停用）；0 = 不限
 	ModelScope       *string `gorm:"column:model_scope"`                   // 模型前缀通配（可空）
 	ExpiresAt        *int64  `gorm:"column:expires_at"`
 	Revoked          int     `gorm:"column:revoked;not null;default:0"`
@@ -226,6 +227,20 @@ func (t *Token) ChannelFilter() []int64 {
 func (t *Token) ChannelOrder() []int64 {
 	var ids []int64
 	json.Unmarshal([]byte(t.ChannelOrderJSON), &ids)
+	return ids
+}
+
+// RouteFilter 路由用的过滤集合：restricted=1 时返回启用集合（可能为空 = 限定范围内
+// 全部停用，路由零候选）；restricted=0 时返回 nil = 不限（路由所有启用渠道）。
+// 与 ChannelFilter 的区别：后者只是数据回显，无法区分"不限"与"限定但全停"。
+func (t *Token) RouteFilter() []int64 {
+	if t.Restricted != 1 {
+		return nil
+	}
+	ids := t.ChannelFilter()
+	if ids == nil {
+		return []int64{}
+	}
 	return ids
 }
 

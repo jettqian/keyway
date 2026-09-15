@@ -1,12 +1,14 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.25（与 PRD v1.5.27 对应；探测端点优先级 responses/messages 优先、
-  chat 靠后 + 流式探测（首事件即判通并止损）+ 总超时 30s（见 §6）；
-  前版 v1.24：限定渠道面板**移除"限定范围"主开关**——令牌
-  始终按面板列表顺序路由，消除"不限按渠道优先级 / 限定按面板顺序"两套规则的歧义；
-  存量"不限"令牌打开面板以全部渠道按优先级预览、首次调整即固化（后端"空=不限"
-  数据语义保留仅作存量兼容）；拖拽引入 **@dnd-kit/sortable**（首个前端交互类
-  运行时依赖，按压 4px 进入拖拽、让位动画、触屏可用），替换原生 HTML5 DnD；
+- 版本：v1.26（与 PRD v1.5.28 对应；限定渠道**支持全部关闭**：tokens 新增 `restricted`
+  列区分"不限"（0）与"限定"（1，空启用集合 = 全部临时停用、路由零候选），
+  路由过滤语义改为"非 nil = 限定（空切片零候选）、nil = 不限"（RouteFilter），
+  撤销"至少保留一个启用渠道"守卫——临时关闭与吊销语义不同；
+  前版 v1.25：探测端点优先级与流式探测；v1.24：移除限定主开关（令牌始终按面板
+  列表顺序路由，消除"不限按渠道优先级 / 限定按面板顺序"两套规则的歧义；存量
+  "不限"令牌打开面板以全部渠道按优先级预览、首次调整即固化；拖拽引入
+  **@dnd-kit/sortable**（首个前端交互类运行时依赖，按压 4px 进入拖拽、让位动画、
+  触屏可用），替换原生 HTML5 DnD）；
   前版 v1.23：探测覆盖 /v1/responses 端点形态；
   前版 v1.22：限定渠道面板交互逻辑修正——胶囊入口固定宽度、至少保留一个启用渠道、
   主开关重开恢复上次启用集合（会话级记忆）、拖拽热区收敛到行首手柄；
@@ -181,8 +183,9 @@ CREATE TABLE tokens (                      -- 网关令牌
   key_prefix TEXT NOT NULL,                -- 展示与日志用
   key_hash TEXT NOT NULL UNIQUE,           -- sha256，认证 O(1) 查找
   channel_id INTEGER,                      -- 旧单渠道限定（兼容保留）
-  channel_ids_json TEXT DEFAULT '',        -- 启用的限定渠道集合（空 = 不限，≤20；顺序即路由优先级）
+  channel_ids_json TEXT DEFAULT '',        -- 启用的限定渠道集合（≤20；限定时空集合 = 全部停用）
   channel_order_json TEXT DEFAULT '',      -- 面板配置顺序（含已关闭渠道，纯 UI，路由不读）
+  restricted INTEGER NOT NULL DEFAULT 0,   -- 1 = 限定（按启用集合过滤，空 = 零候选）；0 = 不限
   model_scope TEXT,                        -- 模型前缀通配（可空）
   expires_at INTEGER, revoked INTEGER NOT NULL DEFAULT 0, created_at INTEGER
 );
@@ -263,8 +266,9 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
 resolve(model, user, token) → []RouteCandidate
   1. 按 user_id + name 查启用模型
   2. 查绑定该模型的启用渠道，并过滤 channel.enabled=1 与 token.channel_ids
-  3. 排序：token 限定渠道集合非空 → 按令牌绑定顺序（令牌级优先级，令牌页拖拽控制）；
-     否则按 channel.priority 降序，稳定顺序作为平局规则
+  3. 排序：token 限定（restricted=1，过滤集合非 nil；空集合 = 全部停用、零候选）→
+     按令牌绑定顺序（令牌级优先级，令牌页拖拽控制）；否则按 channel.priority 降序，
+     稳定顺序作为平局规则
      （注：绑定顺序取自 channel_ids_json；channel_order_json 仅是控制台展示顺序，
      含已关闭渠道，不参与路由）
   4. 每个候选携带 channel.type（仅 convert 使用）、channel_id、channel.forward_mode 和上游模型名
@@ -716,7 +720,7 @@ GET /oauth/feishu/callback?code&state
 | POST /api/channels/:id/test；POST /api/channels/:id/test_keys | 矩阵测试 / 逐密钥测试 |
 | GET /api/templates | 模板列表（用户侧，含复制数） |
 | GET/POST/PUT/DELETE /api/tokens[/:id] | 令牌 CRUD（列表仅返回前缀；DELETE 为删除记录） |
-| PUT /api/tokens/:id | 更新令牌（名称 / 限定渠道集合；`channelIds` 启用集合（顺序即路由优先级）与 `channelOrder` 面板顺序（含已关闭渠道，纯 UI）分离，开关渠道不改变顺序） |
+| PUT /api/tokens/:id | 更新令牌（名称 / 限定渠道；`channelIds` 启用集合（顺序即路由优先级）、`channelOrder` 面板顺序（含已关闭渠道，纯 UI）、`restricted` 限定标志三者分离——限定 + 空启用集合 = 全部临时停用（路由零候选），开关渠道不改变顺序） |
 | POST /api/tokens/:id/reveal | 所属用户回看完整令牌（复制密钥按钮数据源） |
 | POST /api/tokens/:id/revoke | 吊销令牌（立即失效，保留记录） |
 | GET /api/logs | 自己的日志（分页/过滤） |

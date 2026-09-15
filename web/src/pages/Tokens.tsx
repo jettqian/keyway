@@ -68,19 +68,23 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
   }
   const [order, setOrder] = React.useState<number[]>(() => mergeBound(boundOrder, boundIds))
   const [ids, setIds] = React.useState<number[]>(boundIds)
-  // 服务端启用集合为空 = 存量"不限"令牌：面板以全部渠道（按渠道优先级）作本地预览，
-  // 不落库；首次任何调整（开关/排序/加入）即固化为限定集合
-  const unrestricted = boundIds.length === 0
+  // unrestricted = 服务端 restricted=false（不限，含创建留空与旧数据）：面板以预览呈现，
+  // 不落库；首次任何调整（开关/排序/加入）即连同 restricted=true 固化为限定集合
+  const unrestricted = !token.restricted
   React.useEffect(() => {
-    if (unrestricted && boundOrder.length === 0 && channels.length > 0) {
-      const all = [...channels].sort((a, b) => b.priority - a.priority).map((c) => c.id)
-      setOrder(all)
-      setIds(all)
-      return
+    if (unrestricted) {
+      // 预览顺序：尊重已保存的面板顺序（旧数据），否则按渠道优先级；全部预览为开启
+      const base = mergeBound(boundOrder, boundIds)
+      const all = base.length > 0 ? base : [...channels].sort((a, b) => b.priority - a.priority).map((c) => c.id)
+      if (all.length > 0) {
+        setOrder(all)
+        setIds(all)
+        return
+      }
     }
     setIds(boundIds)
     setOrder(mergeBound(boundOrder, boundIds))
-  }, [token.id, boundIds.join(','), boundOrder.join(','), channels.length])
+  }, [token.id, token.restricted, boundIds.join(','), boundOrder.join(','), channels.length])
 
   const byId = React.useMemo(() => new Map(channels.map((c) => [c.id, c])), [channels])
   const idSet = React.useMemo(() => new Set(ids), [ids])
@@ -91,13 +95,15 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
   // 按压移动 4px 才进入拖拽：点击开关/按钮不会被解读为拖动
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
+  // 面板操作一律为限定语义（restricted=true）：启用集合可为空 = 限定范围内全部
+  // 临时停用（路由零候选，回退默认渠道/404），与吊销（永久失效）语义分离
   const save = async (nextIds: number[], nextOrder: number[]) => {
     const prevIds = ids
     const prevOrder = order
     setIds(nextIds)
     setOrder(nextOrder)
     try {
-      const r = await updateToken(token.id, { channelIds: nextIds, channelOrder: nextOrder })
+      const r = await updateToken(token.id, { channelIds: nextIds, channelOrder: nextOrder, restricted: true })
       onSaved(r.token)
     } catch (e) {
       setIds(prevIds)
@@ -106,18 +112,13 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
     }
   }
 
-  // 渠道开关：只增删启用集合，顺序保持不变（关闭的渠道原位保留）。
-  // 至少保留一个启用渠道——空集合会落回"不限"语义；如需停用令牌请用「吊销」
+  // 渠道开关：只增删启用集合，顺序保持不变（关闭的渠道原位保留，支持全部关闭）
   const toggle = (id: number, on: boolean) => {
     if (on) {
       const set = new Set(ids)
       set.add(id)
       save(rows.filter((x) => set.has(x)), rows)
     } else {
-      if (ids.length <= 1) {
-        message.info('至少保留一个启用的渠道；如需停用令牌请使用「吊销」')
-        return
-      }
       save(ids.filter((x) => x !== id), rows)
     }
   }
@@ -153,6 +154,13 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
           showIcon
           style={{ marginBottom: 8 }}
           message="该令牌当前未限定：路由到所有启用渠道，按渠道优先级。下方为按渠道优先级的预览，任何调整（开关或排序）都会把令牌固定为所选渠道。"
+        />
+      ) : ids.length === 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 8 }}
+          message="已启用 0 个渠道：该令牌的所有渠道均已临时关闭，请求不会命中任何渠道（无候选时回退默认渠道，未配置则报错）。打开渠道开关即可恢复；与「吊销」不同，令牌与配置保持有效。"
         />
       ) : (
         <div className="text-secondary" style={{ fontSize: 12, marginBottom: 6 }}>
@@ -285,7 +293,7 @@ const TokensPage: React.FC = () => {
               const ids = t.channelIds ?? (t.channelId ? [t.channelId] : [])
               const names = ids.map((id) => channels.find((c) => c.id === id)?.name ?? `#${id}`)
               const head = names.slice(0, 2).join('、')
-              const summary = ids.length === 0 ? '不限（全部渠道）' : names.length > 2 ? `${head} 等 ${names.length} 个` : head
+              const summary = ids.length === 0 ? (t.restricted ? '全部已关闭' : '不限（全部渠道）') : names.length > 2 ? `${head} 等 ${names.length} 个` : head
               if (t.revoked) return <span className="text-tertiary">{summary}</span>
               return (
                 <Popover
