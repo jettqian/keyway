@@ -1,10 +1,11 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.15（与 PRD v1.5.17 对应；令牌渠道**顺序与启用集合分离**：新增
-  `channel_order_json` 持久化面板全量顺序（含已关闭渠道，纯 UI，路由不读），
-  `channel_ids_json` 继续作为路由范围——关闭渠道保持原位、优先级不变，
-  取代 v1.5.15 的会话级记忆方案；
-  前版 v1.14：统计页分组名称化等；v1.13：限定渠道面板交互优化；
+- 版本：v1.16（与 PRD v1.5.18 对应；撤销模型目录"从价目表导入"（价目表经远程同步
+  后近 3000 条，一键导入会淹没目录，用户只关心常用模型）；价格展示优化——fmtPrice
+  4 位有效数字格式化、价目表数字列右对齐等宽、目录单价"标签 + $ 数值"两行且缓存档
+  直接显示回退生效数值；
+  前版 v1.15：令牌渠道顺序与启用集合分离；v1.14：统计页名称化/补算/时间窗/最近流量；
+  v1.13：限定渠道面板交互优化；
   历史变更见文档各节与 PRD 变更记录）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
@@ -560,7 +561,8 @@ new-api 的已知语义（仅参考行为，代码自研）。
 
 ### 8.4 模型目录与渠道模型列表维护
 
-- 全局模型目录 `catalog_models`（管理员维护，可从价目表一键导入）：仅作为渠道/模板表单的
+- 全局模型目录 `catalog_models`（管理员手动收录常用模型，用户只关心自己用到的模型，
+  不与价目表对齐）：仅作为渠道/模板表单的
   点选数据源与用户模型页的目录视图，**不参与路由**；删除目录项不影响已引用它的渠道配置。
 - 渠道表单的模型候选 = 目录（启用项）∪ 用户已有模型（各渠道 models_json 并集，去重），
   目录外名称仍可自由输入（自定义中转模型名）。
@@ -605,8 +607,10 @@ new-api 的已知语义（仅参考行为，代码自研）。
   管理页价目表头部展示"最近同步时间 + 同步源链接"；价目表排序为**模型目录中的条目
   置前**（前端按 catalog_models 名称集合排序并打"目录"标签），并支持按模型名搜索筛选。
 - **模型目录关联单价**：目录（用户页与管理员页）单价列直接展示完整四档价
-  （输入/输出主行 + 缓存读/写副行，未配置标注回退输入价），数据来自
-  `catalogModelDTOWithPricing` 按模型名精确匹配 model_pricing（与费用计算同口径）。
+  （"标签 + $ 数值"两行：输入/输出主行 + 缓存读/缓存写副行，缓存档未配置时直接显示
+  回退生效数值），数据来自 `catalogModelDTOWithPricing` 按模型名精确匹配
+  model_pricing（与费用计算同口径）。价格数字统一经 `fmtPrice`（4 位有效数字去尾零）
+  格式化；价目表四档价格列右对齐 + 等宽数字。
 
 ## 9. 预制渠道复制（FR-X2/X3）
 
@@ -661,7 +665,7 @@ GET /oauth/feishu/callback?code&state
 | GET /api/logs | 自己的日志（分页/过滤） |
 | GET /api/stats | 自己的统计（含最近生效流量 recent 最新 5 条；start/end 自定义时间窗，缺省 days） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
-  （模型目录 CRUD + import_pricing 价目导入）、/api/admin/templates、
+  （模型目录 CRUD）、/api/admin/templates、
   /api/admin/proxies、/api/admin/pricing(+import、+sync_remote 远程同步)、
   /api/admin/stats、/api/admin/invites、
   POST /api/admin/exchange-rate/sync（汇率手动同步，apply 写入/预览） | 见 PRD §5.9 |

@@ -21,14 +21,13 @@ import {
   adminCreateCatalogModel,
   adminUpdateCatalogModel,
   adminDeleteCatalogModel,
-  adminImportCatalogFromPricing,
   adminSettings,
   adminUpdateSettings,
   adminSyncExchangeRate,
   adminStats,
 } from '../api'
 import type { User, ModelPricing, PricingSource, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings } from '../api/types'
-import { formatDateTime } from '../format'
+import { formatDateTime, fmtPrice } from '../format'
 import CatalogPrice from '../components/CatalogPrice'
 
 const UsersTab: React.FC = () => {
@@ -268,28 +267,48 @@ const PricingTab: React.FC = () => {
               </Space>
             ),
           },
-          { title: '输入 $/M', dataIndex: 'inputPerM' },
+          {
+            title: '输入 $/M',
+            dataIndex: 'inputPerM',
+            align: 'right',
+            width: 100,
+            render: (v: number) => <span className="price-cell">{fmtPrice(v)}</span>,
+          },
           {
             title: '缓存读 $/M',
             dataIndex: 'cachedInputPerM',
+            align: 'right',
+            width: 110,
             render: (v: number | null, p: ModelPricing) =>
-              v != null ? v : (
+              v != null ? (
+                <span className="price-cell">{fmtPrice(v)}</span>
+              ) : (
                 <Tooltip title="未配置，按输入价回退">
-                  <span style={{ color: '#999' }}>{p.inputPerM}</span>
+                  <span className="price-cell" style={{ color: '#999' }}>{fmtPrice(p.inputPerM)}</span>
                 </Tooltip>
               ),
           },
           {
             title: '缓存写 $/M',
             dataIndex: 'cacheWritePerM',
+            align: 'right',
+            width: 110,
             render: (v: number | null, p: ModelPricing) =>
-              v != null ? v : (
+              v != null ? (
+                <span className="price-cell">{fmtPrice(v)}</span>
+              ) : (
                 <Tooltip title="未配置，按输入价回退">
-                  <span style={{ color: '#999' }}>{p.inputPerM}</span>
+                  <span className="price-cell" style={{ color: '#999' }}>{fmtPrice(p.inputPerM)}</span>
                 </Tooltip>
               ),
           },
-          { title: '输出 $/M', dataIndex: 'outputPerM' },
+          {
+            title: '输出 $/M',
+            dataIndex: 'outputPerM',
+            align: 'right',
+            width: 100,
+            render: (v: number) => <span className="price-cell">{fmtPrice(v)}</span>,
+          },
           {
             title: '操作',
             width: 130,
@@ -480,25 +499,14 @@ const CatalogModelsTab: React.FC = () => {
       message.error((e as Error).message)
     }
   }
-  const importFromPricing = async () => {
-    try {
-      const r = await adminImportCatalogFromPricing()
-      message.success(r.imported > 0 ? `已从价目表导入 ${r.imported} 个模型` : '价目表中的模型均已存在')
-      refresh()
-    } catch (e) {
-      message.error((e as Error).message)
-    }
-  }
   return (
     <div>
       <div style={{ marginBottom: 12, textAlign: 'right' }}>
-        <Space>
-          <Button onClick={importFromPricing}>从价目表导入</Button>
-          <Button type="primary" onClick={openCreate}>新增模型</Button>
-        </Space>
+        <Button type="primary" onClick={openCreate}>新增模型</Button>
       </div>
       <div style={{ color: '#777', fontSize: 13, marginBottom: 12 }}>
         模型目录是全局点选数据源：用户在渠道表单与模板表单中从这里点选模型；删除目录项不影响已引用它的渠道配置。
+        只收录用户常用的模型即可，无需与价目表对齐。
       </div>
       <Table<CatalogModel>
         rowKey="id"

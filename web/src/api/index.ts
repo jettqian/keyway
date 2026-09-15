@@ -144,4 +144,3 @@ export const adminCreateCatalogModel = (input: { name: string; note?: string }) 
 export const adminUpdateCatalogModel = (id: number, input: { name?: string; note?: string; enabled?: boolean }) =>
   put<{ model: CatalogModel }>(`/api/admin/models/${id}`, input)
 export const adminDeleteCatalogModel = (id: number) => del<void>(`/api/admin/models/${id}`)
-export const adminImportCatalogFromPricing = () => post<{ imported: number }>('/api/admin/models/import_pricing')

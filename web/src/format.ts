@@ -7,3 +7,13 @@ export function formatDateTime(value: number | string | null | undefined): strin
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
+
+// 价格数字格式化：最多 4 位有效数字并去尾零（3 → 3、0.27 → 0.27、1.1 → 1.1），
+// 避免浮点长尾与无效小数位
+export function fmtPrice(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  if (value === 0) return '0'
+  const s = String(parseFloat(value.toPrecision(4)))
+  if (s.includes('e')) return value.toFixed(8).replace(/0+$/, '').replace(/\.$/, '')
+  return s
+}
