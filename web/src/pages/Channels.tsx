@@ -166,6 +166,37 @@ const ChannelsPage: React.FC = () => {
     }
   }
 
+  // 渠道对象 → 更新入参（不传 proxyUrl，后端保持原代理不变）
+  const channelToInput = (c: Channel, overrides: Partial<ChannelInput>): ChannelInput => ({
+    name: c.name,
+    type: c.forwardMode === 'convert' ? c.type : '',
+    baseUrls: c.baseUrls,
+    keyIds: c.keyIds,
+    keyStrategy: c.keyStrategy,
+    lineStrategy: c.lineStrategy,
+    allowPublicProxy: c.allowPublicProxy,
+    models: Array.isArray(c.models) ? c.models : [],
+    modelMapping: c.modelMapping ?? {},
+    forwardMode: c.forwardMode,
+    priority: c.priority,
+    priceMultiplier: c.priceMultiplier ?? 1,
+    pricingMode: c.pricingMode ?? 'usd',
+    cnyRatio: c.cnyRatio ?? 0,
+    isDefault: c.isDefault,
+    enabled: c.enabled,
+    ...overrides,
+  })
+
+  const toggleEnabled = async (c: Channel) => {
+    try {
+      await updateChannel(c.id, channelToInput(c, { enabled: !c.enabled }))
+      message.success(c.enabled ? '已停用' : '已启用，下一个请求生效')
+      refresh()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
   return (
     <div>
       <div className="page-heading">
@@ -206,14 +237,22 @@ const ChannelsPage: React.FC = () => {
             title: '状态',
             dataIndex: 'enabled',
             width: 90,
-            render: (e: boolean) => (e ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>),
+            render: (e: boolean, c: Channel) =>
+              e ? (
+                <Tag color="green">启用</Tag>
+              ) : c.keyIds.length === 0 ? (
+                <Tag color="orange">草稿</Tag>
+              ) : (
+                <Tag>停用</Tag>
+              ),
           },
           {
             title: '操作',
-            width: 220,
+            width: 250,
             render: (_, c) => (
               <Space>
                 <a onClick={() => openEdit(c)}>编辑</a>
+                <a onClick={() => toggleEnabled(c)}>{c.enabled ? '停用' : '启用'}</a>
                 <a onClick={() => runTest(c)}>测试</a>
                 <Popconfirm
                   title="删除该渠道？"
@@ -242,6 +281,9 @@ const ChannelsPage: React.FC = () => {
         <Form form={form} layout="vertical" initialValues={emptyInput}>
           <Form.Item name="name" label="名称" tooltip="给自己看的标识，建议包含供应商或用途" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="如 openai-官方" />
+          </Form.Item>
+          <Form.Item name="enabled" label="启用渠道" valuePropName="checked" extra={<span className="form-hint">停用（草稿）状态不参与任何路由；启用须至少绑定 1 把密钥，保存后下一个请求生效。</span>}>
+            <Switch />
           </Form.Item>
           <Form.Item label="线路地址" extra={<span className="form-hint">按优先顺序填写，最多 5 条；系统会自动选择可用线路。</span>} required>
             <Form.List name="baseUrls">
@@ -391,14 +433,9 @@ const ChannelsPage: React.FC = () => {
               )
             }
           </Form.Item>
-          <Space size="large">
-            <Form.Item name="isDefault" label="设为默认渠道" valuePropName="checked">
-              <Switch />
-            </Form.Item>
-            <Form.Item name="enabled" label="启用" valuePropName="checked">
-              <Switch />
-            </Form.Item>
-          </Space>
+          <Form.Item name="isDefault" label="设为默认渠道（模型未命中任何渠道时兜底）" valuePropName="checked">
+            <Switch />
+          </Form.Item>
             </Collapse.Panel>
           </Collapse>
         </Form>

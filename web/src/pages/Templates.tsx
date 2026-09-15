@@ -19,7 +19,7 @@ const TemplatesPage: React.FC = () => {
   const copy = async (t: ChannelTemplate) => {
     try {
       const r = await copyTemplate(t.id)
-      message.success('已复制为渠道草稿，请绑定密钥后保存')
+      message.success('已复制为渠道草稿，绑定密钥并启用后生效')
       nav(`/channels/${r.channel.id}`)
     } catch (e) {
       message.error((e as Error).message)
