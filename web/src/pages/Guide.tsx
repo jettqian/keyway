@@ -1,10 +1,18 @@
 import React from 'react'
-import { Alert, Button, Card, Modal, Select, Steps, Tabs, Typography, message } from 'antd'
+import { Alert, Button, Card, Checkbox, Col, Collapse, Modal, Row, Select, Steps, Tabs, Typography, message } from 'antd'
 import { CopyOutlined, RobotOutlined } from '@ant-design/icons'
 import { listTokens, revealToken } from '../api'
 import type { GatewayToken } from '../api/types'
 
 const TOKEN_PLACEHOLDER = 'sk-keyway-你的令牌'
+const MASKED_TOKEN = 'sk-keyway-••••••••（复制时自动替换为真实令牌）'
+
+const CLIENTS = [
+  { key: 'claude', label: 'Claude Code' },
+  { key: 'codex', label: 'Codex' },
+  { key: 'opencode', label: 'opencode' },
+] as const
+type ClientKey = (typeof CLIENTS)[number]['key']
 
 const CodeBlock: React.FC<{ text: string }> = ({ text }) => {
   const copy = async () => {
@@ -31,37 +39,128 @@ const Note: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </Typography.Paragraph>
 )
 
-// 构建给 AI 的配置指令（含真实令牌与可用模型）
-const buildAIPrompt = (origin: string, plaintext: string, models: string[]): string => {
+// 行内渲染：`代码` 与 **加粗**
+const renderInline = (text: string, keyBase: string): React.ReactNode[] => {
+  const parts: React.ReactNode[] = []
+  const regex = /`([^`]+)`|\*\*([^*]+)\*\*/g
+  let last = 0
+  let m: RegExpExecArray | null
+  let i = 0
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index))
+    if (m[1] !== undefined) {
+      parts.push(<Typography.Text code key={`${keyBase}-c${i}`}>{m[1]}</Typography.Text>)
+    } else {
+      parts.push(<Typography.Text strong key={`${keyBase}-b${i}`}>{m[2]}</Typography.Text>)
+    }
+    last = m.index + m[0].length
+    i++
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return parts
+}
+
+// 轻量 Markdown 渲染（覆盖指令用到的语法：## 标题、- 列表、1. 列表、缩进续行）
+const MdView: React.FC<{ text: string }> = ({ text }) => {
+  const out: React.ReactNode[] = []
+  let list: { ordered: boolean; items: React.ReactNode[][] } | null = null
+  const flush = (key: string) => {
+    if (!list) return
+    const items = list.items.map((its, i) => <li key={i}>{its}</li>)
+    out.push(
+      list.ordered ? (
+        <ol key={key} style={{ margin: '4px 0 8px', paddingLeft: 22 }}>{items}</ol>
+      ) : (
+        <ul key={key} style={{ margin: '4px 0 8px', paddingLeft: 22 }}>{items}</ul>
+      ),
+    )
+    list = null
+  }
+  text.split('\n').forEach((line, idx) => {
+    const key = String(idx)
+    if (line.startsWith('## ')) {
+      flush(`f${key}`)
+      out.push(
+        <Typography.Title key={key} level={5} style={{ margin: '12px 0 4px' }}>
+          {renderInline(line.slice(3), key)}
+        </Typography.Title>,
+      )
+      return
+    }
+    if (/^- /.test(line)) {
+      if (!list || list.ordered) flush(`f${key}`)
+      if (!list) list = { ordered: false, items: [] }
+      list.items.push(renderInline(line.slice(2), key))
+      return
+    }
+    const olm = /^(\d+)\. (.*)$/.exec(line)
+    if (olm) {
+      if (!list || !list.ordered) flush(`f${key}`)
+      if (!list) list = { ordered: true, items: [] }
+      list.items.push(renderInline(olm[2], key))
+      return
+    }
+    if (line.trim() === '') {
+      flush(`f${key}`)
+      return
+    }
+    if (list && list.items.length > 0 && /^\s+/.test(line)) {
+      const prev = list.items[list.items.length - 1]
+      prev.push(<br key={`br${key}`} />)
+      prev.push(...renderInline(line.trim(), key))
+      return
+    }
+    flush(`f${key}`)
+    out.push(
+      <Typography.Paragraph key={key} style={{ margin: '4px 0' }}>
+        {renderInline(line, key)}
+      </Typography.Paragraph>,
+    )
+  })
+  flush('f-end')
+  return <div style={{ fontSize: 13.5 }}>{out}</div>
+}
+
+// 构建给 AI 的配置指令（含真实令牌与可用模型；仅包含所选客户端）
+const buildAIPrompt = (origin: string, plaintext: string, models: string[], clients: ClientKey[]): string => {
   const modelLine = models.length
     ? models.join(', ')
     : '（在网关「模型管理」页查看，或 GET ' + origin + '/v1/models）'
+  const tasks: Partial<Record<ClientKey, string>> = {
+    claude: `1. Claude Code：编辑 ~/.claude/settings.json，在 env 中写入
+   ANTHROPIC_BASE_URL = "${origin}"、ANTHROPIC_AUTH_TOKEN = 上面的网关令牌。`,
+    codex: `2. Codex：编辑 ~/.codex/config.toml，添加自定义 provider：
+   [model_providers.keyway] 使用 base_url = "${origin}/v1"、wire_api = "chat"、
+   experimental_bearer_token = 网关令牌；并在顶部设置 model = 一个可用模型、model_provider = "keyway"。
+   注意 wire_api 必须是 chat（网关暂未实现 Responses API）。`,
+    opencode: `3. opencode：编辑 ~/.config/opencode/opencode.json（或项目根目录 opencode.json），
+   添加 provider "keyway"（npm = "@ai-sdk/openai"，baseURL = "${origin}/v1"，apiKey = 网关令牌）
+   和 "keyway-anthropic"（npm = "@ai-sdk/anthropic"，baseURL = "${origin}/v1"，apiKey = 网关令牌），
+   models 按上面列出的可用模型填写。`,
+  }
+  const selected = CLIENTS.filter((c) => clients.includes(c.key))
+  const taskLines = selected
+    .map((c, i) => tasks[c.key]!.replace(/^\d+\./, `${i + 1}.`))
+    .join('\n')
+  const taskSection =
+    selected.length > 0
+      ? `\n## 任务（改完逐项验证）\n${taskLines}\n`
+      : '\n## 任务\n（未选择客户端，仅保存以上信息备用。）\n'
   return `请帮我配置 AI 网关（Keyway）客户端。以下信息已齐全，直接使用即可：
 
 ## 网关信息
-- OpenAI 兼容地址: ${origin}/v1
+- OpenAI 兼容地址: ${origin}/v1（不带 /v1 的 ${origin} 也可以）
 - Anthropic 协议地址: ${origin}（Claude Code 用，客户端自动拼接 /v1/messages）
 - 网关令牌: ${plaintext}
 - 可用模型: ${modelLine}
-
-## 任务（按需执行，改完逐项验证）
-1. Claude Code：编辑 ~/.claude/settings.json，在 env 中写入
-   ANTHROPIC_BASE_URL = "${origin}"、ANTHROPIC_AUTH_TOKEN = 上面的网关令牌。
-2. Codex：编辑 ~/.codex/config.toml，添加自定义 provider：
-   [model_providers.keyway] 使用 base_url = "${origin}/v1"、wire_api = "chat"、
-   experimental_bearer_token = 网关令牌；并在顶部设置 model = 一个可用模型、model_provider = "keyway"。
-   注意 wire_api 必须是 chat（网关暂未实现 Responses API）。
-3. opencode：编辑 ~/.config/opencode/opencode.json（或项目根目录 opencode.json），
-   添加 provider "keyway"（npm = "@ai-sdk/openai"，baseURL = "${origin}/v1"，apiKey = 网关令牌）
-   和 "keyway-anthropic"（npm = "@ai-sdk/anthropic"，baseURL = "${origin}/v1"，apiKey = 网关令牌），
-   models 按上面列出的可用模型填写。
-
+${taskSection}
 注意事项：令牌是敏感信息，只写入本机配置文件，不要提交到代码仓库；改完各发一条测试消息验证连通。`
 }
 
 const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
   const [tokens, setTokens] = React.useState<GatewayToken[]>([])
   const [tokenId, setTokenId] = React.useState<number | undefined>()
+  const [clients, setClients] = React.useState<ClientKey[]>(['claude', 'codex', 'opencode'])
   const [copying, setCopying] = React.useState(false)
   const [fallback, setFallback] = React.useState<string | null>(null)
 
@@ -92,7 +191,7 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
     try {
       const r = await revealToken(tokenId)
       const models = await fetchModels(r.plaintext)
-      const text = buildAIPrompt(origin, r.plaintext, models)
+      const text = buildAIPrompt(origin, r.plaintext, models, clients)
       try {
         await navigator.clipboard.writeText(text)
         message.success('已复制，粘贴给任意 AI 工具即可代为配置')
@@ -106,6 +205,13 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
     }
   }
 
+  const toggleClient = (key: ClientKey, checked: boolean) => {
+    setClients((prev) => {
+      const next = checked ? [...prev, key] : prev.filter((k) => k !== key)
+      return next.length > 0 ? next : prev
+    })
+  }
+
   return (
     <Card style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -113,7 +219,7 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
         <Typography.Title level={5} style={{ margin: 0 }}>让 AI 帮你配置</Typography.Title>
         <div style={{ flex: 1 }} />
         <Select
-          style={{ minWidth: 220 }}
+          style={{ minWidth: 200 }}
           placeholder={tokens.length ? '选择令牌' : '暂无有效令牌'}
           value={tokenId}
           onChange={setTokenId}
@@ -124,21 +230,64 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
           复制配置指令（含令牌）
         </Button>
       </div>
+      <Row style={{ marginTop: 8 }}>
+        <Col>
+          <span style={{ color: '#71858d', fontSize: 12, marginRight: 12 }}>配置哪些客户端：</span>
+          {CLIENTS.map((c) => (
+            <Checkbox
+              key={c.key}
+              checked={clients.includes(c.key)}
+              onChange={(e) => toggleClient(c.key, e.target.checked)}
+              style={{ marginRight: 16 }}
+            >
+              {c.label}
+            </Checkbox>
+          ))}
+        </Col>
+      </Row>
       <Note>
         指令包含网关地址、所选令牌的完整明文和可用模型列表，直接粘贴给 AI 编程工具（Claude Code / Codex / opencode
         本身或任意聊天 AI），它就能代为修改各客户端配置文件。内网环境可直接把令牌写入配置文件；若在意泄露，
         各客户端也支持环境变量方式（见下方说明）。
       </Note>
+      <Collapse
+        ghost
+        items={[
+          {
+            key: 'preview',
+            label: '指令预览（令牌已脱敏，复制时为真实值）',
+            children: (
+              <div style={{ background: '#f6f9fa', borderRadius: 8, padding: '8px 16px' }}>
+                <MdView text={buildAIPrompt(origin, MASKED_TOKEN, ['（复制时包含该令牌可路由的全部模型）'], clients)} />
+              </div>
+            ),
+          },
+        ]}
+      />
       <Modal
         open={fallback !== null}
         title="剪贴板不可用，请手动复制"
         onCancel={() => setFallback(null)}
         onOk={() => setFallback(null)}
-        width={680}
+        width={720}
+        footer={[
+          <Button key="copy" type="primary" icon={<CopyOutlined />} onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(fallback ?? '')
+              message.success('已复制')
+              setFallback(null)
+            } catch {
+              message.error('复制失败，请全选文本手动复制')
+            }
+          }}>
+            复制全部
+          </Button>,
+          <Button key="close" onClick={() => setFallback(null)}>关闭</Button>,
+        ]}
       >
-        <Typography.Paragraph copyable={{ text: fallback ?? '' }} style={{ whiteSpace: 'pre-wrap', fontSize: 12.5 }}>
-          {fallback}
-        </Typography.Paragraph>
+        <div style={{ background: '#f6f9fa', borderRadius: 8, padding: '8px 16px', maxHeight: '60vh', overflowY: 'auto' }}>
+          <MdView text={fallback ?? ''} />
+        </div>
       </Modal>
     </Card>
   )
@@ -169,7 +318,7 @@ const GuidePage: React.FC = () => {
           type="info"
           showIcon
           message={<>当前网关地址：<Typography.Text code copyable>{origin}</Typography.Text></>}
-          description="客户端里填写的模型名 = 渠道中配置的模型名，可在「模型管理」页查看；透明转发下 OpenAI 与 Anthropic 协议客户端可共用同一令牌。"
+          description="客户端里填写的模型名 = 渠道中配置的模型名，可在「模型管理」页查看。地址带不带 /v1 均可（/v1/chat/completions 与 /chat/completions、/v1/messages 与 /messages 等价）；透明转发下 OpenAI 与 Anthropic 协议客户端可共用同一令牌。"
         />
       </Card>
 
@@ -198,7 +347,7 @@ const GuidePage: React.FC = () => {
               children: (
                 <div>
                   <Typography.Title level={5} style={{ marginTop: 0 }}>配置文件 ~/.codex/config.toml</Typography.Title>
-                  <CodeBlock text={`model = "gpt-5.2"                 # 改成渠道中配置的模型名\nmodel_provider = "keyway"\n\n[model_providers.keyway]\nname = "keyway"\nbase_url = "${origin}/v1"\nwire_api = "chat"                # 网关走 chat/completions，必须为 chat\nexperimental_bearer_token = "${TOKEN_PLACEHOLDER}"   # 密钥直接写入（内网推荐）`} />
+                  <CodeBlock text={`model = "gpt-5.2"                 # 改成渠道中配置的模型名\nmodel_provider = "keyway"\n\n[model_providers.keyway]\nname = "keyway"\nbase_url = "${origin}/v1"      # 填 ${origin} 也可以\nwire_api = "chat"                # 网关走 chat/completions，必须为 chat\nexperimental_bearer_token = "${TOKEN_PLACEHOLDER}"   # 密钥直接写入（内网推荐）`} />
                   <Note>
                     <Typography.Text code>experimental_bearer_token</Typography.Text> 把密钥直接写在配置文件里，一次写入长期生效；
                     公网环境可改用官方推荐的 <Typography.Text code>env_key = "KEYWAY_API_KEY"</Typography.Text> + 环境变量。
@@ -229,7 +378,7 @@ const GuidePage: React.FC = () => {
               children: (
                 <div>
                   <Typography.Title level={5} style={{ marginTop: 0 }}>任意支持 OpenAI 协议的客户端 / SDK（Cline、Roo 等）</Typography.Title>
-                  <CodeBlock text={`Base URL: ${origin}/v1\nAPI Key:  ${TOKEN_PLACEHOLDER}`} />
+                  <CodeBlock text={`Base URL: ${origin}/v1    # 填 ${origin} 也可以\nAPI Key:  ${TOKEN_PLACEHOLDER}`} />
                   <Typography.Title level={5}>连通性验证</Typography.Title>
                   <CodeBlock text={`curl ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer ${TOKEN_PLACEHOLDER}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"gpt-5.2","messages":[{"role":"user","content":"hi"}]}'`} />
                   <Note>可用 <Typography.Text code>GET {origin}/v1/models</Typography.Text> 查看当前令牌可路由的全部模型。</Note>

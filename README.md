@@ -30,7 +30,9 @@ cd server && go run ./cmd/keyway      # 后端 :8080
 cd web && npm run dev                 # 前端 :5173（/api 代理到 8080）
 ```
 
-Agent 侧一次性配置（之后零改动；控制台「接入指南」页自动填充本机地址并支持一键复制）：
+Agent 侧一次性配置（之后零改动；控制台「接入指南」页自动填充本机地址并支持一键复制）。
+网关地址带不带 `/v1` 均可（`/v1/chat/completions` 与 `/chat/completions`、`/v1/messages`
+与 `/messages` 等价），按客户端习惯填写：
 
 ```jsonc
 // Claude Code：~/.claude/settings.json（推荐直接写密钥）

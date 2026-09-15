@@ -85,15 +85,18 @@ func buildApp(cfg config.Config) (*app, error) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	v1 := r.Group("/v1", relaySvc.TokenAuth())
-	{
-		v1.POST("/chat/completions", relaySvc.HandleOpenAIChat)
-		v1.POST("/completions", relaySvc.HandleOpenAIPassthrough("/completions"))
-		v1.POST("/embeddings", relaySvc.HandleOpenAIPassthrough("/embeddings"))
-		v1.GET("/models", relaySvc.HandleModels)
-		v1.POST("/messages", relaySvc.HandleAnthropicMessages)
-		v1.POST("/messages/count_tokens", relaySvc.HandleAnthropicCountTokens)
+	// 中转端点同时注册 /v1 与根路径两种前缀：客户端 base_url 带不带 /v1 均可直连，
+	// 降低配置成本（OpenAI SDK 习惯带 /v1，Anthropic SDK 拼接 /messages 等）
+	registerRelay := func(g *gin.RouterGroup) {
+		g.POST("/chat/completions", relaySvc.HandleOpenAIChat)
+		g.POST("/completions", relaySvc.HandleOpenAIPassthrough("/completions"))
+		g.POST("/embeddings", relaySvc.HandleOpenAIPassthrough("/embeddings"))
+		g.GET("/models", relaySvc.HandleModels)
+		g.POST("/messages", relaySvc.HandleAnthropicMessages)
+		g.POST("/messages/count_tokens", relaySvc.HandleAnthropicCountTokens)
 	}
+	registerRelay(r.Group("/v1", relaySvc.TokenAuth()))
+	registerRelay(r.Group("", relaySvc.TokenAuth()))
 
 	apiGroup := r.Group("/api")
 	apiSvc.RegisterAuthRoutes(apiGroup)

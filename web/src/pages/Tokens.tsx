@@ -1,12 +1,12 @@
 import React from 'react'
-import { Alert, Button, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import { Alert, Button, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { HolderOutlined, PlusOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { listTokens, createToken, updateToken, revokeToken, revealToken, listChannels } from '../api'
 import type { GatewayToken, Channel } from '../api/types'
 import { formatDateTime } from '../format'
 
-// 令牌的渠道面板：开关控制令牌可否路由到该渠道，拖动控制令牌内优先级
+// 令牌的渠道面板：主开关控制是否限定范围；限定时逐渠道开关 + 拖动排序（顺序即优先级）
 const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChanged: () => void }> = ({ token, channels, onChanged }) => {
   const bound = token.channelIds ?? []
   const [order, setOrder] = React.useState<number[]>(bound)
@@ -15,9 +15,11 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
   }, [token.id, bound.join(',')])
 
   const byId = React.useMemo(() => new Map(channels.map((c) => [c.id, c])), [channels])
+  const restricted = order.length > 0
   const enabled = order.filter((id) => byId.has(id))
-  const disabled = channels.filter((c) => !order.includes(c.id)).map((c) => c.id)
+  const rest = channels.filter((c) => !order.includes(c.id)).map((c) => c.id)
   const dragFrom = React.useRef<number | null>(null)
+  const [overIndex, setOverIndex] = React.useState<number | null>(null)
 
   const save = async (next: number[]) => {
     setOrder(next)
@@ -29,9 +31,24 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
     }
   }
 
+  // 打开限定：默认选中全部渠道（按渠道优先级排序），再由用户移出不需要的
+  const enableRestrict = () => {
+    const all = [...channels].sort((a, b) => b.priority - a.priority).map((c) => c.id)
+    if (all.length === 0) {
+      message.info('暂无渠道，请先在渠道页创建')
+      return
+    }
+    save(all)
+  }
+
+  const finishDrag = () => {
+    dragFrom.current = null
+    setOverIndex(null)
+  }
+
   const onDrop = (to: number) => {
     const from = dragFrom.current
-    dragFrom.current = null
+    finishDrag()
     if (from == null || from === to) return
     const next = [...enabled]
     const [moved] = next.splice(from, 1)
@@ -39,50 +56,93 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
     save(next)
   }
 
+  const rowStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
+    border: '1px solid #e3e9eb', borderRadius: 6, marginBottom: 6, background: '#fbfcfd',
+  }
+  const handleStyle: React.CSSProperties = { cursor: 'grab', display: 'inline-flex', padding: '0 2px' }
+
   if (channels.length === 0) {
     return <span style={{ color: '#999' }}>暂无渠道，请先在渠道页创建后再回来配置。</span>
   }
   return (
-    <div style={{ maxWidth: 540 }}>
-      {enabled.length === 0 ? (
+    <div style={{ maxWidth: 560 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <Switch checked={restricted} onChange={(on) => (on ? enableRestrict() : save([]))} />
+        <span style={{ fontWeight: 500 }}>限定渠道范围</span>
+        <span style={{ color: '#888', fontSize: 12 }}>关闭 = 路由到所有启用渠道；开启 = 只用下方渠道，顺序即优先级</span>
+      </div>
+      {!restricted ? (
         <Alert
           type="info"
           showIcon
-          style={{ marginBottom: 8 }}
-          message="未限定渠道：当前对所有启用渠道生效（按渠道优先级路由）。打开任一开关即限定为所选渠道。"
+          message="未限定渠道：令牌可路由到所有启用渠道，按渠道优先级路由。打开开关可限定为指定渠道。"
         />
       ) : (
-        <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>自上而下为该令牌的路由优先级，拖动调整；开关控制令牌可否路由到对应渠道。</div>
-      )}
-      {enabled.map((id, i) => {
-        const c = byId.get(id)!
-        return (
+        <>
+          <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>
+            拖动左侧图标调整该令牌的路由优先级（自上而下依次尝试）；关闭开关将渠道移出该令牌（全部移出后等同不限定）。
+          </div>
+          {enabled.map((id, i) => {
+            const c = byId.get(id)!
+            return (
+              <div
+                key={id}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setOverIndex(i)
+                }}
+                onDrop={() => onDrop(i)}
+                onDragLeave={() => setOverIndex((v) => (v === i ? null : v))}
+                style={{ ...rowStyle, borderTop: overIndex === i ? '2px solid #176b87' : undefined }}
+              >
+                <span
+                  draggable
+                  onDragStart={() => (dragFrom.current = i)}
+                  onDragEnd={finishDrag}
+                  style={handleStyle}
+                  title="拖动排序"
+                >
+                  <HolderOutlined style={{ color: '#176b87' }} />
+                </span>
+                <span style={{ flex: 1 }}>{c.name}</span>
+                {c.enabled ? null : <Tag>渠道停用</Tag>}
+                <Switch size="small" checked onChange={() => save(enabled.filter((x) => x !== id))} />
+              </div>
+            )
+          })}
           <div
-            key={id}
-            draggable
-            onDragStart={() => (dragFrom.current = i)}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => onDrop(i)}
-            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 10px', border: '1px solid #eee', borderRadius: 6, marginBottom: 6, background: '#fafafa', cursor: 'grab' }}
-          >
-            <HolderOutlined style={{ color: '#999' }} />
-            <span style={{ flex: 1 }}>{c.name}</span>
-            {c.enabled ? null : <Tag>渠道停用</Tag>}
-            <Switch size="small" checked onChange={() => save(enabled.filter((x) => x !== id))} />
-          </div>
-        )
-      })}
-      {disabled.map((id) => {
-        const c = byId.get(id)!
-        return (
-          <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 10px', border: '1px dashed #eee', borderRadius: 6, marginBottom: 6, color: '#888' }}>
-            <HolderOutlined style={{ color: '#ddd' }} />
-            <span style={{ flex: 1 }}>{c.name}</span>
-            {c.enabled ? null : <Tag>渠道停用</Tag>}
-            <Switch size="small" checked={false} onChange={() => save([...enabled, id])} />
-          </div>
-        )
-      })}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setOverIndex(enabled.length)
+            }}
+            onDrop={() => onDrop(enabled.length)}
+            onDragLeave={() => setOverIndex((v) => (v === enabled.length ? null : v))}
+            style={{
+              height: 10,
+              marginBottom: 6,
+              borderRadius: 4,
+              background: overIndex === enabled.length ? 'rgba(23,107,135,.15)' : 'transparent',
+            }}
+          />
+          {rest.length > 0 ? (
+            <>
+              <div style={{ color: '#888', fontSize: 12, margin: '4px 0 6px' }}>未限定（打开开关加入）</div>
+              {rest.map((id) => {
+                const c = byId.get(id)!
+                return (
+                  <div key={id} style={{ ...rowStyle, borderStyle: 'dashed', color: '#888' }}>
+                    <HolderOutlined style={{ color: '#c5ced3' }} />
+                    <span style={{ flex: 1 }}>{c.name}</span>
+                    {c.enabled ? null : <Tag>渠道停用</Tag>}
+                    <Switch size="small" checked={false} onChange={() => save([...enabled, id])} />
+                  </div>
+                )
+              })}
+            </>
+          ) : null}
+        </>
+      )}
     </div>
   )
 }
@@ -171,10 +231,15 @@ const TokensPage: React.FC = () => {
             dataIndex: 'channelIds',
             render: (_: number[] | undefined, t: GatewayToken) => {
               const ids = t.channelIds ?? (t.channelId ? [t.channelId] : [])
-              if (ids.length === 0) return '不限'
-              return ids
-                .map((id) => channels.find((c) => c.id === id)?.name ?? `#${id}`)
-                .join('、')
+              if (ids.length === 0) return <span style={{ color: '#999' }}>不限（全部渠道）</span>
+              const names = ids.map((id) => channels.find((c) => c.id === id)?.name ?? `#${id}`)
+              const head = names.slice(0, 2).join('、')
+              const label = names.length > 2 ? `${head} 等 ${names.length} 个` : head
+              return (
+                <Tooltip title={`按顺序路由：${names.join(' → ')}`}>
+                  <span>{label}</span>
+                </Tooltip>
+              )
             },
           },
           { title: '模型范围', dataIndex: 'modelScope', render: (v?: string) => v ?? '不限' },

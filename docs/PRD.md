@@ -1,12 +1,20 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.3
+- 版本：v1.5.4
 - 日期：2026-09-15
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.4：① **修复令牌吊销失效**（handleRevokeToken 的 GORM 更新缺少 Model，SQL 未
+>   命中 tokens 表，返回 404"令牌不存在"）；② 令牌渠道交互重构：展开行增加"限定渠道
+>   范围"主开关（关闭=不限，打开默认全选后自行移出）、拖拽改为手柄触发并增加落点指示、
+>   列表"限定渠道"列改为摘要 + Tooltip 顺序展示；③ **网关端点兼容 /v1 与不带 /v1**
+>   （/chat/completions、/completions、/embeddings、/models、/messages、
+>   /messages/count_tokens 在根路径注册等价别名，客户端 base_url 带不带 /v1 均可）；
+>   ④ AI 配置指令支持**勾选目标客户端**（指令仅包含所选客户端任务），并渲染 Markdown
+>   预览（令牌脱敏，复制时为真实值）
 > - v1.5.3：接入指南调整——① 各客户端**优先推荐把密钥直接写进配置文件**
 >   （Claude Code settings.json / Codex `experimental_bearer_token` / opencode `apiKey`，
 >   内网场景泄露风险可控；环境变量降级为临时方案）；② opencode 优先推荐
@@ -315,9 +323,11 @@ US13 统一管理模型（P7）
 - FR-T1 每用户可签发多个 `sk-keyway-` 前缀令牌；界面可查看、吊销
 - FR-T2 令牌可选：**限定渠道集合（多选 ≤20，配合渠道启用开关按需切换路由）**、
   限定模型（前缀通配）、过期时间
-- FR-T2.1 令牌列表展开行可**点选开关**控制每个渠道是否对该令牌生效（全部关闭 = 不限
-  定，路由到所有启用渠道）；可**拖动调整**已启用渠道的顺序，绑定顺序即该令牌的路由
-  优先级（自上而下依次尝试），与全局渠道优先级独立、互不影响其他令牌
+- FR-T2.1 令牌列表展开行以**"限定渠道范围"主开关**控制：关闭 = 不限（路由到所有启用
+  渠道，按渠道优先级）；打开 = 默认全选（按渠道优先级排序）后由用户逐渠道关闭/移出。
+  限定状态下已选渠道可**拖动手柄**调整顺序（绑定顺序即该令牌的路由优先级，自上而下
+  依次尝试，带落点指示），与全局渠道优先级独立、互不影响其他令牌；全部移出后自动回到
+  不限状态。列表"限定渠道"列显示摘要（前两个渠道名 + 总数），Tooltip 展示完整顺序
 - FR-T3 认证时同时接受 `Authorization: Bearer` 与 `x-api-key`（兼容两类客户端习惯）
 - FR-T4 令牌吊销立即生效
 - FR-T5 创建令牌时在成功响应中展示完整密钥；之后用户可在令牌列表直接点击**复制密钥**
@@ -331,10 +341,12 @@ US13 统一管理模型（P7）
   `@ai-sdk/openai-compatible` 为备选）、通用 OpenAI 兼容（Base URL + curl 验证）。
   示例自动填充当前网关地址（页面 origin，生产自行替换域名），并以三步引导
   （渠道 → 令牌 → 客户端）说明前置条件；令牌创建成功弹窗提供指南入口
-- FR-T6.1 让 AI 帮你配置：指南页提供令牌选择器 + 一键复制配置指令；指令包含网关地址、
-  所选令牌完整明文、该令牌可路由的模型列表（用令牌实时调用 `/v1/models` 获取）与
-  Claude Code / Codex / opencode 三个客户端的改配任务说明，粘贴给任意 AI 工具即可代为
-  修改配置文件。指令含敏感明文，页面明确提示仅粘贴给信任的 AI 工具
+- FR-T6.1 让 AI 帮你配置：指南页提供令牌选择器 + **目标客户端勾选**（Claude Code /
+  Codex / opencode，至少一项）+ 一键复制配置指令；指令包含网关地址、所选令牌完整明文、
+  该令牌可路由的模型列表（用令牌实时调用 `/v1/models` 获取）与**所选客户端**的改配任务
+  说明，粘贴给任意 AI 工具即可代为修改配置文件。卡片内提供 **Markdown 渲染的指令预览**
+  （令牌脱敏显示，复制时为真实值；剪贴板不可用时弹窗渲染 + 复制按钮回退）。
+  指令含敏感明文，页面明确提示仅粘贴给信任的 AI 工具
 
 ### 5.6 路由与转发
 
@@ -489,13 +501,16 @@ flowchart TD
 
 | 端点 | 协议 | 说明 |
 |---|---|---|
-| POST /v1/chat/completions | OpenAI | 含流式 |
-| POST /v1/completions | OpenAI | 透传（openai 型出站） |
-| POST /v1/embeddings | OpenAI | 透传（openai 型出站） |
-| GET /v1/models | OpenAI + Anthropic | 按 Accept/路径风格返回用户模型并集 |
-| POST /v1/messages | Anthropic | 含流式；Claude Code 直接可用 |
-| POST /v1/messages/count_tokens | Anthropic | 本地近似估算（无需上游） |
+| POST /v1/chat/completions | OpenAI | 含流式；根路径 `/chat/completions` 等价 |
+| POST /v1/completions | OpenAI | 透传（openai 型出站）；根路径等价 |
+| POST /v1/embeddings | OpenAI | 透传（openai 型出站）；根路径等价 |
+| GET /v1/models | OpenAI + Anthropic | 按 Accept/路径风格返回用户模型并集；根路径等价 |
+| POST /v1/messages | Anthropic | 含流式；Claude Code 直接可用；根路径等价 |
+| POST /v1/messages/count_tokens | Anthropic | 本地近似估算（无需上游）；根路径等价 |
 | GET /oauth/feishu/callback | — | 飞书 OAuth 回调 |
+
+所有 `/v1/*` 端点同时在根路径注册（`/v1/chat/completions` ≡ `/chat/completions` 等），
+客户端 base_url 带不带 `/v1` 均可直连。
 
 ### 7.2 出站（渠道类型）
 

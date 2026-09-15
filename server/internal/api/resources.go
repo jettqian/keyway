@@ -541,8 +541,13 @@ func (s *Server) handleCreateToken(c *gin.Context) {
 
 func (s *Server) handleRevokeToken(c *gin.Context) {
 	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	res := s.Store.DB().Where("id = ? AND user_id = ?", id, currentUser(c).ID).
+	res := s.Store.DB().Model(&store.Token{}).
+		Where("id = ? AND user_id = ?", id, currentUser(c).ID).
 		Update("revoked", 1)
+	if res.Error != nil {
+		s.fail(c, http.StatusInternalServerError, "吊销失败")
+		return
+	}
 	if res.RowsAffected == 0 {
 		s.fail(c, http.StatusNotFound, "令牌不存在")
 		return

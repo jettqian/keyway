@@ -1,7 +1,7 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.7（与 PRD v1.5 对应；新增全局模型目录 catalog_models、渠道表单模型点选、
-  模型页拆分为「我的模型 / 模型目录」）
+- 版本：v1.8（与 PRD v1.5.4 对应；令牌吊销修复、根路径端点别名、令牌渠道主开关交互、
+  AI 配置指令客户端勾选与 Markdown 预览）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
 - 本文档解决：架构、技术选型、数据模型落地、核心机制设计、协议转换决策表（PRD 开放
@@ -611,6 +611,8 @@ GET /oauth/feishu/callback?code&state
 
 按 PRD §7.1：`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`、`/v1/models`
 （OpenAI+Anthropic 双格式）、`/v1/messages`、`/v1/messages/count_tokens`。
+全部端点在根路径注册等价别名（`registerRelay` 同时挂 `/v1` 组与根组），客户端 base_url
+带不带 `/v1` 均可；静态资源经 `r.NoRoute` 兜底，与根路径别名无冲突。
 
 ## 12. 配置项（环境变量）
 
