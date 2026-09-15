@@ -1,0 +1,16 @@
+// 页面文案：key 统一以模块前缀命名，避免与其它字典冲突
+export default {
+  'logs.title': '请求日志',
+  'logs.subtitle': '按渠道、模型或状态码定位请求，回看路由与耗时。',
+  'logs.channel': '渠道',
+  'logs.statusCode': '状态码',
+  'logs.line': '线路',
+  'logs.path': '路径',
+  'logs.protocol': '协议',
+  'logs.ttft': '首字节',
+  'logs.totalTime': '总耗时',
+  'logs.cost': '费用',
+  'logs.error': '错误',
+  'logs.cachedTokens': '（缓存 {count}）',
+  'logs.viewFullError': '点击查看完整错误',
+}

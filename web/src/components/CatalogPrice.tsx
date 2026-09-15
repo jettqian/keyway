@@ -2,6 +2,7 @@ import React from 'react'
 import { Tooltip } from 'antd'
 import type { CatalogModel } from '../api/types'
 import Money from './Money'
+import { useI18n } from '../i18n'
 
 /**
  * 模型目录关联单价展示（用户页与管理员页共用）：
@@ -9,24 +10,25 @@ import Money from './Money'
  * 回退输入价（费用统计同口径）；无同名条目显示"未定价"。
  */
 const CatalogPrice: React.FC<{ m: CatalogModel }> = ({ m }) => {
+  const { t } = useI18n()
   if (m.inputPerM == null) {
     return (
-      <Tooltip title="价目表中无同名条目，使用该模型的请求费用将记为未定价">
-        <span className="text-tertiary">未定价</span>
+      <Tooltip title={t('common.unpricedTip')}>
+        <span className="text-tertiary">{t('common.unpriced')}</span>
       </Tooltip>
     )
   }
   return (
     <div className="catalog-price" style={{ lineHeight: 1.7 }}>
       <div>
-        <span className="catalog-price-label">输入</span> <Money value={m.inputPerM} />
+        <span className="catalog-price-label">{t('common.input')}</span> <Money value={m.inputPerM} />
         <span className="catalog-price-sep">·</span>
-        <span className="catalog-price-label">输出</span> <Money value={m.outputPerM} />
+        <span className="catalog-price-label">{t('common.output')}</span> <Money value={m.outputPerM} />
       </div>
       <div>
-        <span className="catalog-price-label">缓存读</span> <Money value={m.cachedInputPerM ?? m.inputPerM} />
+        <span className="catalog-price-label">{t('common.cacheRead')}</span> <Money value={m.cachedInputPerM ?? m.inputPerM} />
         <span className="catalog-price-sep">·</span>
-        <span className="catalog-price-label">缓存写</span> <Money value={m.cacheWritePerM ?? m.inputPerM} />
+        <span className="catalog-price-label">{t('common.cacheWrite')}</span> <Money value={m.cacheWritePerM ?? m.inputPerM} />
       </div>
     </div>
   )

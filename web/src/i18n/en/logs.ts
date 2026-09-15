@@ -1,0 +1,15 @@
+export default {
+  'logs.title': 'Request Logs',
+  'logs.subtitle': 'Locate requests by channel, model, or status code, and review routing and latency.',
+  'logs.channel': 'Channel',
+  'logs.statusCode': 'Status Code',
+  'logs.line': 'Line',
+  'logs.path': 'Path',
+  'logs.protocol': 'Protocol',
+  'logs.ttft': 'First Byte',
+  'logs.totalTime': 'Total Time',
+  'logs.cost': 'Cost',
+  'logs.error': 'Error',
+  'logs.cachedTokens': '(cached {count})',
+  'logs.viewFullError': 'Click to view the full error',
+}

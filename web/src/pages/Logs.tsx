@@ -5,8 +5,10 @@ import type { LogEntry, Channel } from '../api/types'
 import Money from '../components/Money'
 import LineUrl from '../components/LineUrl'
 import { formatDateTime, fmtInt, fmtMs } from '../format'
+import { useI18n } from '../i18n'
 
 const LogsPage: React.FC = () => {
+  const { t } = useI18n()
   const [logs, setLogs] = React.useState<LogEntry[]>([])
   const [total, setTotal] = React.useState(0)
   const [channels, setChannels] = React.useState<Channel[]>([])
@@ -35,24 +37,24 @@ const LogsPage: React.FC = () => {
 
   return (
     <div>
-      <div className="page-heading"><div><h2>请求日志</h2><p>按渠道、模型或状态码定位请求，回看路由与耗时。</p></div></div>
+      <div className="page-heading"><div><h2>{t('logs.title')}</h2><p>{t('logs.subtitle')}</p></div></div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <Select
           allowClear
-          placeholder="渠道"
+          placeholder={t('logs.channel')}
           style={{ width: 160 }}
           options={channels.map((c) => ({ value: c.id, label: c.name }))}
           onChange={(v) => setFilter((f) => ({ ...f, channelId: v }))}
         />
         <Input
           allowClear
-          placeholder="模型"
+          placeholder={t('common.model')}
           style={{ width: 160 }}
           onChange={(e) => !e.target.value && setFilter((f) => ({ ...f, model: undefined }))}
           onPressEnter={(e) => setFilter((f) => ({ ...f, model: (e.target as HTMLInputElement).value }))}
         />
         <InputNumber
-          placeholder="状态码"
+          placeholder={t('logs.statusCode')}
           style={{ width: 100 }}
           onChange={(v) => setFilter((f) => ({ ...f, statusCode: typeof v === 'number' ? v : undefined }))}
         />
@@ -64,23 +66,23 @@ const LogsPage: React.FC = () => {
         scroll={{ x: 'max-content' }}
         pagination={{ current: page, total, pageSize: 20, onChange: setPage }}
         columns={[
-          { title: '时间', dataIndex: 'createdAt', width: 170, render: (v: number | string) => formatDateTime(v) },
+          { title: t('common.time'), dataIndex: 'createdAt', width: 170, render: (v: number | string) => formatDateTime(v) },
           {
-            title: '渠道',
+            title: t('logs.channel'),
             dataIndex: 'channelName',
           },
-          { title: '线路', dataIndex: 'lineUrl', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <LineUrl url={v} /> },
-          { title: '路径', dataIndex: 'via', width: 110 },
-          { title: '协议', dataIndex: 'protocol', width: 90 },
-          { title: '模型', dataIndex: 'model', ellipsis: true },
+          { title: t('logs.line'), dataIndex: 'lineUrl', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <LineUrl url={v} /> },
+          { title: t('logs.path'), dataIndex: 'via', width: 110 },
+          { title: t('logs.protocol'), dataIndex: 'protocol', width: 90 },
+          { title: t('common.model'), dataIndex: 'model', ellipsis: true },
           {
-            title: '状态',
+            title: t('common.status'),
             dataIndex: 'statusCode',
             width: 80,
             render: (s: number) => (s >= 400 ? <span className="status-error">{s}</span> : s),
           },
-          { title: '首字节', dataIndex: 'ttftMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
-          { title: '总耗时', dataIndex: 'totalMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
+          { title: t('logs.ttft'), dataIndex: 'ttftMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
+          { title: t('logs.totalTime'), dataIndex: 'totalMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
           {
             title: 'Tokens',
             width: 160,
@@ -88,19 +90,19 @@ const LogsPage: React.FC = () => {
             render: (_, l) => (
               <span>
                 {fmtInt(l.promptTokens)}/{fmtInt(l.completionTokens)}
-                {l.cachedTokens ? <span className="text-tertiary">（缓存 {fmtInt(l.cachedTokens)}）</span> : null}
+                {l.cachedTokens ? <span className="text-tertiary">{t('logs.cachedTokens', { count: fmtInt(l.cachedTokens) })}</span> : null}
               </span>
             ),
           },
           {
-            title: '费用',
+            title: t('logs.cost'),
             width: 100,
             align: 'right',
             render: (_, l) =>
-              l.inputCost == null ? <span className="text-tertiary">未定价</span> : <Money value={l.inputCost + (l.outputCost ?? 0)} mode="cost" />,
+              l.inputCost == null ? <span className="text-tertiary">{t('common.unpriced')}</span> : <Money value={l.inputCost + (l.outputCost ?? 0)} mode="cost" />,
           },
           {
-            title: '错误',
+            title: t('logs.error'),
             dataIndex: 'error',
             ellipsis: { showTitle: false },
             render: (v?: string) =>
@@ -115,7 +117,7 @@ const LogsPage: React.FC = () => {
                     </Typography.Paragraph>
                   }
                 >
-                  <span className="status-error" style={{ cursor: 'pointer' }} title="点击查看完整错误">
+                  <span className="status-error" style={{ cursor: 'pointer' }} title={t('logs.viewFullError')}>
                     {v}
                   </span>
                 </Popover>

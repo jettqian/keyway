@@ -2,8 +2,10 @@ import React from 'react'
 import { Card, Form, Input, Button, message, Typography, Divider } from 'antd'
 import { Link, useNavigate } from 'react-router-dom'
 import { login, publicInfo, feishuLoginUrl } from '../api'
+import { useI18n } from '../i18n'
 
 const LoginPage: React.FC = () => {
+  const { t } = useI18n()
   const nav = useNavigate()
   const [loading, setLoading] = React.useState(false)
   const [feishuEnabled, setFeishuEnabled] = React.useState(false)
@@ -18,7 +20,7 @@ const LoginPage: React.FC = () => {
     setLoading(true)
     try {
       await login(values.username, values.password)
-      message.success('登录成功')
+      message.success(t('login.success'))
       nav('/')
     } catch (e) {
       message.error((e as Error).message)
@@ -33,7 +35,7 @@ const LoginPage: React.FC = () => {
       if (r.url) {
         window.location.href = r.url
       } else {
-        message.error('飞书登录未完成配置')
+        message.error(t('login.feishuNotConfigured'))
       }
     } catch (e) {
       message.error((e as Error).message)
@@ -44,24 +46,24 @@ const LoginPage: React.FC = () => {
     <div className="auth-shell">
       <Card className="auth-card">
         <div className="auth-mark">K</div>
-        <Typography.Title level={3} style={{ textAlign: 'center', marginTop: 0 }}>登录 Keyway</Typography.Title>
+        <Typography.Title level={3} style={{ textAlign: 'center', marginTop: 0 }}>{t('login.title')}</Typography.Title>
         <Form onFinish={onFinish} layout="vertical">
-          <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
+          <Form.Item name="username" label={t('login.username')} rules={[{ required: true, message: t('login.usernameRequired') }]}>
             <Input autoFocus autoComplete="username" />
           </Form.Item>
-          <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
+          <Form.Item name="password" label={t('login.password')} rules={[{ required: true, message: t('login.passwordRequired') }]}>
             <Input.Password autoComplete="current-password" />
           </Form.Item>
-          <Button type="primary" htmlType="submit" block loading={loading}>登录</Button>
+          <Button type="primary" htmlType="submit" block loading={loading}>{t('login.submit')}</Button>
         </Form>
         {feishuEnabled ? (
           <>
-            <Divider plain style={{ fontSize: 12 }}>或</Divider>
-            <Button block onClick={feishuLogin}>飞书扫码登录</Button>
+            <Divider plain style={{ fontSize: 12 }}>{t('login.or')}</Divider>
+            <Button block onClick={feishuLogin}>{t('login.feishuQr')}</Button>
           </>
         ) : null}
         <div style={{ marginTop: 12, textAlign: 'center' }}>
-          没有账号？<Link to="/register">注册</Link>
+          {t('login.noAccount')}{' '}<Link to="/register">{t('login.signUp')}</Link>
         </div>
       </Card>
     </div>
