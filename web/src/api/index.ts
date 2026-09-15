@@ -87,6 +87,10 @@ export const adminUpdatePricing = (p: ModelPricing) =>
   put<{ pricing: ModelPricing }>(`/api/admin/pricing/${encodeURIComponent(p.model)}`, p)
 export const adminDeletePricing = (model: string) =>
   del<void>(`/api/admin/pricing/${encodeURIComponent(model)}`)
+export const adminSyncRemotePricing = () =>
+  post<{ result: { litellmAdded: number; openrouterAdded: number; skippedExisting: number; warnings?: string[] } }>(
+    '/api/admin/pricing/sync_remote',
+  )
 export const adminProxies = () => get<{ proxies: Proxy[] }>('/api/admin/proxies')
 export const adminCreateProxy = (input: ProxyInput) => post<{ proxy: Proxy }>('/api/admin/proxies', input)
 export const adminUpdateProxy = (id: number, input: Partial<ProxyInput>) =>

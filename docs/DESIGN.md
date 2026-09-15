@@ -609,7 +609,8 @@ GET /oauth/feishu/callback?code&state
 | GET /api/stats | 自己的统计（含最近生效流量 latest） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
   （模型目录 CRUD + import_pricing 价目导入）、/api/admin/templates、
-  /api/admin/proxies、/api/admin/pricing(+import)、/api/admin/stats、/api/admin/invites | 见 PRD §5.9 |
+  /api/admin/proxies、/api/admin/pricing(+import、+sync_remote 远程同步)、
+  /api/admin/stats、/api/admin/invites | 见 PRD §5.9 |
 
 ### 11.2 中转 `/v1`（令牌鉴权）
 
@@ -650,6 +651,7 @@ text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无�
 | KEYWAY_BODY_LIMIT_MB | 50 | 请求体上限 |
 | KEYWAY_IDLE_STREAM_TIMEOUT_S | 300 | 流式空闲超时 |
 | KEYWAY_LOG_RETENTION_DAYS | 30 | 日志保留期 |
+| KEYWAY_PRICING_SYNC_HOURS | 24 | 官方价目远程同步周期（小时，LiteLLM + OpenRouter；0 关闭；启动先执行一次） |
 
 ## 13. 部署
 

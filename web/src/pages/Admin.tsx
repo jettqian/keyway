@@ -1,5 +1,5 @@
 import React from 'react'
-import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Tag, Space, Select, InputNumber, Typography } from 'antd'
+import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography } from 'antd'
 import {
   adminUsers,
   adminSetUserStatus,
@@ -7,6 +7,7 @@ import {
   adminPricing,
   adminUpdatePricing,
   adminDeletePricing,
+  adminSyncRemotePricing,
   adminProxies,
   adminCreateProxy,
   adminUpdateProxy,
@@ -168,9 +169,32 @@ const PricingTab: React.FC = () => {
     setImportOpen(false)
     refresh()
   }
+  const [syncing, setSyncing] = React.useState(false)
+  const syncRemote = async () => {
+    setSyncing(true)
+    try {
+      const r = await adminSyncRemotePricing()
+      const { litellmAdded, openrouterAdded, skippedExisting, warnings } = r.result
+      const parts = [`LiteLLM 新增 ${litellmAdded}、OpenRouter 新增 ${openrouterAdded}`]
+      if (skippedExisting) parts.push(`已存在 ${skippedExisting} 条未覆盖`)
+      message.success(parts.join('；') + (warnings?.length ? `（${warnings.join('；')}）` : ''))
+      refresh()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setSyncing(false)
+    }
+  }
   return (
     <div>
       <div style={{ marginBottom: 12, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <Popconfirm
+          title="从 LiteLLM / OpenRouter 同步官方价目？"
+          description="只补缺：已存在的条目一律不覆盖（如需刷新某条可先删除再同步）。后台也会按 KEYWAY_PRICING_SYNC_HOURS 定期同步（默认 24 小时，0 关闭）。"
+          onConfirm={syncRemote}
+        >
+          <Button loading={syncing}>同步官方价目</Button>
+        </Popconfirm>
         <Button onClick={exportJSON}>导出 JSON</Button>
         <Button onClick={() => { setImportText(''); setImportOpen(true) }}>导入 JSON</Button>
         <Button type="primary" onClick={openCreate}>新增模型</Button>

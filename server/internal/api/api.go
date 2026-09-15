@@ -189,6 +189,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 		admin.GET("/pricing", s.handleAdminPricing)
 		admin.PUT("/pricing/:model", s.handleAdminUpdatePricing)
 		admin.DELETE("/pricing/:model", s.handleAdminDeletePricing)
+		admin.POST("/pricing/sync_remote", s.handleAdminSyncPricing)
 		admin.GET("/models", s.handleAdminListCatalogModels)
 		admin.POST("/models", s.handleAdminCreateCatalogModel)
 		admin.PUT("/models/:id", s.handleAdminUpdateCatalogModel)

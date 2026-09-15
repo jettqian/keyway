@@ -11,6 +11,7 @@ import (
 
 	"keyway/internal/crypto"
 	"keyway/internal/httpx"
+	"keyway/internal/pricing"
 	"keyway/internal/store"
 	"keyway/internal/usage"
 )
@@ -201,6 +202,16 @@ func (s *Server) handleAdminDeletePricing(c *gin.Context) {
 		return
 	}
 	s.ok(c, gin.H{})
+}
+
+// handleAdminSyncPricing 手动触发官方价目同步（LiteLLM + OpenRouter，只补缺不覆盖已有条目）
+func (s *Server) handleAdminSyncPricing(c *gin.Context) {
+	res, err := pricing.SyncRemote(s.Store.DB(), 60*time.Second)
+	if err != nil {
+		s.fail(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	s.ok(c, gin.H{"result": res})
 }
 
 // ---------- 管理员：代理池 / 模板 / 设置 ----------

@@ -20,6 +20,7 @@ type Config struct {
 	BodyLimitMB          int
 	IdleStreamTimeoutSec int
 	LogRetentionDays     int
+	PricingSyncHours     int
 }
 
 func Load() Config {
@@ -35,6 +36,7 @@ func Load() Config {
 		BodyLimitMB:          envInt("KEYWAY_BODY_LIMIT_MB", 50),
 		IdleStreamTimeoutSec: envInt("KEYWAY_IDLE_STREAM_TIMEOUT_S", 300),
 		LogRetentionDays:     envInt("KEYWAY_LOG_RETENTION_DAYS", 30),
+		PricingSyncHours:     envInt("KEYWAY_PRICING_SYNC_HOURS", 24),
 	}
 }
 
