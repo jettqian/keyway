@@ -22,6 +22,7 @@ import { listChannels, createChannel, updateChannel, deleteChannel, listKeys, te
 import type { ChannelTestResult } from '../api'
 import type { Channel, ChannelInput, ApiKey, CatalogModel } from '../api/types'
 import { fmtMs } from '../format'
+import { useI18n } from '../i18n'
 
 // 后端单组合探测总超时（probe.probeWait，秒）；矩阵并发执行，整体约等于单组合耗时
 const PROBE_WAIT_SECONDS = 30
@@ -46,6 +47,7 @@ const emptyInput: ChannelInput = {
 }
 
 const ChannelsPage: React.FC = () => {
+  const { t } = useI18n()
   const params = useParams()
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [keys, setKeys] = React.useState<ApiKey[]>([])
@@ -157,7 +159,7 @@ const ChannelsPage: React.FC = () => {
       } else {
         await createChannel(input)
       }
-      message.success('已保存，下一个请求生效')
+      message.success(t('channels.savedNextRequest'))
       setModalOpen(false)
       refresh()
     } catch (e) {
@@ -208,7 +210,7 @@ const ChannelsPage: React.FC = () => {
   const toggleEnabled = async (c: Channel) => {
     try {
       await updateChannel(c.id, channelToInput(c, { enabled: !c.enabled }))
-      message.success(c.enabled ? '已停用' : '已启用，下一个请求生效')
+      message.success(c.enabled ? t('channels.disabledNotice') : t('channels.enabledNextRequest'))
       refresh()
     } catch (e) {
       message.error((e as Error).message)
@@ -230,73 +232,77 @@ const ChannelsPage: React.FC = () => {
     <div>
       <div className="page-heading">
         <div>
-          <h2>渠道</h2>
-          <p>管理上游线路、密钥和模型路由，保存后下一个请求即可生效；没有头绪可先从<Link to="/templates">预制模板</Link>复制。</p>
+          <h2>{t('channels.title')}</h2>
+          <p>
+            {t('channels.subtitleLead')}
+            <Link to="/templates">{t('channels.templatesLink')}</Link>
+            {t('channels.subtitleTail')}
+          </p>
         </div>
-        <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建渠道</Button></div>
+        <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('channels.create')}</Button></div>
       </div>
       <Table<Channel>
         rowKey="id"
         loading={loading}
         dataSource={channels}
         scroll={{ x: 'max-content' }}
-        locale={{ emptyText: '暂无渠道，点击右上角「新建渠道」或从预制模板复制' }}
+        locale={{ emptyText: t('channels.empty') }}
         columns={[
           {
-            title: '名称',
+            title: t('common.name'),
             dataIndex: 'name',
             render: (n: string, c: Channel) => (
               <Space>
                 {n}
-                {c.copiedFromTemplateId ? <Tag>复制自模板</Tag> : null}
-                {c.isDefault ? <Tag color="blue">默认</Tag> : null}
+                {c.copiedFromTemplateId ? <Tag>{t('channels.copiedFromTemplate')}</Tag> : null}
+                {c.isDefault ? <Tag color="blue">{t('channels.defaultTag')}</Tag> : null}
               </Space>
             ),
           },
           {
-            title: '转发',
+            title: t('channels.forward'),
             dataIndex: 'forwardMode',
             width: 120,
             render: (m: string, c: Channel) =>
               m === 'convert' ? (
-                <Tag color="orange">转换 → {c.type || '?'}</Tag>
+                <Tag color="orange">{t('channels.convertTo', { type: c.type || '?' })}</Tag>
               ) : (
-                <Tag>透明</Tag>
+                <Tag>{t('channels.transparent')}</Tag>
               ),
           },
-          { title: '线路数', width: 90, align: 'right', render: (_, c) => c.baseUrls.length },
-          { title: '密钥数', width: 90, align: 'right', render: (_, c) => c.keyIds.length },
-          { title: '优先级', dataIndex: 'priority', width: 90, align: 'right' },
+          { title: t('channels.lineCount'), width: 90, align: 'right', render: (_, c) => c.baseUrls.length },
+          { title: t('channels.keyCount'), width: 90, align: 'right', render: (_, c) => c.keyIds.length },
+          { title: t('channels.priority'), dataIndex: 'priority', width: 90, align: 'right' },
           {
-            title: '状态',
+            title: t('common.status'),
             dataIndex: 'enabled',
             width: 90,
             render: (e: boolean, c: Channel) =>
               e ? (
-                <Tag color="green">启用</Tag>
+                <Tag color="green">{t('common.enabled')}</Tag>
               ) : c.keyIds.length === 0 ? (
-                <Tag color="orange">草稿</Tag>
+                <Tag color="orange">{t('channels.draft')}</Tag>
               ) : (
-                <Tag>停用</Tag>
+                <Tag>{t('common.disabled')}</Tag>
               ),
           },
           {
-            title: '操作',
+            title: t('common.action'),
             width: 250,
             render: (_, c) => (
               <Space>
-                <Button size="small" onClick={() => openEdit(c)}>编辑</Button>
-                <Button size="small" onClick={() => toggleEnabled(c)}>{c.enabled ? '停用' : '启用'}</Button>
-                <Button size="small" loading={testing && testTarget?.id === c.id} onClick={() => runTest(c)}>测试</Button>
+                <Button size="small" onClick={() => openEdit(c)}>{t('common.edit')}</Button>
+                <Button size="small" onClick={() => toggleEnabled(c)}>{c.enabled ? t('common.disabled') : t('common.enabled')}</Button>
+                <Button size="small" loading={testing && testTarget?.id === c.id} onClick={() => runTest(c)}>{t('channels.test')}</Button>
                 <Popconfirm
-                  title="删除该渠道？"
+                  title={t('channels.confirmDelete')}
                   onConfirm={async () => {
                     await deleteChannel(c.id)
-                    message.success('已删除')
+                    message.success(t('common.deleted'))
                     refresh()
                   }}
                 >
-                  <Button size="small" danger>删除</Button>
+                  <Button size="small" danger>{t('common.delete')}</Button>
                 </Popconfirm>
               </Space>
             ),
@@ -305,7 +311,7 @@ const ChannelsPage: React.FC = () => {
       />
 
       <Modal
-        title={editing ? `编辑渠道：${editing.name}` : '新建渠道'}
+        title={editing ? t('channels.editTitle', { name: editing.name }) : t('channels.createTitle')}
         open={modalOpen}
         onOk={submit}
         onCancel={() => setModalOpen(false)}
@@ -313,71 +319,71 @@ const ChannelsPage: React.FC = () => {
         destroyOnClose
       >
         <Form form={form} layout="vertical" initialValues={emptyInput}>
-          <Form.Item name="name" label="名称" tooltip="给自己看的标识，建议包含供应商或用途" rules={[{ required: true, message: '请输入名称' }]}>
-            <Input placeholder="如 openai-官方" />
+          <Form.Item name="name" label={t('common.name')} tooltip={t('channels.nameTooltip')} rules={[{ required: true, message: t('common.nameRequired') }]}>
+            <Input placeholder={t('channels.namePlaceholder')} />
           </Form.Item>
-          <Form.Item name="enabled" label="启用渠道" valuePropName="checked" extra={<span className="form-hint">停用（草稿）状态不参与任何路由；启用须至少绑定 1 把密钥，保存后下一个请求生效。</span>}>
+          <Form.Item name="enabled" label={t('channels.enableChannel')} valuePropName="checked" extra={<span className="form-hint">{t('channels.enableChannelExtra')}</span>}>
             <Switch />
           </Form.Item>
-          <Form.Item label="线路地址" extra={<span className="form-hint">按优先顺序填写，最多 5 条；系统会自动选择可用线路。</span>} required>
+          <Form.Item label={t('channels.baseUrlLabel')} extra={<span className="form-hint">{t('channels.baseUrlExtra')}</span>} required>
             <Form.List name="baseUrls">
               {(fields, { add, remove }) => (
                 <>
                   {fields.map((f) => (
                     <Space key={f.key} style={{ display: 'flex', marginBottom: 4 }}>
-                      <Form.Item name={[f.name]} noStyle rules={[{ required: true, message: '线路不能为空' }]}>
+                      <Form.Item name={[f.name]} noStyle rules={[{ required: true, message: t('channels.baseUrlRequired') }]}>
                         <Input placeholder="https://api.example.com" style={{ width: 420 }} />
                       </Form.Item>
-                      {fields.length > 1 ? <a onClick={() => remove(f.name)}>删除</a> : null}
+                      {fields.length > 1 ? <a onClick={() => remove(f.name)}>{t('common.delete')}</a> : null}
                     </Space>
                   ))}
                   {fields.length < 5 ? (
                     <Button type="dashed" onClick={() => add('')} block>
-                      添加线路
+                      {t('channels.addLine')}
                     </Button>
                   ) : null}
                 </>
               )}
             </Form.List>
           </Form.Item>
-          <Form.Item name="keyIds" label="绑定密钥" extra={<span className="form-hint">留空表示暂不绑定密钥；最多 5 个，按所选策略使用。</span>}>
+          <Form.Item name="keyIds" label={t('channels.bindKeys')} extra={<span className="form-hint">{t('channels.bindKeysExtra')}</span>}>
             <Select
               mode="multiple"
               options={keys.map((k) => ({ value: k.id, label: k.name }))}
-              placeholder="从密钥池选择"
+              placeholder={t('channels.selectFromKeyPool')}
             />
           </Form.Item>
           <Space size="large">
-            <Form.Item name="keyStrategy" label="密钥策略">
+            <Form.Item name="keyStrategy" label={t('channels.keyStrategy')}>
               <Select
                 style={{ width: 160 }}
                 options={[
-                  { value: 'ordered', label: 'ordered（顺序优先）' },
-                  { value: 'round_robin', label: 'round_robin（轮询）' },
+                  { value: 'ordered', label: t('channels.keyStrategyOrdered') },
+                  { value: 'round_robin', label: t('channels.keyStrategyRoundRobin') },
                 ]}
               />
             </Form.Item>
-            <Form.Item name="lineStrategy" label="线路策略">
+            <Form.Item name="lineStrategy" label={t('channels.lineStrategy')}>
               <Select
                 style={{ width: 160 }}
                 options={[
-                  { value: 'auto', label: 'auto（探测优选）' },
-                  { value: 'manual', label: 'manual（固定第一条）' },
+                  { value: 'auto', label: t('channels.lineStrategyAuto') },
+                  { value: 'manual', label: t('channels.lineStrategyManual') },
                 ]}
               />
             </Form.Item>
           </Space>
-          <Form.Item name="models" label="模型列表" extra="从模型目录或已有模型中点选；目录外的名称可直接输入回车添加。">
-            <Select mode="tags" tokenSeparators={[',']} options={modelOptions} placeholder="点选或输入模型名" />
+          <Form.Item name="models" label={t('channels.models')} extra={t('channels.modelsExtra')}>
+            <Select mode="tags" tokenSeparators={[',']} options={modelOptions} placeholder={t('channels.modelsPlaceholder')} />
           </Form.Item>
           <Collapse ghost defaultActiveKey={[]} style={{ marginTop: 4, marginBottom: 8 }}>
-            <Collapse.Panel header="高级选项" key="advanced">
-          <Form.Item name="forwardMode" label="转发模式" extra="默认透明转发：沿用入站协议，无需选择协议类型；跨协议转换为特殊需求，显式开启。">
+            <Collapse.Panel header={t('channels.advanced')} key="advanced">
+          <Form.Item name="forwardMode" label={t('channels.forwardMode')} extra={t('channels.forwardModeExtra')}>
             <Select
               style={{ width: 260 }}
               options={[
-                { value: 'passthrough', label: '透明转发（默认）' },
-                { value: 'convert', label: '跨协议转换（高级）' },
+                { value: 'passthrough', label: t('channels.forwardPassthrough') },
+                { value: 'convert', label: t('channels.forwardConvert') },
               ]}
             />
           </Form.Item>
@@ -386,9 +392,9 @@ const ChannelsPage: React.FC = () => {
               getFieldValue('forwardMode') === 'convert' ? (
                 <Form.Item
                   name="type"
-                  label="目标协议"
-                  tooltip="跨协议转换时上游使用的协议；透明转发模式下不涉及此项。"
-                  rules={[{ required: true, message: '跨协议转换须指定目标协议' }]}
+                  label={t('channels.targetProtocol')}
+                  tooltip={t('channels.targetProtocolTooltip')}
+                  rules={[{ required: true, message: t('channels.targetProtocolRequired') }]}
                 >
                   <Select
                     style={{ width: 260 }}
@@ -401,45 +407,45 @@ const ChannelsPage: React.FC = () => {
               ) : null
             }
           </Form.Item>
-          <Form.Item name="proxyUrl" label="个人出站代理" extra={<span className="form-hint">支持 http 或 socks5；不需要代理时留空。</span>}>
+          <Form.Item name="proxyUrl" label={t('channels.personalProxy')} extra={<span className="form-hint">{t('channels.personalProxyExtra')}</span>}>
             <Input placeholder="socks5://127.0.0.1:7890" />
           </Form.Item>
-          <Form.Item name="allowPublicProxy" label="允许使用公共代理参与优选" valuePropName="checked">
+          <Form.Item name="allowPublicProxy" label={t('channels.allowPublicProxy')} valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item label="模型映射（请求名 → 上游名）">
+          <Form.Item label={t('channels.modelMapping')}>
             <Form.List name="modelMapping">
               {(fields, { add, remove }) => (
                 <>
                   {fields.map((f) => (
                     <Space key={f.key} style={{ display: 'flex', marginBottom: 4 }}>
                       <Form.Item name={[f.name, 'from']} noStyle>
-                        <Input placeholder="请求模型名" style={{ width: 200 }} />
+                        <Input placeholder={t('channels.mappingFromPlaceholder')} style={{ width: 200 }} />
                       </Form.Item>
                       <span>→</span>
                       <Form.Item name={[f.name, 'to']} noStyle>
-                        <Input placeholder="上游模型名" style={{ width: 200 }} />
+                        <Input placeholder={t('channels.mappingToPlaceholder')} style={{ width: 200 }} />
                       </Form.Item>
-                      <a onClick={() => remove(f.name)}>删除</a>
+                      <a onClick={() => remove(f.name)}>{t('common.delete')}</a>
                     </Space>
                   ))}
                   <Button type="dashed" onClick={() => add({ from: '', to: '' })} block>
-                    添加映射
+                    {t('channels.addMapping')}
                   </Button>
                 </>
               )}
             </Form.List>
           </Form.Item>
           <Space size="large">
-            <Form.Item name="priority" label="优先级（大者优先）">
+            <Form.Item name="priority" label={t('channels.priorityLabel')}>
               <InputNumber />
             </Form.Item>
-            <Form.Item name="pricingMode" label="计价模式（费用统计用）">
+            <Form.Item name="pricingMode" label={t('channels.pricingMode')}>
               <Select
                 style={{ width: 190 }}
                 options={[
-                  { value: 'usd', label: '美元渠道（倍率折扣）' },
-                  { value: 'cny_ratio', label: '人民币渠道（$1 实收 ¥X）' },
+                  { value: 'usd', label: t('channels.pricingUsd') },
+                  { value: 'cny_ratio', label: t('channels.pricingCnyRatio') },
                 ]}
               />
             </Form.Item>
@@ -449,17 +455,17 @@ const ChannelsPage: React.FC = () => {
               getFieldValue('pricingMode') === 'cny_ratio' ? (
                 <Form.Item
                   name="cnyRatio"
-                  label="换算比（每 $1 官方用量实收人民币）"
-                  extra="如 micu 渠道 $1 收 ¥0.5 就填 0.5；统计按全局汇率折算美元"
-                  rules={[{ required: true, message: '人民币渠道须填写换算比' }]}
+                  label={t('channels.cnyRatioLabel')}
+                  extra={t('channels.cnyRatioExtra')}
+                  rules={[{ required: true, message: t('channels.cnyRatioRequired') }]}
                 >
                   <InputNumber min={0.001} step={0.05} style={{ width: 160 }} />
                 </Form.Item>
               ) : (
                 <Form.Item
                   name="priceMultiplier"
-                  label="价格倍率（费用统计用）"
-                  extra="美元渠道折扣，如 8 折填 0.8；官方渠道保持 1"
+                  label={t('channels.priceMultiplierLabel')}
+                  extra={t('channels.priceMultiplierExtra')}
                   initialValue={1}
                 >
                   <InputNumber min={0} step={0.05} style={{ width: 160 }} />
@@ -467,7 +473,7 @@ const ChannelsPage: React.FC = () => {
               )
             }
           </Form.Item>
-          <Form.Item name="isDefault" label="设为默认渠道（模型未命中任何渠道时兜底）" valuePropName="checked">
+          <Form.Item name="isDefault" label={t('channels.setDefault')} valuePropName="checked">
             <Switch />
           </Form.Item>
             </Collapse.Panel>
@@ -476,7 +482,7 @@ const ChannelsPage: React.FC = () => {
       </Modal>
 
       <Modal
-        title={`线路 × 路径 测试结果${testTarget ? `：${testTarget.name}` : ''}`}
+        title={testTarget ? t('channels.testResultTitleWithName', { name: testTarget.name }) : t('channels.testResultTitle')}
         open={testResults !== null}
         onCancel={() => {
           testSeq.current++ // 丢弃仍在途的探测响应
@@ -489,7 +495,7 @@ const ChannelsPage: React.FC = () => {
           <div style={{ textAlign: 'center', padding: '32px 0' }}>
             <Spin />
             <div className="text-secondary" style={{ marginTop: 12 }}>
-              正在并发探测全部线路 × 路径组合（每组合最长 {PROBE_WAIT_SECONDS} 秒）…
+              {t('channels.probing', { seconds: PROBE_WAIT_SECONDS })}
             </div>
           </div>
         ) : (
@@ -501,7 +507,7 @@ const ChannelsPage: React.FC = () => {
               message={r.lineUrl}
               description={
                 <>
-                  <div>路径 {r.via}，延迟 {fmtMs(r.latencyMs)}</div>
+                  <div>{t('channels.testDetail', { via: r.via, latency: fmtMs(r.latencyMs) })}</div>
                   {r.error ? <div className="text-secondary">{r.error}</div> : null}
                 </>
               }
