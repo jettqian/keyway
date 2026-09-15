@@ -1,5 +1,5 @@
 import React from 'react'
-import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography, Radio, Tooltip } from 'antd'
+import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography, Radio, Tooltip, AutoComplete } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import {
   adminUsers,
@@ -460,26 +460,50 @@ const ProxiesTab: React.FC = () => {
 
 const CatalogModelsTab: React.FC = () => {
   const [models, setModels] = React.useState<CatalogModel[]>([])
+  const [pricingList, setPricingList] = React.useState<ModelPricing[]>([])
   const [loading, setLoading] = React.useState(true)
   const [modalOpen, setModalOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<CatalogModel | null>(null)
+  const [picked, setPicked] = React.useState<ModelPricing | null>(null)
   const [form] = Form.useForm()
   const refresh = React.useCallback(() => {
     setLoading(true)
-    adminCatalogModels()
-      .then((r) => setModels(r.models))
+    Promise.all([adminCatalogModels(), adminPricing()])
+      .then(([m, p]) => {
+        setModels(m.models)
+        setPricingList(p.pricing)
+      })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
   }, [])
   React.useEffect(refresh, [refresh])
+  // 价目表候选（新增弹窗搜索点选用）：排除已收录条目，右侧显示价格摘要
+  const priceOptions = React.useMemo(() => {
+    const existing = new Set(models.map((m) => m.name))
+    return pricingList
+      .filter((p) => !existing.has(p.model))
+      .map((p) => ({
+        value: p.model,
+        label: (
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.model}</span>
+            <span style={{ color: '#999', fontSize: 12, whiteSpace: 'nowrap' }}>
+              输入 ${fmtPrice(p.inputPerM)} / 输出 ${fmtPrice(p.outputPerM)}
+            </span>
+          </div>
+        ),
+      }))
+  }, [pricingList, models])
   const openCreate = () => {
     setEditing(null)
+    setPicked(null)
     form.resetFields()
     form.setFieldsValue({ name: '', note: '', enabled: true })
     setModalOpen(true)
   }
   const openEdit = (m: CatalogModel) => {
     setEditing(m)
+    setPicked(null)
     form.setFieldsValue({ name: m.name, note: m.note, enabled: m.enabled })
     setModalOpen(true)
   }
@@ -506,7 +530,7 @@ const CatalogModelsTab: React.FC = () => {
       </div>
       <div style={{ color: '#777', fontSize: 13, marginBottom: 12 }}>
         模型目录是全局点选数据源：用户在渠道表单与模板表单中从这里点选模型；删除目录项不影响已引用它的渠道配置。
-        只收录用户常用的模型即可，无需与价目表对齐。
+        只收录用户常用的模型即可，无需与价目表对齐；新增时可从价目表搜索点选，价格自动关联。
       </div>
       <Table<CatalogModel>
         rowKey="id"
@@ -550,8 +574,39 @@ const CatalogModelsTab: React.FC = () => {
       />
       <Modal title={editing ? `编辑目录模型：${editing.name}` : '新增目录模型'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="模型名" rules={[{ required: true, message: '请输入模型名' }]}>
-            <Input placeholder="如 claude-sonnet-4.5" />
+          <Form.Item
+            name="name"
+            label="模型名"
+            rules={[{ required: true, message: '请输入模型名' }]}
+            extra={
+              picked ? (
+                <span>
+                  价目关联：输入 ${fmtPrice(picked.inputPerM)} · 输出 ${fmtPrice(picked.outputPerM)} ·
+                  缓存读 ${fmtPrice(picked.cachedInputPerM ?? picked.inputPerM)} ·
+                  缓存写 ${fmtPrice(picked.cacheWritePerM ?? picked.inputPerM)}
+                </span>
+              ) : (
+                <span className="form-hint">可从价目表搜索点选，也可直接输入目录外名称（费用将记为未定价）</span>
+              )
+            }
+          >
+            {editing ? (
+              <Input placeholder="如 claude-sonnet-4.5" />
+            ) : (
+              <AutoComplete
+                allowClear
+                options={priceOptions}
+                onClear={() => setPicked(null)}
+                onSelect={(v: string) => setPicked(pricingList.find((p) => p.model === v) ?? null)}
+                onChange={(v: string) => {
+                  if (picked && picked.model !== v) setPicked(null)
+                }}
+                filterOption={(input, option) =>
+                  String(option?.value ?? '').toLowerCase().includes(input.trim().toLowerCase())
+                }
+                placeholder="输入关键字从价目表搜索选择，如 claude-sonnet"
+              />
+            )}
           </Form.Item>
           <Form.Item name="note" label="备注">
             <Input.TextArea rows={2} placeholder="如 2026-09 在售，适合 Agent 主力" />
