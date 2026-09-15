@@ -1,6 +1,8 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.24（与 PRD v1.5.26 对应；限定渠道面板**移除"限定范围"主开关**——令牌
+- 版本：v1.25（与 PRD v1.5.27 对应；探测端点优先级 responses/messages 优先、
+  chat 靠后 + 流式探测（首事件即判通并止损）+ 总超时 30s（见 §6）；
+  前版 v1.24：限定渠道面板**移除"限定范围"主开关**——令牌
   始终按面板列表顺序路由，消除"不限按渠道优先级 / 限定按面板顺序"两套规则的歧义；
   存量"不限"令牌打开面板以全部渠道按优先级预览、首次调整即固化（后端"空=不限"
   数据语义保留仅作存量兼容）；拖拽引入 **@dnd-kit/sortable**（首个前端交互类
@@ -406,31 +408,34 @@ graph LR
   最小请求：openai 型 `POST /v1/chat/completions {model, max_tokens:8,
   messages:[{role:user,content:"ping"}]}`；anthropic 型 `POST /v1/messages` 同理
   （max_tokens:8）；2xx 却返回 text/html 视为线路无该端点（SPA 回退）而非健康
-- **探测端点形态判定与真实转发一致**（v1.5.22/24/25 修正，消除透明转发渠道假失败）：
+- **探测端点形态判定与真实转发一致**（v1.5.22/24/25/27 修正）：
   - 请求模型名先经渠道 model_mapping 映射为上游模型名（`routing.ApplyModelMapping`，
     relay 与 probe 共用）；
   - 形态 = 端点 + 鉴权 + 最小请求体，共三种：anthropic（`/v1/messages` + x-api-key）、
-    openai（`/v1/chat/completions` + Bearer）、openai-responses（`/v1/responses` +
-    Bearer，`{model, input, max_output_tokens:16}`，Codex 客户端端点）；
-  - passthrough 渠道 `type` 恒为空且不参与转发，按模型名族推断首选形态
-    （`claude*` → messages，其余 → chat/completions），失败依序回退其余形态
-    （gpt 系 `chat → responses → messages`；claude 系 `messages → chat → responses`）
-    ——兼容 claude 模型走 openai 兼容中转、gpt 模型走 responses-only team 网关等场景；
-  - convert 渠道在显式协议族内回退（anthropic → 仅 messages；openai →
-    chat → responses），配错族就应报失败
+    openai-responses（`/v1/responses` + Bearer，`{model, input, max_output_tokens:16}`，
+    Codex 客户端主力端点）、openai（`/v1/chat/completions` + Bearer，传统老客户端）；
+  - **responses/messages 优先、chat 靠后**（v1.5.27，agent 主力流量优先）：
+    `claude*` → messages → responses → chat；其余（gpt 等）→ responses → chat →
+    messages；convert 在显式协议族内排序（anthropic → 仅 messages；openai →
+    responses → chat）。passthrough 渠道 `type` 恒为空且不参与转发，探测不依赖它；
+  - **探测请求流式化**（v1.5.27）：所有形态 `stream:true` + `Accept:
+    text/event-stream`，读到响应头/首事件（response.created、message_start、首个
+    data 块）即判通并立即断开连接止损。非流式下 responses/messages 须等完整推理
+    （慢思考模型首 token 10s+，总超时内完不成会误判失败），流式化后耗时≈排队+鉴权
+    （实测 0.6~8s）且不消耗输出 token；失败路径仍读完整错误体摘要
 - **模型回退与错误摘要**（v1.5.23，oct-micu-vip2/oct-yescode 案例修正）：
   - 探测模型不固定第一个，取渠道模型列表前 3 个非空项依序回退（中转站常见
     "部分模型分组无渠道/provider 路由不命中"，如 new_api `model_not_found`、
     team 网关 "no enabled provider"，固定首模型会把可用渠道整体误判为不健康）；
   - 失败信息解析上游错误响应体 `error.message`（openai/anthropic/new_api 通用
     结构，截断 120 rune）拼入摘要，按"模型（/端点: 错误；…）；…"逐条汇报；
-  - 单组合的模型 × 形态全部回退请求共享 `probeWait`（15s）总超时，探测上限
-    不因回退放大
+  - 单组合的模型 × 形态全部回退请求共享 `probeWait`（30s，覆盖 responses/messages
+    网关排队耗时）总超时，探测上限不因回退放大
 - 探测使用该渠道当前首选可用密钥（会消耗极少量上游额度，文档明示；矩阵上限×频率
   约束见 PRD 非功能需求）
 - 结果 UPSERT line_stats（latency_ms / ok / last_error / last_probe_at）
 - 管理员"立即探测"与用户"测试渠道"按钮走同一矩阵，实时返回结果矩阵；前端点击后
-  立即打开结果弹窗进入探测中状态（矩阵并发，整体≈单组合 15s 超时上限）
+  立即打开结果弹窗进入探测中状态（矩阵并发，整体≈单组合 30s 超时上限）
 - 探测不产生 logs 记录（PRD FR-S6）
 
 ## 7. 协议转换（PRD 开放问题 Q4 决策表）

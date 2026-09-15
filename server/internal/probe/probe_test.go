@@ -159,8 +159,8 @@ func TestProbeChannel转换模式不回退(t *testing.T) {
 	}
 }
 
-// 探测形态序列：convert 用显式协议族；passthrough 按模型名族推断并附回退形态
-// （含 /v1/responses——Codex 端点，仅提供 responses 形态 provider 的网关靠它覆盖）
+// 探测形态序列：responses/messages 优先、chat 靠后（对齐 agent 主力流量——
+// Codex → /v1/responses、Claude Code → /v1/messages）；convert 在显式协议族内排序
 func TestProbeShapes(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -169,10 +169,10 @@ func TestProbeShapes(t *testing.T) {
 		want  []string
 	}{
 		{"convert显式anthropic", &store.Channel{ForwardMode: "convert", Type: "anthropic"}, "gpt-4o", []string{"anthropic"}},
-		{"convert显式openai", &store.Channel{ForwardMode: "convert", Type: "openai"}, "gpt-4o", []string{"openai", "openai-responses"}},
-		{"passthrough推断anthropic", &store.Channel{ForwardMode: "passthrough"}, "claude-3-5-sonnet", []string{"anthropic", "openai", "openai-responses"}},
-		{"passthrough推断openai", &store.Channel{ForwardMode: "passthrough"}, "gpt-4o", []string{"openai", "openai-responses", "anthropic"}},
-		{"passthrough忽略stale类型", &store.Channel{ForwardMode: "passthrough", Type: "openai"}, "claude-sonnet-4", []string{"anthropic", "openai", "openai-responses"}},
+		{"convert显式openai", &store.Channel{ForwardMode: "convert", Type: "openai"}, "gpt-4o", []string{"openai-responses", "openai"}},
+		{"passthrough推断anthropic", &store.Channel{ForwardMode: "passthrough"}, "claude-3-5-sonnet", []string{"anthropic", "openai-responses", "openai"}},
+		{"passthrough推断openai", &store.Channel{ForwardMode: "passthrough"}, "gpt-4o", []string{"openai-responses", "openai", "anthropic"}},
+		{"passthrough忽略stale类型", &store.Channel{ForwardMode: "passthrough", Type: "openai"}, "claude-sonnet-4", []string{"anthropic", "openai-responses", "openai"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -23,8 +23,8 @@ import type { ChannelTestResult } from '../api'
 import type { Channel, ChannelInput, ApiKey, CatalogModel } from '../api/types'
 import { fmtMs } from '../format'
 
-// 后端单组合探测超时（probe.probeWait，秒）；矩阵并发执行，整体约等于单组合耗时
-const PROBE_WAIT_SECONDS = 15
+// 后端单组合探测总超时（probe.probeWait，秒）；矩阵并发执行，整体约等于单组合耗时
+const PROBE_WAIT_SECONDS = 30
 
 const emptyInput: ChannelInput = {
   name: '',

@@ -26,7 +26,7 @@ const (
 	scanTick   = 30 * time.Second
 	maxBackoff = 60 * time.Minute
 	matrixCap  = 20
-	probeWait  = 15 * time.Second // 单次探测整体超时
+	probeWait  = 30 * time.Second // 单次探测（组合）总超时：覆盖 responses/messages 排队 + 首事件等待
 	// 单组合探测最多尝试的模型数（回退控制上游请求成本，DESIGN §6）
 	probeModelCap = 3
 )
@@ -240,29 +240,30 @@ func (e *Engine) ProbeKeys(ch *store.Channel) ([]KeyResult, error) {
 }
 
 // probeShapes 探测端点形态尝试序列（形态 = 端点 + 鉴权 + 最小请求体）：
-//   - anthropic：POST /v1/messages + x-api-key；
-//   - openai：POST /v1/chat/completions + Bearer；
-//   - openai-responses：POST /v1/responses + Bearer（Responses API，Codex 客户端使用；
-//     仅提供 responses 形态 provider 的 team 网关上 chat/completions 恒 403，
-//     v1.5.24 前探测从不覆盖该端点，导致"用户实测可用但测试不过"）
+//   - anthropic：POST /v1/messages + x-api-key（Claude Code / Claude SDK 主力端点）；
+//   - openai-responses：POST /v1/responses + Bearer（Responses API，Codex 客户端
+//     主力端点；仅提供 responses 形态 provider 的 team 网关上 chat/completions 恒 403）；
+//   - openai：POST /v1/chat/completions + Bearer（传统 Chat Completions，多为老
+//     客户端/SDK 使用，agent 流量占比低——v1.5.26 起降级为回退形态）；
 //
-// 序列规则：
-//   - convert 模式上游协议由渠道显式指定，只测该协议族（配错就应报失败）；
-//   - passthrough 沿用入站协议、无法预知，按模型名族推断首选（claude* → anthropic，
-//     其余 → openai），失败时依序回退其余形态——兼容 claude 模型走 openai 兼容中转、
-//     gpt 模型走 responses-only 网关等场景。渠道上的 type 字段在 passthrough 下
-//     不参与转发（relay 忽略），探测同样不依赖它
+// 序列规则（**responses/messages 优先，chat 靠后**——对齐真实主力 agent 流量）：
+//   - claude* → messages → responses → chat；
+//   - 其余（gpt 等）→ responses → chat → messages；
+//   - convert 模式上游协议由渠道显式指定，只在该协议族内排序（配错族就应报失败）；
+//   - passthrough 沿用入站协议、无法预知，按模型名族推断首选并依序回退——兼容
+//     claude 模型走 openai 兼容中转、gpt 模型走 responses-only 网关等场景。
+//     渠道上的 type 字段在 passthrough 下不参与转发（relay 忽略），探测同样不依赖它
 func probeShapes(ch *store.Channel, model string) []string {
 	if ch.ForwardMode == "convert" && ch.Type != "" {
 		if ch.Type == "anthropic" {
 			return []string{"anthropic"}
 		}
-		return []string{"openai", "openai-responses"}
+		return []string{"openai-responses", "openai"}
 	}
 	if strings.HasPrefix(model, "claude") {
-		return []string{"anthropic", "openai", "openai-responses"}
+		return []string{"anthropic", "openai-responses", "openai"}
 	}
-	return []string{"openai", "openai-responses", "anthropic"}
+	return []string{"openai-responses", "openai", "anthropic"}
 }
 
 // shapeLabel 形态的展示名（错误信息与结果摘要用端点路径更直观）
@@ -311,7 +312,11 @@ func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, p
 	return result
 }
 
-// probeOne 按指定形态发送最小请求并计时；错误信息附带上游响应体摘要
+// probeOne 按指定形态发送最小**流式**请求并计时；错误信息附带上游响应体摘要。
+// 流式探测（v1.5.26）：响应头/首事件（response.created、message_start、首个
+// data 块）在推理开始前即返回，读到首字节即判通并立即断开止损——非流式下
+// responses/messages 需等完整推理（慢思考模型首 token 10s+，15s 总超时内
+// 完不成会误判失败），且探测成本更高
 func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlain, line, proxyURL, via, shape string) Result {
 	result := Result{LineURL: line, Via: via}
 
@@ -322,6 +327,7 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 		body, _ = json.Marshal(map[string]any{
 			"model":      model,
 			"max_tokens": 8,
+			"stream":     true,
 			"messages":   []map[string]any{{"role": "user", "content": "ping"}},
 		})
 	} else if shape == "openai-responses" {
@@ -330,12 +336,14 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 			"model":             model,
 			"input":             "ping",
 			"max_output_tokens": 16,
+			"stream":            true,
 		})
 	} else {
 		path = "/chat/completions"
 		body, _ = json.Marshal(map[string]any{
 			"model":      model,
 			"max_tokens": 8,
+			"stream":     true,
 			"messages":   []map[string]any{{"role": "user", "content": "ping"}},
 		})
 	}
@@ -347,6 +355,7 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 		return result
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 	if shape == "anthropic" {
 		req.Header.Set("x-api-key", keyPlain)
 		req.Header.Set("anthropic-version", "2023-06-01")
@@ -361,21 +370,31 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 	}
 	start := time.Now()
 	resp, err := client.Do(req)
-	result.LatencyMs = time.Since(start).Milliseconds()
 	if err != nil {
 		result.Error = fmt.Sprintf("%s %s: %v", via, shortURL(line), err)
 		return result
 	}
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-	resp.Body.Close()
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		// 2xx 却返回 HTML：SPA 回退，端点在该线路不存在
 		if strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+			result.LatencyMs = time.Since(start).Milliseconds()
+			resp.Body.Close()
 			result.Error = "上游返回 HTML（端点不存在）"
 			return result
 		}
+		// 读首字节确认事件流已开始（毫秒级，不等推理），随即断开止损
+		one := make([]byte, 1)
+		io.ReadFull(resp.Body, one)
+		result.LatencyMs = time.Since(start).Milliseconds()
+		resp.Body.Close()
 		result.OK = true
-	} else if summary := upstreamErrorSummary(respBody); summary != "" {
+		return result
+	}
+	// 失败：读错误响应体摘要
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	result.LatencyMs = time.Since(start).Milliseconds()
+	resp.Body.Close()
+	if summary := upstreamErrorSummary(respBody); summary != "" {
 		result.Error = fmt.Sprintf("上游返回 %d：%s", resp.StatusCode, summary)
 	} else {
 		result.Error = fmt.Sprintf("上游返回 %d", resp.StatusCode)

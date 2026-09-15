@@ -1,12 +1,22 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.26
+- 版本：v1.5.27
 - 日期：2026-09-15
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.27：探测**端点优先级调整与流式化**（设计原则：agent 主力流量优先）——
+> ① 形态序列改为 responses/messages 优先、chat/completions 靠后：gpt 系
+> `responses → chat → messages`、claude 系 `messages → responses → chat`、convert
+> openai 族 `responses → chat`（Codex → /v1/responses、Claude Code → /v1/messages
+> 是 agent 主力端点，chat 多为老客户端使用）；② 探测请求全部改为**流式**
+> （`stream:true` + `text/event-stream`），读到响应头/首事件（response.created、
+> message_start）即判通并立即断开止损——非流式下 responses/messages 须等完整推理，
+> 慢思考模型首 token 10s+ 在总超时内完不成会误判失败，流式化后探测耗时≈排队+鉴权
+> （实测 0.6~8s），且不消耗输出 token；③ 单组合总超时 15s → **30s**（覆盖
+> responses/messages 网关的排队耗时），前端提示同步
 > - v1.5.26：限定渠道面板**移除"限定范围"主开关**——"不限"状态下两套优先级规则
 >   （不限按渠道优先级 / 限定按面板顺序）易歧义，令牌从此始终按面板列表顺序路由；
 >   存量"不限"令牌（启用集合为空）打开面板以全部渠道按优先级**预览**（黄色提示条
@@ -411,16 +421,18 @@ US13 统一管理模型（P7）
 
 - FR-C1 渠道 CRUD 全部由用户自助完成，仅作用于本人；所有字段可随时修改，保存后
   下一个请求生效
-- FR-C2 测试按钮：对该渠道全部"线路 × 路径"组合各发一条最小对话（`max_tokens=8`，
-  responses 形态 `max_output_tokens=16`；用当前首选密钥，**并发**探测全部组合），汇报
-  每个组合的连通性与耗时；点击后立即打开结果弹窗进入探测中状态，无需等待返回；探测
-  与真实转发一致：请求模型名先经渠道模型映射得到上游模型名，convert 渠道用其显式
-  协议族，passthrough 渠道按模型名族推断首选形态（`claude*` → /v1/messages，其余 →
-  /v1/chat/completions）并失败时依序回退其余端点形态（gpt 系补 /v1/responses——
-  Codex 客户端端点，覆盖仅提供 responses 形态 provider 的 team 网关；claude 系补
-  openai 两形态；convert 在显式协议族内同样回退），任一形态成功即组合健康；模型
+- FR-C2 测试按钮：对该渠道全部"线路 × 路径"组合各发一条最小**流式**对话
+  （`stream:true`，chat/messages 形态 `max_tokens:8`、responses 形态
+  `max_output_tokens:16`；用当前首选密钥，**并发**探测全部组合），读到响应头/首
+  事件即判通并立即断开止损（不等推理完成），汇报每个组合的连通性与耗时；点击后
+  立即打开结果弹窗进入探测中状态，无需等待返回；探测与真实转发一致：请求模型名先
+  经渠道模型映射得到上游模型名；端点形态**responses/messages 优先、chat 靠后**
+  （agent 主力流量优先：Codex → /v1/responses、Claude Code → /v1/messages）——
+  gpt 系 `responses → chat → messages`、claude 系 `messages → responses → chat`、
+  convert 渠道在其显式协议族内同样排序（openai 族 `responses → chat`），任一形态
+  成功即组合健康（覆盖仅提供 responses 形态 provider 的 team 网关等场景）；模型
   同样支持回退——渠道模型列表前 3 个依序尝试（应对中转站部分模型分组无渠道/
-  provider 不命中的情况）；整个组合的回退共享 15s 总超时；失败信息包含上游错误
+  provider 不命中的情况）；整个组合的回退共享 30s 总超时；失败信息包含上游错误
   响应体的 `error.message` 摘要（截断 120 字符），按"模型（/端点：错误；…）"逐条
   汇报；另支持"逐密钥测试"（见 FR-K6，同样并发执行、同样回退与摘要规则）
 - FR-C3 默认渠道：用户可指定一个兜底渠道，模型名未命中任何渠道时走它并透传模型名；
@@ -824,6 +836,7 @@ settings(key, value)        -- 注册策略、保留期、探测频率、飞书 
 | v1.5.22 | 渠道测试修正：探测协议判定/模型映射与真实转发对齐（含协议回退），矩阵并发探测 + 前端即时反馈 | ✅ 完成 |
 | v1.5.23 | 探测模型回退（前 3 个模型依序尝试）+ 失败信息携带上游 error.message 摘要 + 组合级总超时 | ✅ 完成 |
 | v1.5.25 | 探测覆盖 /v1/responses 端点形态（Codex 端点回退），失败摘要按端点路径汇报 | ✅ 完成 |
+| v1.5.27 | 探测端点优先级 responses/messages 优先 + 流式探测（首事件即判通止损）+ 总超时 30s | ✅ 完成 |
 | v2（视需求） | Gemini 原生、/v1/responses 跨协议转换、通用 OIDC 登录、2FA、MySQL/多实例、Prometheus 指标、协议转换调试抓包（用户显式开启） | 待启动 |
 
 ## 11. 开放问题
