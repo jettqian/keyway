@@ -1,6 +1,9 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.26（与 PRD v1.5.28 对应；限定渠道**支持全部关闭**：tokens 新增 `restricted`
+- 版本：v1.27（与 PRD v1.5.29 对应；最近生效流量**同渠道同模型去重**——按
+  （channel_id, model）分组取 MAX(id)（每组最新一条成功日志），再取最近 5 个组合，
+  连续使用同一渠道+模型不再占满列表；
+  前版 v1.26：限定渠道支持全部关闭（tokens 新增 `restricted`
   列区分"不限"（0）与"限定"（1，空启用集合 = 全部临时停用、路由零候选），
   路由过滤语义改为"非 nil = 限定（空切片零候选）、nil = 不限"（RouteFilter），
   撤销"至少保留一个启用渠道"守卫——临时关闭与吊销语义不同；
@@ -610,9 +613,10 @@ new-api 的已知语义（仅参考行为，代码自研）。
   载入；已删除的回退 `#id`）
 - 时间窗：`start` / `end`（YYYY-MM-DD，end 含当天）自定义起止（`GET /api/stats` 与
   管理端同参），未传时回退 `days`（默认 7，向后兼容）
-- 最近生效流量（`stats.recent`）：`ORDER BY id DESC LIMIT 5` 取该用户最新 5 条成功
-  （status_code < 400 且 channel_id 非空）日志，回传渠道名/模型/时间；不受统计窗口限制，
-  API 层按 channel_id 批量补渠道名
+- 最近生效流量（`stats.recent`）：**同渠道同模型只占一行**——先按
+  `GROUP BY channel_id, model` 对成功（status_code < 400 且 channel_id 非空）日志取
+  `MAX(id)`（每组最新一条），再 `ORDER BY id DESC LIMIT 5` 取最近 5 个组合，回传
+  渠道名/模型/时间；不受统计窗口限制，API 层按 channel_id 批量补渠道名
 - CSV：服务端流式生成 `text/csv` 下载
 - 若 v1.1 出现慢查询 → 增加 daily rollup 表（计划内，不在 MVP）
 
@@ -724,7 +728,7 @@ GET /oauth/feishu/callback?code&state
 | POST /api/tokens/:id/reveal | 所属用户回看完整令牌（复制密钥按钮数据源） |
 | POST /api/tokens/:id/revoke | 吊销令牌（立即失效，保留记录） |
 | GET /api/logs | 自己的日志（分页/过滤） |
-| GET /api/stats | 自己的统计（含最近生效流量 recent 最新 5 条；start/end 自定义时间窗，缺省 days） |
+| GET /api/stats | 自己的统计（含最近生效流量 recent：同渠道同模型去重后的最新 5 个组合；start/end 自定义时间窗，缺省 days） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
   （模型目录 CRUD）、/api/admin/templates、
   /api/admin/proxies、/api/admin/pricing(+import、+sync_remote 远程同步)、

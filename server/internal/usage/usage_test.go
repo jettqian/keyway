@@ -11,7 +11,8 @@ func strp(v string) *string   { s := v; return &s }
 func intp(v int) *int         { return &v }
 func f64p(v float64) *float64 { return &v }
 
-// 最近生效流量 = 最新 5 条成功（status < 400 且有渠道）日志，不受统计窗口限制
+// 最近生效流量 = 成功（status < 400 且有渠道）日志按（渠道,模型）去重后的最新 5 个组合，
+// 每组只占一行（取该组最新一条），不受统计窗口限制
 func TestQueryStatsRecent(t *testing.T) {
 	st, err := store.Open(store.Options{DataDir: ":memory:"})
 	if err != nil {
@@ -20,18 +21,23 @@ func TestQueryStatsRecent(t *testing.T) {
 	defer st.Close()
 	db := st.DB()
 
-	// 用户 1：6 条成功日志（最新为渠道 6/m6）+ 1 条失败；用户 2：1 条成功
-	var logs []store.Log
-	for i := 1; i <= 6; i++ {
-		logs = append(logs, store.Log{
-			CreatedAt: int64(100 * i), UserID: 1, ChannelID: i64p(int64(i)),
-			Model: strp("m" + string(rune('0'+i))), StatusCode: intp(200),
-		})
+	// 用户 1：6 个不同（渠道,模型）组合，其中 (1,m1)、(2,m2) 各重复一次
+	//（重复只占一行、时间取最新），另 1 条失败；用户 2：1 条成功
+	logs := []store.Log{
+		{CreatedAt: 100, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200)},
+		{CreatedAt: 200, UserID: 1, ChannelID: i64p(2), Model: strp("m2"), StatusCode: intp(200)},
+		{CreatedAt: 300, UserID: 1, ChannelID: i64p(3), Model: strp("m3"), StatusCode: intp(200)},
+		// 同渠道同模型重复：只占一行，展示最新这条（350）
+		{CreatedAt: 350, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200)},
+		{CreatedAt: 400, UserID: 1, ChannelID: i64p(4), Model: strp("m4"), StatusCode: intp(200)},
+		// 同渠道同模型重复：只占一行，展示最新这条（450）
+		{CreatedAt: 450, UserID: 1, ChannelID: i64p(2), Model: strp("m2"), StatusCode: intp(200)},
+		{CreatedAt: 500, UserID: 1, ChannelID: i64p(5), Model: strp("m5"), StatusCode: intp(200)},
+		{CreatedAt: 600, UserID: 1, ChannelID: i64p(6), Model: strp("m6"), StatusCode: intp(200)},
+		// 失败请求（不进最近生效流量）
+		{CreatedAt: 700, UserID: 1, ChannelID: i64p(7), Model: strp("m7"), StatusCode: intp(500)},
+		{CreatedAt: 800, UserID: 2, ChannelID: i64p(8), Model: strp("m8"), StatusCode: intp(200)},
 	}
-	logs = append(logs,
-		store.Log{CreatedAt: 700, UserID: 1, ChannelID: i64p(7), Model: strp("m7"), StatusCode: intp(500)},
-		store.Log{CreatedAt: 800, UserID: 2, ChannelID: i64p(8), Model: strp("m8"), StatusCode: intp(200)},
-	)
 	for i := range logs {
 		if err := db.Create(&logs[i]).Error; err != nil {
 			t.Fatal(err)
@@ -44,13 +50,43 @@ func TestQueryStatsRecent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(st1.Recent) != 5 {
-		t.Fatalf("用户 1 期望最近 5 条生效流量，实际 %d 条", len(st1.Recent))
+		t.Fatalf("用户 1 期望去重后最近 5 个组合，实际 %d 条", len(st1.Recent))
 	}
 	if st1.Recent[0].ChannelID != 6 || st1.Recent[0].Model != "m6" {
-		t.Errorf("期望最新生效流量为渠道 6 / m6，实际 %d / %s", st1.Recent[0].ChannelID, st1.Recent[0].Model)
+		t.Errorf("期望首行为最新组合渠道 6 / m6，实际 %d / %s", st1.Recent[0].ChannelID, st1.Recent[0].Model)
 	}
-	if st1.Recent[0].ID <= st1.Recent[1].ID {
-		t.Errorf("期望按日志倒序排列，实际首条 id=%d 不大于次条 id=%d", st1.Recent[0].ID, st1.Recent[1].ID)
+	for i := 1; i < len(st1.Recent); i++ {
+		if st1.Recent[i-1].ID <= st1.Recent[i].ID {
+			t.Errorf("期望按日志倒序排列，实际第 %d 行 id=%d 不大于次行 id=%d", i-1, st1.Recent[i-1].ID, st1.Recent[i].ID)
+		}
+	}
+	find := func(channel int64, model string) *LatestUsage {
+		for i := range st1.Recent {
+			if st1.Recent[i].ChannelID == channel && st1.Recent[i].Model == model {
+				return &st1.Recent[i]
+			}
+		}
+		return nil
+	}
+	// 去重后 6 个组合只剩 5 行，最早的 (3,m3) 被挤出
+	if find(3, "m3") != nil {
+		t.Errorf("期望最早的组合 (3,m3) 被 5 行上限挤出，实际 %+v", st1.Recent)
+	}
+	// 重复组合只占一行且取最新一条
+	for _, tc := range []struct {
+		channel int64
+		model   string
+		at      int64
+	}{
+		{1, "m1", 350},
+		{2, "m2", 450},
+	} {
+		r := find(tc.channel, tc.model)
+		if r == nil {
+			t.Errorf("期望包含组合 (%d,%s)，实际 %+v", tc.channel, tc.model, st1.Recent)
+		} else if r.CreatedAt != tc.at {
+			t.Errorf("组合 (%d,%s) 期望展示最新一条（时间 %d），实际 %d", tc.channel, tc.model, tc.at, r.CreatedAt)
+		}
 	}
 
 	uid2 := int64(2)

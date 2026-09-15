@@ -309,7 +309,7 @@ type Stats struct {
 	ByChannel []StatsGroup  `json:"byChannel"`
 	ByModel   []StatsGroup  `json:"byModel"`
 	ByKey     []StatsGroup  `json:"byKey"`
-	Recent    []LatestUsage `json:"recent"` // 最近生效流量（最新 5 条成功请求）
+	Recent    []LatestUsage `json:"recent"` // 最近生效流量（同渠道同模型去重，最新 5 个组合）
 }
 
 // QueryStats 用量/花费统计（userID 为 nil 时全员；since/until 为 Unix 秒，0 表示该侧不限）
@@ -391,7 +391,8 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 	applyIDNames(st.ByChannel, chNames)
 	applyIDNames(st.ByKey, keyNames)
 
-	// 最近生效流量（不受统计窗口限制，取最新 5 条成功请求）
+	// 最近生效流量（不受统计窗口限制）：同渠道同模型只占一行——按（渠道, 模型）
+	// 分组取最新一条成功日志，展示最近 5 个组合
 	var recent []struct {
 		ID            int64
 		CreatedAt     int64
@@ -400,9 +401,13 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 		UpstreamModel string
 		StatusCode    int
 	}
-	err := db.Model(&store.Log{}).
+	sub := db.Model(&store.Log{}).
+		Select("MAX(id) AS id").
 		Where("channel_id IS NOT NULL AND status_code < 400").
 		Scopes(whereUser(userID)).
+		Group("channel_id, model")
+	err := db.Model(&store.Log{}).
+		Where("id IN (?)", sub).
 		Select("id, created_at, channel_id, COALESCE(model,'') AS model, COALESCE(upstream_model,'') AS upstream_model, COALESCE(status_code,0) AS status_code").
 		Order("id DESC").Limit(5).
 		Scan(&recent).Error
