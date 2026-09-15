@@ -8,6 +8,7 @@ import ChannelsPage from './pages/Channels'
 import ModelsPage from './pages/Models'
 import TemplatesPage from './pages/Templates'
 import TokensPage from './pages/Tokens'
+import GuidePage from './pages/Guide'
 import LogsPage from './pages/Logs'
 import StatsPage from './pages/Stats'
 import AdminPage from './pages/Admin'
@@ -26,6 +27,7 @@ const router = createBrowserRouter([
       { path: 'models', element: <ModelsPage /> },
       { path: 'templates', element: <TemplatesPage /> },
       { path: 'tokens', element: <TokensPage /> },
+      { path: 'guide', element: <GuidePage /> },
       { path: 'logs', element: <LogsPage /> },
       { path: 'stats', element: <StatsPage /> },
       { path: 'admin/*', element: <AdminPage /> },

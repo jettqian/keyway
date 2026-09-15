@@ -1,6 +1,7 @@
 import React from 'react'
 import { Alert, Button, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
 import { HolderOutlined, PlusOutlined } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import { listTokens, createToken, updateToken, revokeToken, revealToken, listChannels } from '../api'
 import type { GatewayToken, Channel } from '../api/types'
 import { formatDateTime } from '../format'
@@ -87,6 +88,7 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
 }
 
 const TokensPage: React.FC = () => {
+  const nav = useNavigate()
   const [tokens, setTokens] = React.useState<GatewayToken[]>([])
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -246,6 +248,9 @@ const TokensPage: React.FC = () => {
         <Typography.Paragraph>请复制保存；之后也可在令牌列表中复制：</Typography.Paragraph>
         <Typography.Paragraph copyable={{ text: created ?? '' }} code>
           {created}
+        </Typography.Paragraph>
+        <Typography.Paragraph style={{ marginBottom: 0 }}>
+          客户端配置方法见 <a onClick={() => { setCreated(null); nav('/guide') }}>接入指南</a>。
         </Typography.Paragraph>
       </Modal>
     </div>

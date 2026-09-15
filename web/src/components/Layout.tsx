@@ -7,6 +7,7 @@ import {
   LockOutlined,
   FileTextOutlined,
   BarChartOutlined,
+  BookOutlined,
   SettingOutlined,
   UserOutlined,
   AppstoreOutlined,
@@ -37,6 +38,7 @@ export const ConsoleLayout: React.FC = () => {
     { key: '/models', icon: <DeploymentUnitOutlined />, label: '模型管理' },
     { key: '/templates', icon: <TagsOutlined />, label: '预制模板' },
     { key: '/tokens', icon: <LockOutlined />, label: '令牌' },
+    { key: '/guide', icon: <BookOutlined />, label: '接入指南' },
     { key: '/logs', icon: <FileTextOutlined />, label: '日志' },
     { key: '/stats', icon: <BarChartOutlined />, label: '统计' },
   ]

@@ -30,16 +30,52 @@ cd server && go run ./cmd/keyway      # 后端 :8080
 cd web && npm run dev                 # 前端 :5173（/api 代理到 8080）
 ```
 
-Agent 侧一次性配置（之后零改动）：
+Agent 侧一次性配置（之后零改动；完整说明见控制台「接入指南」页）：
 
 ```bash
-# OpenAI 兼容客户端
-export OPENAI_BASE_URL=https://your-domain/v1
-export OPENAI_API_KEY=sk-keyway-...
-
-# Claude Code
+# Claude Code（Anthropic 协议，BASE_URL 不带 /v1）
 export ANTHROPIC_BASE_URL=https://your-domain
 export ANTHROPIC_AUTH_TOKEN=sk-keyway-...
+claude
+```
+
+```toml
+# Codex：~/.codex/config.toml（wire_api 必须为 chat）
+model = "gpt-5.2"                 # 渠道中配置的模型名
+model_provider = "keyway"
+
+[model_providers.keyway]
+name = "keyway"
+base_url = "https://your-domain/v1"
+wire_api = "chat"
+env_key = "KEYWAY_API_KEY"
+```
+
+```bash
+export KEYWAY_API_KEY=sk-keyway-...   # Codex / opencode 共用
+codex
+```
+
+```jsonc
+// opencode：项目根目录或 ~/.config/opencode/opencode.json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "keyway": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Keyway",
+      "options": { "baseURL": "https://your-domain/v1", "apiKey": "{env:KEYWAY_API_KEY}" },
+      "models": { "gpt-5.2": {}, "claude-sonnet-4.5": {} }
+    }
+  },
+  "model": "keyway/gpt-5.2"
+}
+```
+
+```bash
+# 任意 OpenAI 兼容客户端 / SDK
+export OPENAI_BASE_URL=https://your-domain/v1
+export OPENAI_API_KEY=sk-keyway-...
 ```
 
 ## 核心特性
