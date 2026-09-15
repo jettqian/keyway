@@ -230,9 +230,9 @@ func (e *Engine) probeOnce(ch *store.Channel, model, keyPlain, line, proxyURL, v
 	})
 	var target string
 	if ch.Type == "anthropic" {
-		target = strings.TrimSuffix(line, "/") + "/v1/messages"
+		target = httpx.UpstreamEndpoint(line, "/messages")
 	} else {
-		target = strings.TrimSuffix(line, "/") + "/chat/completions"
+		target = httpx.UpstreamEndpoint(line, "/chat/completions")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), probeWait)
@@ -265,6 +265,11 @@ func (e *Engine) probeOnce(ch *store.Channel, model, keyPlain, line, proxyURL, v
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 	resp.Body.Close()
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		// 2xx 却返回 HTML：SPA 回退，端点在该线路不存在
+		if strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+			result.Error = "上游返回 HTML（端点不存在）"
+			return result
+		}
 		result.OK = true
 	} else {
 		result.Error = fmt.Sprintf("上游返回 %d", resp.StatusCode)

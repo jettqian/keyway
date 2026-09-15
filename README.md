@@ -9,7 +9,8 @@
 
 ## 核心特性
 
-- **统一端点**：OpenAI / Anthropic 兼容协议，Claude Code / Codex / opencode / Cline 直连
+- **统一端点**：OpenAI / Anthropic 兼容协议（含 OpenAI Responses API），Claude Code /
+  Codex / opencode / Cline 直连
 - **多租户 BYOK**：上游密钥独立成池，渠道自由组合（≤5 key/渠道），429 自动轮换
 - **多线路优选**：每渠道 ≤5 base_url，线路×路径探测优选，故障自动降级
 - **出站代理**：个人代理 + 管理员公共代理池（按渠道 opt-in，流量统计）
@@ -75,14 +76,14 @@ Agent 侧一次性配置（之后零改动；控制台「接入指南」页自�
 ```
 
 ```toml
-# Codex：~/.codex/config.toml（wire_api 必须为 chat；密钥直接写入）
+# Codex：~/.codex/config.toml（Responses 与 chat 协议均可；密钥直接写入）
 model = "gpt-5.2"                 # 渠道中配置的模型名
 model_provider = "keyway"
 
 [model_providers.keyway]
 name = "keyway"
 base_url = "https://your-domain/v1"
-wire_api = "chat"
+wire_api = "chat"                 # 或 "responses"（默认），网关均支持
 experimental_bearer_token = "sk-keyway-..."
 ```
 

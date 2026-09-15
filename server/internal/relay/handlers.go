@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/convert"
+	"keyway/internal/httpx"
 	"keyway/internal/routing"
 	"keyway/internal/store"
 	"keyway/internal/usage"
@@ -63,8 +64,14 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			for _, a := range s.planFor(rc) {
 				a.protocol = "openai"
 				a.request = c.Request
-				resp, _, err := s.sendUpstream(a, "POST", strings.TrimSuffix(a.lineURL, "/")+path, sendBody, false)
+				resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, path), sendBody, false)
 				if err != nil {
+					continue
+				}
+				if isHTMLResponse(resp) {
+					// 上游 2xx 却返回 HTML（SPA 回退）：端点不存在，换组合
+					io.Copy(io.Discard, resp.Body)
+					resp.Body.Close()
 					continue
 				}
 				if resp.StatusCode >= 500 {
@@ -81,11 +88,125 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 	}
 }
 
+// HandleOpenAIResponses POST /v1/responses（OpenAI Responses API，Codex 默认协议）
+// 仅 openai 型渠道：模型名映射后透传到上游 /responses；流式逐块回写。
+// 失败切换与 chat 管线同策略：网络错误/5xx 换线路组合，401/403/429 换 key（429 冷却）。
+func (s *Server) HandleOpenAIResponses(c *gin.Context) {
+	body := readBody(c, s.Cfg.BodyLimitMB)
+	var probe struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		respondOpenAIError(c, http.StatusBadRequest, "请求体不是合法的 OpenAI JSON："+err.Error())
+		return
+	}
+	if probe.Model == "" {
+		respondOpenAIError(c, http.StatusBadRequest, "缺少 model 字段")
+		return
+	}
+	token, user := ctxTokenUser(c)
+	matched, defaults, err := s.Routing.Resolve(user.ID, probe.Model, token.ChannelFilter(), deref(token.ModelScope))
+	if err != nil {
+		respondOpenAIError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if len(matched) == 0 && len(defaults) == 0 {
+		respondOpenAIError(c, http.StatusNotFound,
+			fmt.Sprintf("model %s 未命中任何渠道，请到控制台配置或设置默认渠道", probe.Model))
+		return
+	}
+	reqStart := time.Now()
+	var (
+		lastStatus int
+		lastBody   []byte
+		lastErr    string
+	)
+	for _, rc := range append(matched, defaults...) {
+		// 跨协议转换渠道（目标非 openai）无法承接 Responses 协议
+		if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
+			continue
+		}
+		upstreamModel := mapModel(rc.Channel, probe.Model)
+		m := map[string]any{}
+		if e := json.Unmarshal(body, &m); e != nil {
+			respondOpenAIError(c, http.StatusBadRequest, "非法 JSON: "+e.Error())
+			return
+		}
+		m["model"] = upstreamModel
+		sendBody, _ := json.Marshal(m)
+		for _, a := range s.planFor(rc) {
+			a.protocol = "openai"
+			a.request = c.Request
+			resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, "/responses"), sendBody, probe.Stream)
+			if err != nil {
+				lastErr = err.Error()
+				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
+				continue
+			}
+			if isHTMLResponse(resp) {
+				// 上游 2xx 却返回 HTML（SPA 回退）：该线路无 /responses 端点，换组合
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				lastErr = "上游 /responses 返回 HTML（端点不存在）"
+				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, lastErr)
+				continue
+			}
+			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 429 {
+				if resp.StatusCode == 429 {
+					cool := parseRetryAfter(resp.Header.Get("Retry-After"))
+					s.Routing.UpdateKeyCooldown(a.key.ID, int64(cool))
+				}
+				s.Routing.MarkKeyError(a.key.ID, fmt.Sprintf("上游 %d", resp.StatusCode))
+				lastStatus = resp.StatusCode
+				lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+				resp.Body.Close()
+				continue
+			}
+			if resp.StatusCode >= 500 {
+				lastStatus = resp.StatusCode
+				lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+				resp.Body.Close()
+				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, fmt.Sprintf("上游 %d", resp.StatusCode))
+				continue
+			}
+			s.Routing.MarkChannelStatus(a.rc.Channel.ID, resp.StatusCode < 400, "")
+			var u convert.Usage
+			ttft, total := int64(0), int64(0)
+			if probe.Stream {
+				u, ttft, total = s.streamResponse(c, a, "openai", resp, reqStart)
+			} else {
+				u, ttft, total = s.bodyResponse(c, a, "openai", resp, reqStart)
+			}
+			s.submitLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, u, ttft, total)
+			return
+		}
+	}
+	if lastStatus > 0 {
+		respondRawOrConverted(c, "openai", lastStatus, lastBody, false)
+		return
+	}
+	msg := "全部上游不可达（responses 仅支持 openai 型渠道）"
+	if lastErr != "" {
+		msg += "：" + lastErr
+	}
+	respondOpenAIError(c, http.StatusBadGateway, msg)
+}
+
 // passthroughResponse 原样回写上游响应
 func passthroughResponse(c *gin.Context, resp *http.Response) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
 	resp.Body.Close()
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+}
+
+// isHTMLResponse 上游 2xx 却返回 text/html：多数为网关型上游的 SPA 回退
+// （未知路径返回前端页面），说明请求的 API 端点在该线路不存在，应换组合重试
+func isHTMLResponse(resp *http.Response) bool {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false
+	}
+	return strings.Contains(resp.Header.Get("Content-Type"), "text/html")
 }
 
 // ---------- Anthropic 入站 ----------
@@ -201,6 +322,16 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			continue // 网络错误 → 下一组合
 		}
 
+		// 上游 2xx 却返回 HTML（SPA 回退）：端点不存在，换组合
+		if isHTMLResponse(resp) {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			lastErr = "上游返回 HTML（端点不存在）"
+			lastCrossProto = cross
+			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, lastErr)
+			continue
+		}
+
 		// 鉴权/限流 → 换 key；429 设置冷却
 		if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 429 {
 			if resp.StatusCode == 429 {
@@ -262,7 +393,7 @@ func (s *Server) buildUpstreamRequest(inbound, channelType string, rawBody []byt
 			}
 			m["model"] = upstreamModel
 			sendBody, _ = json.Marshal(m)
-			return sendBody, strings.TrimSuffix(a.lineURL, "/") + "/chat/completions", nil, false, nil
+			return sendBody, httpx.UpstreamEndpoint(a.lineURL, "/chat/completions"), nil, false, nil
 		}
 		var req convert.OpenAIChatRequest
 		if e := json.Unmarshal(rawBody, &req); e != nil {
@@ -277,7 +408,7 @@ func (s *Server) buildUpstreamRequest(inbound, channelType string, rawBody []byt
 		}
 		an.Model = upstreamModel
 		sendBody, _ = json.Marshal(an)
-		return sendBody, strings.TrimSuffix(a.lineURL, "/") + "/v1/messages", dr, true, nil
+		return sendBody, httpx.UpstreamEndpoint(a.lineURL, "/messages"), dr, true, nil
 	}
 	// anthropic 入站
 	if channelType == "anthropic" {
@@ -287,7 +418,7 @@ func (s *Server) buildUpstreamRequest(inbound, channelType string, rawBody []byt
 		}
 		m["model"] = upstreamModel
 		sendBody, _ = json.Marshal(m)
-		return sendBody, strings.TrimSuffix(a.lineURL, "/") + "/v1/messages", nil, false, nil
+		return sendBody, httpx.UpstreamEndpoint(a.lineURL, "/messages"), nil, false, nil
 	}
 	var req convert.AnthropicMessagesRequest
 	if e := json.Unmarshal(rawBody, &req); e != nil {
@@ -296,7 +427,7 @@ func (s *Server) buildUpstreamRequest(inbound, channelType string, rawBody []byt
 	oi, dr := convert.AnthropicToOpenAIChat(&req)
 	oi.Model = upstreamModel
 	sendBody, _ = json.Marshal(oi)
-	return sendBody, strings.TrimSuffix(a.lineURL, "/") + "/chat/completions", dr, true, nil
+	return sendBody, httpx.UpstreamEndpoint(a.lineURL, "/chat/completions"), dr, true, nil
 }
 
 // sendUpstream 发送上游请求（含鉴权头、代理客户端、超时）
@@ -628,7 +759,9 @@ func respondRawOrConverted(c *gin.Context, inbound string, status int, body []by
 	c.Data(status, "application/json", body)
 }
 
-// sniffUsage 从透传字节中嗅探 usage（尽力而为；兼容 SSE 行前缀）
+// sniffUsage 从透传字节中嗅探 usage（尽力而为；兼容 SSE 行前缀）。
+// 兼容两种结构：chat completions 的顶层 usage，与 Responses API
+// response.completed 事件的 response.usage 嵌套结构
 func sniffUsage(u convert.Usage, data []byte) convert.Usage {
 	payload := data
 	if s := strings.TrimSpace(string(data)); strings.HasPrefix(s, "data:") {
@@ -638,12 +771,42 @@ func sniffUsage(u convert.Usage, data []byte) convert.Usage {
 		return u
 	}
 	var probe struct {
-		Usage *convert.OpenAIUsage `json:"usage"`
+		Usage    *convert.OpenAIUsage `json:"usage"`
+		Response *struct {
+			Usage *responsesUsage `json:"usage"`
+		} `json:"response"`
 	}
-	if err := json.Unmarshal(payload, &probe); err == nil && probe.Usage != nil {
+	if err := json.Unmarshal(payload, &probe); err != nil {
+		return u
+	}
+	if probe.Usage != nil {
 		return convert.NormalizeOpenAIUsage(probe.Usage)
 	}
+	if probe.Response != nil && probe.Response.Usage != nil {
+		return probe.Response.Usage.normalized()
+	}
 	return u
+}
+
+// responsesUsage Responses API 的 usage 结构（input/output 命名）
+type responsesUsage struct {
+	InputTokens        int `json:"input_tokens"`
+	OutputTokens       int `json:"output_tokens"`
+	InputTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
+}
+
+func (r *responsesUsage) normalized() convert.Usage {
+	cached := 0
+	if r.InputTokensDetails != nil {
+		cached = r.InputTokensDetails.CachedTokens
+	}
+	return convert.Usage{
+		PromptTokens:     r.InputTokens,
+		CompletionTokens: r.OutputTokens,
+		CachedTokens:     cached,
+	}
 }
 
 func ctxTokenUser(c *gin.Context) (*store.Token, *store.User) {

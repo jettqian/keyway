@@ -24,7 +24,7 @@ func mockUpstream(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer upstream-key" {
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte(`{"error":{"message":"bad key","type":"invalid_request_error"}}`))
@@ -48,6 +48,28 @@ func mockUpstream(t *testing.T) *httptest.Server {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"id":"chatcmpl-1","object":"chat.completion","model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"upstream-ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`, model)
+	})
+
+	mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer upstream-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":{"message":"bad key","type":"invalid_request_error"}}`))
+			return
+		}
+		var req map[string]any
+		json.NewDecoder(r.Body).Decode(&req)
+		model, _ := req["model"].(string)
+		if stream, _ := req["stream"].(bool); stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher := w.(http.Flusher)
+			fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你好，世界\"}\n\n")
+			flusher.Flush()
+			fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"model\":%q,\"usage\":{\"input_tokens\":15,\"output_tokens\":9,\"total_tokens\":24}}}\n\n", model)
+			flusher.Flush()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id":"resp_1","object":"response","model":%q,"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"responses-ok"}]}],"usage":{"input_tokens":11,"output_tokens":6,"total_tokens":17}}`, model)
 	})
 
 	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +208,80 @@ func (c *ctx) bootstrap(t *testing.T, upstreamURL string) string {
 	return c.token
 }
 
+func TestE2E上游HTML回退换线路(t *testing.T) {
+	c, upstream := setupApp(t)
+	defer upstream.Close()
+	// SPA 型上游：任何路径都返回 200 + text/html（网关型站点对未知端点的回退行为）
+	htmlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte("<html>spa-fallback</html>"))
+	}))
+	defer htmlSrv.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "erin", "password": "password123"}, false); w.Code != 200 {
+		t.Fatalf("注册失败: %d %s", w.Code, w.Body.String())
+	}
+	var keyResp struct {
+		Key struct {
+			ID int64 `json:"id"`
+		} `json:"key"`
+	}
+	if w := c.do("POST", "/api/keys", map[string]any{"name": "k1", "value": "upstream-key"}, true); w.Code != 200 {
+		t.Fatalf("建密钥失败: %d %s", w.Code, w.Body.String())
+	} else {
+		json.Unmarshal(w.Body.Bytes(), &keyResp)
+	}
+	// 线路 1 = HTML 回退站（录入在前），线路 2 = 正常上游
+	if w := c.do("POST", "/api/channels", map[string]any{
+		"name": "html-first", "type": "openai",
+		"baseUrls": []string{htmlSrv.URL, upstream.URL},
+		"keyIds":   []int64{keyResp.Key.ID},
+		"models":   []string{"fallback-model"}, "priority": 5, "enabled": true,
+	}, true); w.Code != 200 {
+		t.Fatalf("建渠道失败: %s", w.Body.String())
+	}
+	// base_url 以 /v1 结尾：拼接不应产生 /v1/v1
+	if w := c.do("POST", "/api/channels", map[string]any{
+		"name": "v1-suffixed", "type": "openai",
+		"baseUrls": []string{upstream.URL + "/v1"},
+		"keyIds":   []int64{keyResp.Key.ID},
+		"models":   []string{"v1-suffix-model"}, "priority": 4, "enabled": true,
+	}, true); w.Code != 200 {
+		t.Fatalf("建渠道 v1-suffixed 失败: %s", w.Body.String())
+	}
+	var tokResp struct {
+		Plaintext string `json:"plaintext"`
+	}
+	if w := c.do("POST", "/api/tokens", map[string]any{"name": "t1"}, true); w.Code != 200 {
+		t.Fatalf("签令牌失败: %d %s", w.Code, w.Body.String())
+	} else {
+		json.Unmarshal(w.Body.Bytes(), &tokResp)
+	}
+	c.token = tokResp.Plaintext
+
+	// chat：应跳过 HTML 线路、走正常上游
+	w := c.do("POST", "/v1/chat/completions", map[string]any{
+		"model": "fallback-model", "messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "upstream-ok") {
+		t.Fatalf("HTML 回退换线路失败: %d %s", w.Code, w.Body.String())
+	}
+
+	// responses：同样换线路
+	w = c.do("POST", "/v1/responses", map[string]any{"model": "fallback-model", "input": "hi"}, false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "responses-ok") {
+		t.Fatalf("responses HTML 回退换线路失败: %d %s", w.Code, w.Body.String())
+	}
+
+	// base_url 以 /v1 结尾：端点直接拼接（无 /v1/v1）
+	w = c.do("POST", "/v1/chat/completions", map[string]any{
+		"model": "v1-suffix-model", "messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "upstream-ok") {
+		t.Fatalf("/v1 后缀拼接失败: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestE2EOpenAI透传与模型映射(t *testing.T) {
 	c, upstream := setupApp(t)
 	token := c.bootstrap(t, upstream.URL)
@@ -293,6 +389,60 @@ func TestModelBindingsAndTokenReveal(t *testing.T) {
 	}
 	if w := c.do("POST", fmt.Sprintf("/api/tokens/%d/reveal", tokens.Tokens[0].ID), nil, true); w.Code != 200 || !strings.Contains(w.Body.String(), "sk-keyway-") {
 		t.Fatalf("回看令牌失败: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestE2EResponses透传(t *testing.T) {
+	c, upstream := setupApp(t)
+	c.bootstrap(t, upstream.URL)
+
+	// 非流式：模型映射 + 透传
+	w := c.do("POST", "/v1/responses", map[string]any{"model": "test-model", "input": "hi"}, false)
+	if w.Code != 200 {
+		t.Fatalf("状态码 %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["object"] != "response" {
+		t.Fatalf("Responses 结构异常: %s", w.Body.String())
+	}
+	if resp["model"] != "real-model" {
+		t.Fatalf("模型映射未生效: %v", resp["model"])
+	}
+
+	// 流式：根路径前缀（不带 /v1）也可直连
+	req := httptest.NewRequest("POST", "/responses",
+		bytes.NewBufferString(`{"model":"test-stream","stream":true,"input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	sw := httptest.NewRecorder()
+	c.e.ServeHTTP(sw, req)
+	if sw.Code != 200 {
+		t.Fatalf("流式状态码 %d: %s", sw.Code, sw.Body.String())
+	}
+	body := sw.Body.String()
+	if !strings.Contains(body, "你好，世界") || !strings.Contains(body, "response.completed") {
+		t.Fatalf("流式内容异常:\n%s", body)
+	}
+
+	// 错误令牌 401
+	c.token = "sk-keyway-wrong"
+	w = c.do("POST", "/v1/responses", map[string]any{"model": "test-model"}, false)
+	if w.Code != 401 {
+		t.Fatalf("错误令牌应 401，实际 %d", w.Code)
+	}
+
+	// 异步日志：usage 嗅探 Responses 嵌套结构（15 输入 / 9 输出）
+	var last store.Log
+	for i := 0; i < 30; i++ {
+		c.store.DB().Order("id DESC").First(&last)
+		if last.PromptTokens != nil && *last.PromptTokens > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if last.PromptTokens == nil || *last.PromptTokens != 15 || last.CompletionTokens == nil || *last.CompletionTokens != 9 {
+		t.Fatalf("Responses usage 嗅探异常: prompt=%v completion=%v", last.PromptTokens, last.CompletionTokens)
 	}
 }
 

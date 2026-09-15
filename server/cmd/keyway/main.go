@@ -15,6 +15,7 @@ import (
 	"keyway/internal/api"
 	"keyway/internal/auth"
 	"keyway/internal/config"
+	"keyway/internal/pricing"
 	"keyway/internal/probe"
 	"keyway/internal/proxyman"
 	"keyway/internal/relay"
@@ -75,6 +76,18 @@ func buildApp(cfg config.Config) (*app, error) {
 		close(retentionDone)
 	}()
 
+	// 官方价目定期同步（LiteLLM + OpenRouter，只补缺；KEYWAY_PRICING_SYNC_HOURS=0 关闭）
+	pricingStop := make(chan struct{})
+	pricingDone := make(chan struct{})
+	if cfg.PricingSyncHours > 0 {
+		go func() {
+			pricing.StartSyncLoop(st.DB(), cfg.PricingSyncHours, pricingStop)
+			close(pricingDone)
+		}()
+	} else {
+		close(pricingDone)
+	}
+
 	if os.Getenv("KEYWAY_DEBUG") == "" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -91,6 +104,7 @@ func buildApp(cfg config.Config) (*app, error) {
 		g.POST("/chat/completions", relaySvc.HandleOpenAIChat)
 		g.POST("/completions", relaySvc.HandleOpenAIPassthrough("/completions"))
 		g.POST("/embeddings", relaySvc.HandleOpenAIPassthrough("/embeddings"))
+		g.POST("/responses", relaySvc.HandleOpenAIResponses)
 		g.GET("/models", relaySvc.HandleModels)
 		g.POST("/messages", relaySvc.HandleAnthropicMessages)
 		g.POST("/messages/count_tokens", relaySvc.HandleAnthropicCountTokens)
@@ -131,6 +145,11 @@ func buildApp(cfg config.Config) (*app, error) {
 			close(retentionStop)
 			select {
 			case <-retentionDone:
+			case <-time.After(5 * time.Second):
+			}
+			close(pricingStop)
+			select {
+			case <-pricingDone:
 			case <-time.After(5 * time.Second):
 			}
 		},

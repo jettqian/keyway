@@ -13,6 +13,16 @@
 >   改为**预取复制材料**（选中令牌/指针按下时获取明文与模型列表，仅存 ref 不渲染），
 >   点击时在手势内同步执行剪贴板写入；② `copyText` 回退增强：textarea `readonly`、
 >   Range 选区 + `setSelectionRange`（iOS 兼容）、原有选区恢复、Clipboard API 失焦重试
+> - v1.5.8：**新增 `/v1/responses` 端点（OpenAI Responses API 透传）**，Codex 等默认走
+>   Responses 协议的客户端可直连，无需配置 `wire_api="chat"`；仅 openai 型渠道承接
+>   （passthrough 及 convert→openai），失败切换与 chat 管线同策略，流式逐块回写，
+>   usage 从 `response.completed` 事件嗅探。排查该问题时一并修复三处：
+>   ① 未注册端点的 POST 请求原先落入前端 SPA 回退返回 200 + index.html（客户端
+>   表现为"无响应"且无限重试），现改为 404 JSON（GET 保留 SPA 回退供前端路由）；
+>   ② 上游端点统一拼 `/v1` 前缀（原先 openai 型拼 `/chat/completions`、`/responses`
+>   漏掉 `/v1`，多数标准站端点在 /v1 之下；base_url 已以 /v1 结尾不重复拼）；
+>   ③ 上游 2xx 却返回 text/html（网关型站点对未知路径的 SPA 回退）不再当成功透传，
+>   转发换下一组合、探测记为不健康
 > - v1.5.7：撤销 v1.5.6 的"同步到价目表"按钮（改为运维直接按官网价维护价目表）；
 >   本次已按官网价格补齐生产价目：GLM-5.2/5.3/5.3-Flash（智谱官方 ¥8/¥28 等，
 >   按汇率 7.2 折 USD）、deepseek-v4.1-flash（DeepSeek 官方峰值 $0.3/$1.2）、
@@ -149,7 +159,7 @@ LiteLLM、Kong、Higress 同样是管理员配置；OpenRouter BYOK 满足需求
 - 计费、充值、额度、倍率、兑换码（无任何商业模式；费用仅作统计估算）
 - 图像/视频/音乐等非文本模态（MJ、Suno 等）
 - 多实例横向扩展（v1 单实例 + SQLite）
-- OpenAI /v1/responses、Gemini 原生协议
+- OpenAI /v1/responses 的跨协议**转换**（透传已支持，见 7.1；转换入 v2）、Gemini 原生协议
 - 对话内容存储与分析（隐私，见日志设计）
 
 ## 4. 角色与核心场景
@@ -358,7 +368,8 @@ US13 统一管理模型（P7）
   用户永远只能看到前缀；回看不改变密钥，吊销后不可用于请求。
 - FR-T6 接入指南页（/guide）：按客户端给出可复制的配置示例——Claude Code
   （`~/.claude/settings.json` 的 env 块，**优先直接写密钥**；环境变量为临时方案）、
-  Codex（`~/.codex/config.toml`，`wire_api="chat"`，优先 `experimental_bearer_token`
+  Codex（`~/.codex/config.toml`，默认 Responses 协议 `/v1/responses` 直连，
+  `wire_api="chat"` 为 chat 协议备选，均无需额外适配；优先 `experimental_bearer_token`
   直写密钥，公网可改 `env_key`）、opencode（opencode.json，优先
   `@ai-sdk/openai` / `@ai-sdk/anthropic` 双 provider 共用令牌，
   `@ai-sdk/openai-compatible` 为备选）、通用 OpenAI 兼容（Base URL + curl 验证）。
@@ -528,6 +539,7 @@ flowchart TD
 | POST /v1/chat/completions | OpenAI | 含流式；根路径 `/chat/completions` 等价 |
 | POST /v1/completions | OpenAI | 透传（openai 型出站）；根路径等价 |
 | POST /v1/embeddings | OpenAI | 透传（openai 型出站）；根路径等价 |
+| POST /v1/responses | OpenAI | Responses API 透传（Codex 默认协议；openai 型出站，流式逐块回写）；根路径等价 |
 | GET /v1/models | OpenAI + Anthropic | 按 Accept/路径风格返回用户模型并集；根路径等价 |
 | POST /v1/messages | Anthropic | 含流式；Claude Code 直接可用；根路径等价 |
 | POST /v1/messages/count_tokens | Anthropic | 本地近似估算（无需上游）；根路径等价 |
@@ -538,7 +550,9 @@ flowchart TD
 
 ### 7.2 出站（渠道类型）
 
-- `openai`：POST {线路}/chat/completions 等（线路 = base_urls 优选所得，密钥 = key_ids 优选所得）
+- `openai`：POST {线路}/v1/chat/completions、/v1/responses、/v1/completions、
+  /v1/embeddings（线路 = base_urls 优选所得，密钥 = key_ids 优选所得；
+  base_url 已以 /v1 结尾时不再重复拼接）
 - `anthropic`：POST {线路}/v1/messages，透传 anthropic-version
 
 ### 7.3 错误契约
@@ -637,7 +651,8 @@ settings(key, value)        -- 注册策略、保留期、探测频率、飞书 
 |---|---|---|
 | v1.0 MVP | 账户（密码+飞书登录）、密钥池+渠道组合、渠道 CRUD（多线路/计价模式）+矩阵/逐密钥测试、**预制渠道模板+草稿复制**、令牌（多渠道绑定）、模型路由+默认渠道、openai↔anthropic 双向转换（含流式与工具调用）、线路×路径自动优选+后台探测、密钥轮换+冷却、个人代理+公共代理池（含流量统计）、日志统计（含费用估算、按密钥分账、首字节/总耗时）、管理员用量/花费看板+价目表（CRUD/导入导出）、docker 部署 | ✅ 完成 |
 | v1.1 | 探测策略调优（已含指数退避）、CSV 导出（已完成）、count_tokens（已完成）、失败切换策略（已完成）、保留期清理（已完成） | ✅ 完成 |
-| v2（视需求） | Gemini 原生、/v1/responses、通用 OIDC 登录、2FA、MySQL/多实例、Prometheus 指标、协议转换调试抓包（用户显式开启） | 待启动 |
+| v1.5.8 | `/v1/responses` Responses API 透传（Codex 直连）+ 未注册端点 POST 返回 404 而非前端 HTML | ✅ 完成 |
+| v2（视需求） | Gemini 原生、/v1/responses 跨协议转换、通用 OIDC 登录、2FA、MySQL/多实例、Prometheus 指标、协议转换调试抓包（用户显式开启） | 待启动 |
 
 ## 11. 开放问题
 

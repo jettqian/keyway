@@ -1,7 +1,9 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.8（与 PRD v1.5.4 对应；令牌吊销修复、根路径端点别名、令牌渠道主开关交互、
-  AI 配置指令客户端勾选与 Markdown 预览）
+- 版本：v1.9（与 PRD v1.5.8 对应；新增 /v1/responses Responses API 透传、
+  上游端点统一拼 /v1 前缀（`httpx.UpstreamEndpoint`，转发与探测同规则）、
+  上游 2xx+text/html 视为 SPA 回退不再当成功透传、
+  NoRoute 对非 GET/HEAD 请求返回 404 JSON 而非前端 SPA 回退）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
 - 本文档解决：架构、技术选型、数据模型落地、核心机制设计、协议转换决策表（PRD 开放
@@ -385,8 +387,9 @@ graph LR
 - 单 goroutine 调度：每 30s 扫描到期渠道（`now ≥ next_probe_at`），带 ±20% jitter
   防同步风暴；探测失败连续 ≥3 次 → 频率×2 指数退避，上限 60 分钟；成功恢复基准频率
 - 每渠道探测矩阵：线路（≤5）× 路径（直连+个人+公共 ≤4）= ≤20 组合，
-  每组合发最小请求：openai 型 `POST /chat/completions {model, max_tokens:8,
-  messages:[{role:user,content:"ping"}]}`；anthropic 型同理（max_tokens:8）
+  每组合发最小请求：openai 型 `POST /v1/chat/completions {model, max_tokens:8,
+  messages:[{role:user,content:"ping"}]}`；anthropic 型同理（max_tokens:8）；
+  2xx 却返回 text/html 视为线路无该端点（SPA 回退）而非健康
 - 探测使用该渠道当前首选可用密钥（会消耗极少量上游额度，文档明示；矩阵上限×频率
   约束见 PRD 非功能需求）
 - 结果 UPSERT line_stats（latency_ms / ok / last_error / last_probe_at）
@@ -610,10 +613,27 @@ GET /oauth/feishu/callback?code&state
 
 ### 11.2 中转 `/v1`（令牌鉴权）
 
-按 PRD §7.1：`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`、`/v1/models`
-（OpenAI+Anthropic 双格式）、`/v1/messages`、`/v1/messages/count_tokens`。
+按 PRD §7.1：`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`、`/responses`
+（Responses API 透传）、`/v1/models`（OpenAI+Anthropic 双格式）、`/v1/messages`、
+`/v1/messages/count_tokens`。
 全部端点在根路径注册等价别名（`registerRelay` 同时挂 `/v1` 组与根组），客户端 base_url
-带不带 `/v1` 均可；静态资源经 `r.NoRoute` 兜底，与根路径别名无冲突。
+带不带 `/v1` 均可；静态资源经 `r.NoRoute` 兜底，与根路径别名无冲突——NoRoute 仅对
+GET/HEAD 生效（前端路由），非 GET/HEAD（如 POST 未注册路径）返回 404 JSON，
+避免客户端把 index.html 当协议响应解析（Codex 直连 `/responses` 未注册时曾因此
+表现为"无响应"且无限重试）。
+
+**上游端点拼接**（`httpx.UpstreamEndpoint`，relay 与 probe 共用）：标准兼容站的对话
+端点位于 `/v1` 之下，网关在 base_url 后统一拼 `/v1/{path}`；base_url 已以 `/v1`
+结尾时直接拼 `{path}` 避免 `/v1/v1`。转发与探测同规则；**上游 2xx 却返回
+text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无此端点，转发时换下一
+组合、探测时记为不健康，不作为成功透传给客户端。
+
+`/responses`（`HandleOpenAIResponses`）为纯透传端点：请求体嗅探 model/stream →
+路由解析（跳过 convert→anthropic 渠道）→ 模型映射后透传到上游 `/v1/responses`，
+流式逐块回写；失败切换与 chat 管线同策略（网络错误/5xx/HTML 回退换组合、
+401/403/429 换 key 并冷却）；usage 从 `response.completed` 事件的
+`response.usage`（input/output_tokens 命名）嗅探归一化，协议转换的 Responses
+版本留待 v2。
 
 ## 12. 配置项（环境变量）
 

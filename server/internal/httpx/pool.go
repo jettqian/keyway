@@ -5,9 +5,22 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
+
+// UpstreamEndpoint 在渠道 base_url 后拼出上游端点：
+// OpenAI/Anthropic 兼容站的对话端点位于 /v1 之下（/v1/chat/completions、
+// /v1/responses、/v1/messages）；base_url 已以 /v1 结尾时直接拼接，避免 /v1/v1。
+// 传入的 path 不带 /v1 前缀（如 "/chat/completions"、"/responses"、"/messages"）
+func UpstreamEndpoint(baseURL, path string) string {
+	b := strings.TrimSuffix(baseURL, "/")
+	if strings.HasSuffix(b, "/v1") {
+		return b + path
+	}
+	return b + "/v1" + path
+}
 
 // Pool 按代理 URL 复用的 HTTP 客户端池（"" = 直连）
 type Pool struct {
