@@ -227,9 +227,14 @@ func (s *Server) setSessionCookie(c *gin.Context, token string) {
 }
 
 func (s *Server) setCookie(c *gin.Context, name, value string, maxAge int) {
+	sameSite := http.SameSiteStrictMode
+	if name == feishuStateCookie {
+		// OAuth 顶层 GET 回调来自飞书站点，state Cookie 需允许该跨站跳转。
+		sameSite = http.SameSiteLaxMode
+	}
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name: name, Value: value, Path: "/", MaxAge: maxAge,
-		HttpOnly: true, Secure: requestIsHTTPS(c), SameSite: http.SameSiteStrictMode,
+		HttpOnly: true, Secure: requestIsHTTPS(c), SameSite: sameSite,
 	})
 }
 
