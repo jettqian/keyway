@@ -1,12 +1,12 @@
 import React from 'react'
-import { Button, Card, Col, DatePicker, Empty, Row, Space, Statistic, Table, Tag, message } from 'antd'
+import { Button, Card, Col, DatePicker, Empty, Row, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { myStats } from '../api'
 import type { LatestUsage, StatsResponse, StatsGroup } from '../api/types'
 import Money from '../components/Money'
-import { formatDateTime, fmtInt } from '../format'
+import { formatDateTime, fmtInt, fmtTokens } from '../format'
 
 // 快捷时间项（自然日口径）
 export const rangePresets: { label: string; value: [Dayjs, Dayjs] }[] = [
@@ -89,7 +89,9 @@ const StatsPage: React.FC = () => {
             <Statistic title="错误率" value={data?.summary.errorRate ?? 0} suffix="%" precision={2} />
           </div>
           <div className="stat-cell">
-            <Statistic title="tokens（入/出）" value={`${fmtInt(data?.summary.promptTokens ?? 0)} / ${fmtInt(data?.summary.completionTokens ?? 0)}`} />
+            <Tooltip title={`入 ${fmtInt(data?.summary.promptTokens ?? 0)} · 出 ${fmtInt(data?.summary.completionTokens ?? 0)}`}>
+              <Statistic title="tokens（入/出）" value={`${fmtTokens(data?.summary.promptTokens ?? 0)} / ${fmtTokens(data?.summary.completionTokens ?? 0)}`} />
+            </Tooltip>
           </div>
           <div className="stat-cell">
             <Statistic title="费用估算" value={data?.summary.cost ?? 0} formatter={(v) => <Money value={v as number} mode="cost" big />} />

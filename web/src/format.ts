@@ -24,6 +24,20 @@ export function fmtInt(value: number | null | undefined): string {
   return new Intl.NumberFormat('en-US').format(value)
 }
 
+// token 数值紧凑单位（统计汇总条大数字扫读用）：742 → 742、1234 → 1.23K、
+// 456789 → 457K、1234567 → 1.23M；3 位有效数字去尾零，先取整再定档
+// （999,999 直接进位 1M，不产生 1000K）
+export function fmtTokens(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  const n = parseFloat(value.toPrecision(3))
+  const a = Math.abs(n)
+  if (a < 1000) return String(n)
+  for (const [scale, suffix] of [[1e9, 'B'], [1e6, 'M'], [1e3, 'K']] as const) {
+    if (a >= scale) return `${parseFloat((n / scale).toPrecision(3))}${suffix}`
+  }
+  return String(n)
+}
+
 // 耗时人性化：832ms、1.24s、2m05s（超过 1 分钟才进位到分）
 export function fmtMs(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value <= 0) return '-'
