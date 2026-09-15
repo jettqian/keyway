@@ -119,6 +119,7 @@ func (s *Service) FeishuCallback(code, baseURL string) (*store.User, string, err
 		if u.Status != 1 {
 			return nil, "", ErrUserDisabled
 		}
+		s.healFeishuUsername(&u, name)
 		token, err := s.CreateSession(u.ID)
 		return &u, token, err
 	}
@@ -127,10 +128,7 @@ func (s *Service) FeishuCallback(code, baseURL string) (*store.User, string, err
 	if mode != "" && mode != "open" {
 		return nil, "", fmt.Errorf("当前注册策略不允许新用户通过飞书登录")
 	}
-	username := sanitizeUsername(name)
-	if username == "" {
-		username = "feishu-user"
-	}
+	username := feishuUsername(name)
 	if s.usernameTaken(username) {
 		username = username + "-" + randSuffix()
 	}
@@ -221,19 +219,34 @@ func (s *Service) usernameTaken(username string) bool {
 	return count > 0
 }
 
-func sanitizeUsername(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			b.WriteRune(r)
-		}
+// feishuUsername 飞书昵称直接作用户名（保留中文等 Unicode），截断到 32 字符；
+// 昵称为空时回退占位名，由重名后缀逻辑保证唯一
+func feishuUsername(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "feishu-user"
 	}
-	out := b.String()
-	if len(out) > 24 {
-		out = out[:24]
+	r := []rune(name)
+	if len(r) > 32 {
+		return string(r[:32])
 	}
-	return out
+	return name
+}
+
+// healFeishuUsername 历史版本把非 ASCII 昵称清洗成空、回退占位名 feishu-user；
+// 已绑定用户再次登录时若仍是占位名，则自愈为当前飞书昵称（被占用则保持不变）
+func (s *Service) healFeishuUsername(u *store.User, name string) {
+	if u.Username != "feishu-user" {
+		return
+	}
+	want := feishuUsername(name)
+	if want == "feishu-user" || s.usernameTaken(want) {
+		return
+	}
+	if err := s.store.DB().Model(&store.User{}).Where("id = ?", u.ID).
+		Update("username", want).Error; err == nil {
+		u.Username = want
+	}
 }
 
 func randSuffix() string {

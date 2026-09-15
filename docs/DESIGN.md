@@ -1,6 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.27（与 PRD v1.5.29 对应；最近生效流量**同渠道同模型去重**——按
+- 版本：v1.28（与 PRD v1.5.30 对应；飞书自动建号**用户名直接取飞书昵称**（保留
+  中文，去空格截断 32 字符，重名加随机后缀，空昵称回退占位名）——旧逻辑仅保留
+  ASCII 字符，中文昵称被清洗为空、回退 `feishu-user` 占位名；存量占位名账号在下次
+  飞书登录时自愈为当前昵称（healFeishuUsername，被占用则不变）；
+  前版 v1.27：最近生效流量**同渠道同模型去重**——按
   （channel_id, model）分组取 MAX(id)（每组最新一条成功日志），再取最近 5 个组合，
   连续使用同一渠道+模型不再占满列表；
   前版 v1.26：限定渠道支持全部关闭（tokens 新增 `restricted`
@@ -696,12 +700,15 @@ GET /oauth/feishu/callback?code&state
   1. POST /open-apis/auth/v3/app_access_token/internal  (app_id, app_secret)
   2. POST /open-apis/authen/v2/oauth/token              (code → user_access_token)
   3. GET  /open-apis/authen/v1/user_info                 (→ open_id, name)
-  4. users.feishu_user_id 命中 → 建会话；未命中且注册开放 → 自动建号绑定；
-     否则拒绝并提示
+  4. users.feishu_user_id 命中 → 建会话；未命中且注册开放 → 自动建号绑定
+     （用户名 = 飞书昵称，保留中文、截断 32 字符，重名加随机后缀，空昵称回退
+     feishu-user）；否则拒绝并提示
 ```
 
 - app_id/app_secret 存 settings（secret 加密存储），管理员配置页含回调地址展示
 - state 用带签名的随机数防 CSRF（HMAC + 5 分钟有效期）
+- 历史占位名自愈：已绑定用户登录时若用户名仍为 feishu-user（旧版中文昵称被清洗
+  产生的占位名），且当前昵称可用，则原位更新为飞书昵称
 - 飞书登录关闭：按钮隐藏，已绑定用户密码登录不受影响（无密码的飞书-only 用户由
   管理员重置密码）
 

@@ -8,6 +8,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	"keyway/internal/store"
 )
 
 // mockFeishu 模拟飞书开放平台（authorize 跳转由浏览器完成，服务端只模拟后三个接口）
@@ -82,8 +85,8 @@ func TestE2E飞书登录全流程(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"hasFeishu":true`) {
 		t.Fatalf("飞书绑定失败: %s", w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), `"username":"`+"张三") && !strings.Contains(w.Body.String(), "username") {
-		t.Fatalf("自动建号异常: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), `"username":"张三"`) {
+		t.Fatalf("自动建号应使用飞书昵称: %s", w.Body.String())
 	}
 
 	// 二次回调（同 open_id）：已绑定直接登录
@@ -134,6 +137,48 @@ func TestE2E飞书登录关闭注册时拒绝新号(t *testing.T) {
 	w = c.do("GET", "/oauth/feishu/callback?code=good-code&state="+url.QueryEscape(state), nil, false)
 	if !strings.Contains(w.Header().Get("Location"), "error") {
 		t.Fatalf("邀请制下新号应被拒绝: %s", w.Header().Get("Location"))
+	}
+}
+
+func TestE2E飞书登录自愈历史占位用户名(t *testing.T) {
+	c, _ := setupApp(t)
+	feishu := mockFeishu(t)
+	defer feishu.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "root", "password": "password123"}, false); w.Code != 200 {
+		t.Fatal("注册失败")
+	}
+	if w := c.do("PUT", "/api/admin/settings", map[string]any{
+		"registerMode": "open", "feishuEnabled": true,
+		"feishuAppId": "cli_a1", "feishuAppSecret": "sec-xyz",
+		"feishuBaseUrl": feishu.URL,
+	}, true); w.Code != 200 {
+		t.Fatalf("配置飞书失败: %s", w.Body.String())
+	}
+
+	// 历史遗留：中文名被清洗为空、回退占位名的既有账号
+	fid := "ou_test_001"
+	if err := c.store.DB().Create(&store.User{
+		Username: "feishu-user", FeishuUserID: &fid,
+		Role: 1, Status: 1, CreatedAt: time.Now().Unix(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w := c.do("GET", "/api/auth/feishu/url", nil, false)
+	var urlResp struct {
+		URL string `json:"url"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &urlResp)
+	state := extractQuery(urlResp.URL, "state")
+
+	w = c.do("GET", "/oauth/feishu/callback?code=good-code&state="+url.QueryEscape(state), nil, false)
+	if w.Code != http.StatusFound {
+		t.Fatalf("回调应 302: %d %s", w.Code, w.Body.String())
+	}
+	w = c.do("GET", "/api/auth/me", nil, true)
+	if !strings.Contains(w.Body.String(), `"username":"张三"`) {
+		t.Fatalf("占位名应自愈为飞书昵称: %s", w.Body.String())
 	}
 }
 
