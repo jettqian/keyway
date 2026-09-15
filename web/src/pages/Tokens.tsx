@@ -288,7 +288,7 @@ const TokensPage: React.FC = () => {
         locale={{ emptyText: '暂无令牌，点击右上角「新建令牌」创建' }}
         columns={[
           { title: '名称', dataIndex: 'name' },
-          { title: '前缀', dataIndex: 'keyPrefix' },
+          { title: '前缀', dataIndex: 'keyPrefix', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
           {
             title: '限定渠道',
             dataIndex: 'channelIds',

@@ -27,7 +27,7 @@ import {
   adminStats,
 } from '../api'
 import type { User, ModelPricing, PricingSource, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings } from '../api/types'
-import { formatDateTime, fmtPrice } from '../format'
+import { formatDateTime, fmtCost, fmtInt, fmtPrice } from '../format'
 import CatalogPrice from '../components/CatalogPrice'
 
 const UsersTab: React.FC = () => {
@@ -696,9 +696,9 @@ const TemplatesTab: React.FC = () => {
         dataSource={templates}
         columns={[
           { title: '名称', dataIndex: 'name' },
-          { title: '线路数', render: (_, t) => t.baseUrls.length },
-          { title: '模型数', render: (_, t) => t.models.length },
-          { title: '复制次数', dataIndex: 'copyCount' },
+          { title: '线路数', width: 90, align: 'right', render: (_, t) => t.baseUrls.length },
+          { title: '模型数', width: 90, align: 'right', render: (_, t) => t.models.length },
+          { title: '复制次数', dataIndex: 'copyCount', width: 90, align: 'right' },
           { title: '说明', dataIndex: 'note', ellipsis: true },
           {
             title: '状态',
@@ -820,10 +820,10 @@ const StatsTab: React.FC = () => {
       dataSource={data?.byModel ?? []}
       columns={[
         { title: '模型', dataIndex: 'dim' },
-        { title: '请求数', dataIndex: 'requests', align: 'right' },
-        { title: '输入 tokens', dataIndex: 'promptTokens', align: 'right' },
-        { title: '输出 tokens', dataIndex: 'completionTokens', align: 'right' },
-        { title: '费用估算', dataIndex: 'cost', align: 'right', render: (v: number) => `$${v.toFixed(4)}` },
+        { title: '请求数', dataIndex: 'requests', align: 'right', render: (v: number) => fmtInt(v) },
+        { title: '输入 tokens', dataIndex: 'promptTokens', align: 'right', render: (v: number) => fmtInt(v) },
+        { title: '输出 tokens', dataIndex: 'completionTokens', align: 'right', render: (v: number) => fmtInt(v) },
+        { title: '费用估算', dataIndex: 'cost', align: 'right', render: (v: number) => fmtCost(v) },
       ]}
     />
   )

@@ -5,7 +5,7 @@ import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { myStats } from '../api'
 import type { LatestUsage, StatsResponse, StatsGroup } from '../api/types'
-import { formatDateTime } from '../format'
+import { formatDateTime, fmtCost, fmtInt } from '../format'
 
 // 快捷时间项（自然日口径）
 const rangePresets: { label: string; value: [Dayjs, Dayjs] }[] = [
@@ -32,23 +32,31 @@ const StatsPage: React.FC = () => {
 
   const groupColumns = (dimName: string) => [
     { title: dimName, dataIndex: 'dim' },
-    { title: '请求数', dataIndex: 'requests', align: 'right' as const, sorter: (a: StatsGroup, b: StatsGroup) => a.requests - b.requests },
+    {
+      title: '请求数',
+      dataIndex: 'requests',
+      align: 'right' as const,
+      render: (v: number) => fmtInt(v),
+      sorter: (a: StatsGroup, b: StatsGroup) => a.requests - b.requests,
+    },
     {
       title: '输入 tokens',
       dataIndex: 'promptTokens',
       align: 'right' as const,
+      render: (v: number) => fmtInt(v),
       sorter: (a: StatsGroup, b: StatsGroup) => a.promptTokens - b.promptTokens,
     },
     {
       title: '输出 tokens',
       dataIndex: 'completionTokens',
       align: 'right' as const,
+      render: (v: number) => fmtInt(v),
       sorter: (a: StatsGroup, b: StatsGroup) => a.completionTokens - b.completionTokens,
     },
     {
       title: '费用估算',
       dataIndex: 'cost',
-      render: (v: number) => `$${v.toFixed(4)}`,
+      render: (v: number) => fmtCost(v),
       align: 'right' as const,
       sorter: (a: StatsGroup, b: StatsGroup) => a.cost - b.cost,
     },
@@ -74,16 +82,16 @@ const StatsPage: React.FC = () => {
       <Card loading={loading} style={{ marginBottom: 16 }}>
         <div className="stat-strip">
           <div className="stat-cell">
-            <Statistic title="请求数" value={data?.summary.requests ?? 0} />
+            <Statistic title="请求数" value={fmtInt(data?.summary.requests ?? 0)} />
           </div>
           <div className="stat-cell">
             <Statistic title="错误率" value={data?.summary.errorRate ?? 0} suffix="%" precision={2} />
           </div>
           <div className="stat-cell">
-            <Statistic title="tokens（入/出）" value={`${data?.summary.promptTokens ?? 0} / ${data?.summary.completionTokens ?? 0}`} />
+            <Statistic title="tokens（入/出）" value={`${fmtInt(data?.summary.promptTokens ?? 0)} / ${fmtInt(data?.summary.completionTokens ?? 0)}`} />
           </div>
           <div className="stat-cell">
-            <Statistic title="费用估算" value={data?.summary.cost ?? 0} prefix="$" precision={4} />
+            <Statistic title="费用估算" value={fmtCost(data?.summary.cost ?? 0)} />
             {data?.summary.unpriced ? <span className="stat-note">部分未定价</span> : null}
           </div>
         </div>

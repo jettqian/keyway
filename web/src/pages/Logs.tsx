@@ -2,7 +2,7 @@ import React from 'react'
 import { Table, Select, Input, InputNumber, message } from 'antd'
 import { listLogs, listChannels } from '../api'
 import type { LogEntry, Channel } from '../api/types'
-import { formatDateTime } from '../format'
+import { formatDateTime, fmtCost, fmtInt, fmtMs } from '../format'
 
 const LogsPage: React.FC = () => {
   const [logs, setLogs] = React.useState<LogEntry[]>([])
@@ -76,25 +76,25 @@ const LogsPage: React.FC = () => {
             width: 80,
             render: (s: number) => (s >= 400 ? <span className="status-error">{s}</span> : s),
           },
-          { title: '首字节', dataIndex: 'ttftMs', width: 90, align: 'right', render: (v: number) => (v ? `${v}ms` : '-') },
-          { title: '总耗时', dataIndex: 'totalMs', width: 90, align: 'right', render: (v: number) => (v ? `${v}ms` : '-') },
+          { title: '首字节', dataIndex: 'ttftMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
+          { title: '总耗时', dataIndex: 'totalMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
           {
             title: 'Tokens',
-            width: 140,
+            width: 160,
             align: 'right',
             render: (_, l) => (
               <span>
-                {l.promptTokens}/{l.completionTokens}
-                {l.cachedTokens ? <span className="text-tertiary">（缓存 {l.cachedTokens}）</span> : null}
+                {fmtInt(l.promptTokens)}/{fmtInt(l.completionTokens)}
+                {l.cachedTokens ? <span className="text-tertiary">（缓存 {fmtInt(l.cachedTokens)}）</span> : null}
               </span>
             ),
           },
           {
             title: '费用',
-            width: 90,
+            width: 100,
             align: 'right',
             render: (_, l) =>
-              l.inputCost == null ? <span className="text-tertiary">未定价</span> : `$${(l.inputCost + (l.outputCost ?? 0)).toFixed(4)}`,
+              l.inputCost == null ? <span className="text-tertiary">未定价</span> : fmtCost(l.inputCost + (l.outputCost ?? 0)),
           },
           { title: '错误', dataIndex: 'error', ellipsis: true },
         ]}

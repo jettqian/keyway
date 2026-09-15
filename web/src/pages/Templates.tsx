@@ -35,9 +35,9 @@ const TemplatesPage: React.FC = () => {
         dataSource={templates}
         columns={[
           { title: '名称', dataIndex: 'name' },
-          { title: '线路数', width: 90, render: (_, t) => t.baseUrls.length },
-          { title: '模型数', width: 90, render: (_, t) => t.models.length },
-          { title: '复制次数', dataIndex: 'copyCount', width: 90 },
+          { title: '线路数', width: 90, align: 'right', render: (_, t) => t.baseUrls.length },
+          { title: '模型数', width: 90, align: 'right', render: (_, t) => t.models.length },
+          { title: '复制次数', dataIndex: 'copyCount', width: 90, align: 'right' },
           { title: '说明', dataIndex: 'note', ellipsis: true },
           {
             title: '操作',

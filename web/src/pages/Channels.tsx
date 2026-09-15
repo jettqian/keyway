@@ -20,6 +20,7 @@ import { Link, useParams } from 'react-router-dom'
 import { listChannels, createChannel, updateChannel, deleteChannel, listKeys, testChannel, listCatalogModels } from '../api'
 import type { ChannelTestResult } from '../api'
 import type { Channel, ChannelInput, ApiKey, CatalogModel } from '../api/types'
+import { fmtMs } from '../format'
 
 const emptyInput: ChannelInput = {
   name: '',
@@ -245,9 +246,9 @@ const ChannelsPage: React.FC = () => {
                 <Tag>透明</Tag>
               ),
           },
-          { title: '线路数', width: 90, render: (_, c) => c.baseUrls.length },
-          { title: '密钥数', width: 90, render: (_, c) => c.keyIds.length },
-          { title: '优先级', dataIndex: 'priority', width: 90 },
+          { title: '线路数', width: 90, align: 'right', render: (_, c) => c.baseUrls.length },
+          { title: '密钥数', width: 90, align: 'right', render: (_, c) => c.keyIds.length },
+          { title: '优先级', dataIndex: 'priority', width: 90, align: 'right' },
           {
             title: '状态',
             dataIndex: 'enabled',
@@ -470,7 +471,7 @@ const ChannelsPage: React.FC = () => {
             message={r.lineUrl}
             description={
               <>
-                <div>路径 {r.via}，延迟 {r.latencyMs}ms</div>
+                <div>路径 {r.via}，延迟 {fmtMs(r.latencyMs)}</div>
                 {r.error ? <div className="text-secondary">{r.error}</div> : null}
               </>
             }
