@@ -454,7 +454,8 @@ type adminSettingsDTO struct {
 	ExchangeRate    float64 `json:"exchangeRate"` // USD→CNY，人民币渠道费用折算用
 	// 汇率模式：auto = 定时同步（每 24h 拉取公共 API 覆盖）；manual = 管理员固定值
 	ExchangeRateMode      string `json:"exchangeRateMode,omitempty"`
-	ExchangeRateSource   string `json:"exchangeRateSource,omitempty"`   // frankfurter/jsdelivr/erapi/manual
+	ExchangeRateSource    string `json:"exchangeRateSource,omitempty"`    // frankfurter/jsdelivr/erapi/manual
+	ExchangeRateSourceURL string `json:"exchangeRateSourceUrl,omitempty"` // 命中源的请求地址
 	ExchangeRateUpdatedAt string `json:"exchangeRateUpdatedAt,omitempty"` // RFC3339
 }
 
@@ -463,6 +464,7 @@ func (s *Server) settingsDTO() adminSettingsDTO {
 	mode := s.Fx.Mode()
 	updatedAt, _ := s.Store.GetSetting(fxrate.KeyUpdatedAt)
 	source, _ := s.Store.GetSetting(fxrate.KeySource)
+	sourceURL, _ := s.Store.GetSetting(fxrate.KeySourceURL)
 	rate := 7.2
 	if v, err := strconv.ParseFloat(mustSetting(s.Store, fxrate.KeyRate), 64); err == nil && v > 0 {
 		rate = v
@@ -471,6 +473,7 @@ func (s *Server) settingsDTO() adminSettingsDTO {
 		ExchangeRate:          rate,
 		ExchangeRateMode:      mode,
 		ExchangeRateSource:    source,
+		ExchangeRateSourceURL: sourceURL,
 		ExchangeRateUpdatedAt: updatedAt,
 	}
 }
@@ -555,14 +558,14 @@ func (s *Server) handleAdminSyncExchangeRate(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, "非法请求体")
 		return
 	}
-	rate, src, err := s.Fx.Sync()
+	res, err := s.Fx.Sync()
 	if err != nil {
 		s.fail(c, http.StatusBadGateway, "汇率源拉取失败："+err.Error())
 		return
 	}
-	result := gin.H{"rate": rate, "source": src, "applied": false}
+	result := gin.H{"rate": res.Rate, "source": res.Source, "sourceUrl": res.SourceURL, "applied": false}
 	if req.Apply {
-		at := s.Fx.ApplyRate(rate, src)
+		at := s.Fx.ApplyRate(res)
 		result["applied"] = true
 		result["updatedAt"] = at.Format(time.RFC3339)
 	}

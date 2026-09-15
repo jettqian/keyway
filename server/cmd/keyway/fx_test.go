@@ -92,12 +92,30 @@ func Test汇率手动同步与模式切换(t *testing.T) {
 		t.Fatalf("预览不应改库，实际 %q", v)
 	}
 
-	// 手动同步 apply=true：立即写入
+	// 手动同步 apply=true：立即写入（含来源地址）
 	if w := c.do("POST", "/api/admin/exchange-rate/sync", map[string]any{"apply": true}, true); w.Code != 200 {
 		t.Fatalf("手动同步失败: %d %s", w.Code, w.Body.String())
 	}
 	if v, _ := c.store.GetSetting("usd_cny_rate"); v != "6.9900" {
 		t.Fatalf("同步后应为 6.9900，实际 %q", v)
+	}
+	if v, _ := c.store.GetSetting("usd_cny_rate_source_url"); v != fx.URL {
+		t.Fatalf("来源地址应为 %q，实际 %q", fx.URL, v)
+	}
+
+	// GET 回显来源地址
+	var getSynced struct {
+		Settings struct {
+			ExchangeRateSourceURL string `json:"exchangeRateSourceUrl"`
+		} `json:"settings"`
+	}
+	if w := c.do("GET", "/api/admin/settings", nil, true); w.Code != 200 {
+		t.Fatalf("GET settings 失败: %d", w.Code)
+	} else {
+		json.Unmarshal(w.Body.Bytes(), &getSynced)
+	}
+	if getSynced.Settings.ExchangeRateSourceURL != fx.URL {
+		t.Fatalf("回显来源地址应为 %q，实际 %q", fx.URL, getSynced.Settings.ExchangeRateSourceURL)
 	}
 
 	// 切 auto 模式：汇率值字段被忽略（由同步写入）

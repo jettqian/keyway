@@ -42,22 +42,22 @@ func fxBody(rate float64) http.HandlerFunc {
 
 func TestSync按源顺序回退(t *testing.T) {
 	// 主源 500、次源越界（视为异常继续回退）、第三源成功
-	e, _ := newTestEngine(t,
+	e, srvs := newTestEngine(t,
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) },
 		fxBody(0.01),
 		fxBody(6.85),
 	)
-	rate, src, err := e.Sync()
-	if err != nil || rate != 6.85 || src != "src2" {
-		t.Fatalf("期望回退到第三源 6.85/src2，实际 %.4f/%s err=%v", rate, src, err)
+	res, err := e.Sync()
+	if err != nil || res.Rate != 6.85 || res.Source != "src2" || res.SourceURL != srvs[2].URL {
+		t.Fatalf("期望回退到第三源 6.85/src2，实际 %+v err=%v", res, err)
 	}
 }
 
 func TestSync主源成功(t *testing.T) {
-	e, _ := newTestEngine(t, fxBody(7.01), fxBody(7.02))
-	rate, src, err := e.Sync()
-	if err != nil || rate != 7.01 || src != "src0" {
-		t.Fatalf("期望主源 7.01/src0，实际 %.4f/%s err=%v", rate, src, err)
+	e, srvs := newTestEngine(t, fxBody(7.01), fxBody(7.02))
+	res, err := e.Sync()
+	if err != nil || res.Rate != 7.01 || res.Source != "src0" || res.SourceURL != srvs[0].URL {
+		t.Fatalf("期望主源 7.01/src0，实际 %+v err=%v", res, err)
 	}
 }
 
@@ -66,22 +66,25 @@ func TestSync全部失败(t *testing.T) {
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(502) },
 		func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("not-json")) },
 	)
-	if _, _, err := e.Sync(); err == nil {
+	if _, err := e.Sync(); err == nil {
 		t.Fatal("全部源失败时应返回错误")
 	}
 }
 
 func TestSyncNow写入settings(t *testing.T) {
-	e, _ := newTestEngine(t, fxBody(6.99))
-	rate, src, _, err := e.SyncNow()
-	if err != nil || rate != 6.99 || src != "src0" {
-		t.Fatalf("SyncNow 失败: %.4f/%s err=%v", rate, src, err)
+	e, srvs := newTestEngine(t, fxBody(6.99))
+	res, _, err := e.SyncNow()
+	if err != nil || res.Rate != 6.99 || res.Source != "src0" {
+		t.Fatalf("SyncNow 失败: %+v err=%v", res, err)
 	}
 	if v, _ := e.store.GetSetting(KeyRate); v != "6.9900" {
 		t.Fatalf("usd_cny_rate 应为 6.9900，实际 %q", v)
 	}
 	if v, _ := e.store.GetSetting(KeySource); v != "src0" {
 		t.Fatalf("source 应为 src0，实际 %q", v)
+	}
+	if v, _ := e.store.GetSetting(KeySourceURL); v != srvs[0].URL {
+		t.Fatalf("source_url 应为 %q，实际 %q", srvs[0].URL, v)
 	}
 	if v, _ := e.store.GetSetting(KeyUpdatedAt); v == "" {
 		t.Fatal("updated_at 应非空")
@@ -121,6 +124,9 @@ func TestSaveManualRate范围校验(t *testing.T) {
 	}
 	if v, _ := e.store.GetSetting(KeySource); v != "manual" {
 		t.Fatalf("source 应为 manual，实际 %q", v)
+	}
+	if v, _ := e.store.GetSetting(KeySourceURL); v != "" {
+		t.Fatalf("manual 固定值不应有来源地址，实际 %q", v)
 	}
 }
 

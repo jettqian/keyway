@@ -1,9 +1,8 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.11（与 PRD v1.5.12 对应；上游响应头超时从固定 60s 改为
-  `KEYWAY_RESPONSE_HEADER_TIMEOUT_S` 默认 1800s（对齐 new-api
-  `RELAY_RESPONSE_HEADER_TIMEOUT`），0=不限制，流式 body 阶段不受影响；
-  前版 v1.10：汇率自动同步；
+- 版本：v1.12（与 PRD v1.5.14 对应；汇率同步落库并回显命中源请求地址
+  `usd_cny_rate_source_url`，设置页以链接展示；
+  前版 v1.11：上游响应头超时可配；v1.10：汇率自动同步；
   历史变更见文档各节与 PRD 变更记录）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
@@ -574,7 +573,9 @@ new-api 的已知语义（仅参考行为，代码自研）。
 - **手动同步**（`POST /api/admin/exchange-rate/sync`）：`apply=true` 拉取并立即写入
   （不区分模式，auto 模式「立即同步」按钮）；`apply=false` 仅预览返回
   （manual 模式「获取最新」填充表单，确认后随保存落库）。全部源失败返回 502。
-- **写入**：`usd_cny_rate` + 元数据三键（`usd_cny_rate_source` 来源 /
+  返回体含 `sourceUrl`（命中源请求地址）。
+- **写入**：`usd_cny_rate` + 元数据四键（`usd_cny_rate_source` 来源 /
+  `usd_cny_rate_source_url` 命中源请求地址，manual 为空 /
   `usd_cny_rate_updated_at` RFC3339），usage 层每次读库计算，同步后即时生效；
   写入经 mutex 串行化（手动同步与定时循环可能并发）。
 

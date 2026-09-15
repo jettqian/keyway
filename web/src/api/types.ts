@@ -207,6 +207,8 @@ export interface AdminSettings {
   /** auto = 定时同步；manual = 固定值 */
   exchangeRateMode?: 'auto' | 'manual'
   exchangeRateSource?: string
+  /** 命中汇率源的请求地址 */
+  exchangeRateSourceUrl?: string
   exchangeRateUpdatedAt?: string
 }
 
@@ -214,6 +216,7 @@ export interface AdminSettings {
 export interface ExchangeRateSyncResult {
   rate: number
   source: string
+  sourceUrl?: string
   applied: boolean
   updatedAt?: string
 }

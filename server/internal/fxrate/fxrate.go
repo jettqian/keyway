@@ -21,19 +21,20 @@ const (
 	erapiURL       = "https://open.er-api.com/v6/latest/USD"
 
 	// syncInterval 定时同步周期；startupDelay 首次同步延迟（错开启动高峰）
-	syncInterval  = 24 * time.Hour
-	startupDelay  = 30 * time.Second
-	requestLimit  = 1 << 20 // 响应体上限 1MB
-	minValidRate  = 0.5     // 与管理员手动设置的有效范围一致
-	maxValidRate  = 20
+	syncInterval = 24 * time.Hour
+	startupDelay = 30 * time.Second
+	requestLimit = 1 << 20 // 响应体上限 1MB
+	minValidRate = 0.5     // 与管理员手动设置的有效范围一致
+	maxValidRate = 20
 )
 
 // Settings 键（usd_cny_rate 本体由 usage 层消费）
 const (
 	KeyRate      = "usd_cny_rate"
-	KeyMode      = "usd_cny_rate_mode"      // manual（默认）/ auto
+	KeyMode      = "usd_cny_rate_mode"       // manual（默认）/ auto
 	KeyUpdatedAt = "usd_cny_rate_updated_at" // RFC3339
 	KeySource    = "usd_cny_rate_source"     // frankfurter / jsdelivr / erapi / manual
+	KeySourceURL = "usd_cny_rate_source_url" // 命中源的请求地址（manual 为空）
 )
 
 // ModeAuto 自动同步；ModeManual 管理员固定值
@@ -80,26 +81,33 @@ func (e *Engine) Mode() string {
 	return ModeManual
 }
 
+// Result 单次同步结果（含命中源的请求地址，供页面展示来源）
+type Result struct {
+	Rate      float64
+	Source    string
+	SourceURL string
+}
+
 // Sync 依次尝试各源，返回首个有效汇率（0.5~20 之外视为源异常，继续回退）
-func (e *Engine) Sync() (rate float64, srcName string, err error) {
+func (e *Engine) Sync() (Result, error) {
 	var errs []string
 	for _, src := range e.sources {
 		r, perr := fetchParse(e.client, src.url, src.parse)
 		if perr == nil {
-			return r, src.name, nil
+			return Result{Rate: r, Source: src.name, SourceURL: src.url}, nil
 		}
 		errs = append(errs, src.name+": "+perr.Error())
 	}
-	return 0, "", fmt.Errorf("全部汇率源拉取失败（%s）", joinErrors(errs))
+	return Result{}, fmt.Errorf("全部汇率源拉取失败（%s）", joinErrors(errs))
 }
 
 // SyncNow 手动同步：拉取并立即写入（不区分模式，管理员点按钮即生效）
-func (e *Engine) SyncNow() (float64, string, time.Time, error) {
-	rate, src, err := e.Sync()
+func (e *Engine) SyncNow() (Result, time.Time, error) {
+	res, err := e.Sync()
 	if err != nil {
-		return 0, "", time.Time{}, err
+		return Result{}, time.Time{}, err
 	}
-	return rate, src, e.ApplyRate(rate, src), nil
+	return res, e.ApplyRate(res), nil
 }
 
 // Start 后台定时循环：启动 startupDelay 后先跑一次，此后每 syncInterval 一次；
@@ -123,23 +131,24 @@ func (e *Engine) runAuto() {
 	if e.Mode() != ModeAuto {
 		return
 	}
-	rate, src, err := e.Sync()
+	res, err := e.Sync()
 	if err != nil {
 		fmt.Printf("[keyway] 汇率同步失败: %v\n", err)
 		return
 	}
-	e.ApplyRate(rate, src)
-	fmt.Printf("[keyway] 汇率已同步：1 USD = %.4f CNY（来源 %s）\n", rate, src)
+	e.ApplyRate(res)
+	fmt.Printf("[keyway] 汇率已同步：1 USD = %.4f CNY（来源 %s）\n", res.Rate, res.Source)
 }
 
-// ApplyRate 写入汇率及元信息（source 标记来源），返回写入时间；范围校验由调用方保证
+// ApplyRate 写入汇率及元信息（含来源地址），返回写入时间；范围校验由调用方保证
 // （fetchParse 与 SaveManualRate 均已在边界校验 0.5~20）
-func (e *Engine) ApplyRate(rate float64, src string) time.Time {
+func (e *Engine) ApplyRate(res Result) time.Time {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := time.Now()
-	e.store.SetSetting(KeyRate, strconv.FormatFloat(rate, 'f', 4, 64))
-	e.store.SetSetting(KeySource, src)
+	e.store.SetSetting(KeyRate, strconv.FormatFloat(res.Rate, 'f', 4, 64))
+	e.store.SetSetting(KeySource, res.Source)
+	e.store.SetSetting(KeySourceURL, res.SourceURL)
 	e.store.SetSetting(KeyUpdatedAt, now.Format(time.RFC3339))
 	return now
 }
@@ -149,7 +158,7 @@ func (e *Engine) SaveManualRate(rate float64) error {
 	if rate < minValidRate || rate > maxValidRate {
 		return fmt.Errorf("汇率须在 %.1f ~ %.1f 之间", minValidRate, float64(maxValidRate))
 	}
-	e.ApplyRate(rate, "manual")
+	e.ApplyRate(Result{Rate: rate, Source: "manual"})
 	return nil
 }
 

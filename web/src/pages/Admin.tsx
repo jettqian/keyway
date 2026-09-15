@@ -717,7 +717,7 @@ const SettingsTab: React.FC = () => {
   const [syncing, setSyncing] = React.useState(false)
   const [hasSecret, setHasSecret] = React.useState(false)
   const [fxMode, setFxMode] = React.useState<'auto' | 'manual'>('manual')
-  const [fxInfo, setFxInfo] = React.useState<{ rate?: number; source?: string; updatedAt?: string }>({})
+  const [fxInfo, setFxInfo] = React.useState<{ rate?: number; source?: string; sourceUrl?: string; updatedAt?: string }>({})
   React.useEffect(() => {
     adminSettings()
       .then((r) => {
@@ -733,6 +733,7 @@ const SettingsTab: React.FC = () => {
         setFxInfo({
           rate: r.settings.exchangeRate,
           source: r.settings.exchangeRateSource,
+          sourceUrl: r.settings.exchangeRateSourceUrl,
           updatedAt: r.settings.exchangeRateUpdatedAt,
         })
         setHasSecret(r.settings.feishuHasSecret ?? false)
@@ -748,7 +749,7 @@ const SettingsTab: React.FC = () => {
       const r = await adminSyncExchangeRate(apply)
       const res = r.result
       if (apply) {
-        setFxInfo((prev) => ({ rate: res.rate, source: res.source, updatedAt: res.updatedAt ?? prev.updatedAt }))
+        setFxInfo((prev) => ({ rate: res.rate, source: res.source, sourceUrl: res.sourceUrl, updatedAt: res.updatedAt ?? prev.updatedAt }))
         message.success(`已同步：1 USD = ${res.rate} CNY（来源 ${res.source}）`)
       } else {
         form.setFieldValue('exchangeRate', res.rate)
@@ -826,6 +827,13 @@ const SettingsTab: React.FC = () => {
               立即同步
             </Button>
           </Space>
+          {fxInfo.sourceUrl && (
+            <div>
+              <Typography.Link href={fxInfo.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+                {fxInfo.sourceUrl}
+              </Typography.Link>
+            </div>
+          )}
         </Form.Item>
       ) : (
         <Form.Item label="固定值" required>

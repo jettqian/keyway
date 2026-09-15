@@ -1,12 +1,16 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.13
+- 版本：v1.5.14
 - 日期：2026-09-15
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.14：汇率来源**展示同步信息地址**——同步时随 `usd_cny_rate_source` 一并落库
+>   命中源的实际请求地址 `usd_cny_rate_source_url`（manual 固定值为空）；设置页"当前
+>   汇率"区块在来源 Tag 下方以链接形式展示该地址（可跳转核对），`GET /api/admin/settings`
+>   回显 `exchangeRateSourceUrl`，`POST /api/admin/exchange-rate/sync` 返回 `sourceUrl`
 > - v1.5.13：模型目录与价目表的关联可视化——① 模型目录（用户页与管理员页）新增
 >   "单价（$/百万 tokens）"列：按**模型名精确匹配** model_pricing（与费用计算同口径），
 >   无同名条目显示"未定价"；② 价目表缓存读/写列不再显示"（同输入价）"占位，直接显示
@@ -530,8 +534,8 @@ flowchart TD
   统计数据管理员可见全员，普通用户仅见本人
 - FR-M7 汇率同步模式：全局汇率 `usd_cny_rate`（人民币渠道费用折算用）支持两种模式——
   `manual`（默认，管理员设置固定值，与既有行为一致）与 `auto`（后台每 24h 自动拉取
-  公共汇率源覆盖，三源回退）；设置页展示当前生效值、数据来源与更新时间；
-  auto 模式提供「立即同步」手动按钮，manual 模式提供「获取最新」预览填充；
+  公共汇率源覆盖，三源回退）；设置页展示当前生效值、数据来源（名称与**请求地址**）与
+  更新时间；auto 模式提供「立即同步」手动按钮，manual 模式提供「获取最新」预览填充；
   同步失败不影响现有值，下个周期自动重试
 
 ### 5.10 线路与代理优选
@@ -651,6 +655,7 @@ invite_codes(code, created_by, used_by, used_at)
 settings(key, value)        -- 注册策略、保留期、探测频率、飞书 App 配置、
                              -- usd_cny_rate（人民币渠道费用折算汇率，默认 7.2；
                              --   usd_cny_rate_mode: manual/auto、usd_cny_rate_source、
+                             --   usd_cny_rate_source_url（命中源请求地址）、
                              --   usd_cny_rate_updated_at 为同步元数据）等
 ```
 
@@ -693,6 +698,7 @@ settings(key, value)        -- 注册策略、保留期、探测频率、飞书 
 | v1.1 | 探测策略调优（已含指数退避）、CSV 导出（已完成）、count_tokens（已完成）、失败切换策略（已完成）、保留期清理（已完成） | ✅ 完成 |
 | v1.5.8 | `/v1/responses` Responses API 透传（Codex 直连）+ 未注册端点 POST 返回 404 而非前端 HTML | ✅ 完成 |
 | v1.5.11 | 汇率自动同步（fxrate 后台任务 + 三源回退 + auto/manual 模式 + 手动同步 API） | ✅ 完成 |
+| v1.5.14 | 汇率来源地址展示（source_url 落库 + 设置页链接展示 + API 回显） | ✅ 完成 |
 | v2（视需求） | Gemini 原生、/v1/responses 跨协议转换、通用 OIDC 登录、2FA、MySQL/多实例、Prometheus 指标、协议转换调试抓包（用户显式开启） | 待启动 |
 
 ## 11. 开放问题
