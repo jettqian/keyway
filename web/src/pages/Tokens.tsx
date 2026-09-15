@@ -2,9 +2,10 @@ import React from 'react'
 import { Alert, Button, DatePicker, Form, Input, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
 import { HolderOutlined, PlusOutlined, SwitcherOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { listTokens, createToken, updateToken, revokeToken, revealToken, listChannels } from '../api'
+import { listTokens, createToken, updateToken, revokeToken, deleteToken, revealToken, listChannels } from '../api'
 import type { GatewayToken, Channel } from '../api/types'
 import { formatDateTime } from '../format'
+import { copyText } from '../copy'
 
 // 令牌的渠道面板：主开关控制是否限定范围；限定时逐渠道开关 + 拖动排序（顺序即优先级）
 const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChanged: () => void }> = ({ token, channels, onChanged }) => {
@@ -154,7 +155,6 @@ const TokensPage: React.FC = () => {
   const [loading, setLoading] = React.useState(true)
   const [modalOpen, setModalOpen] = React.useState(false)
   const [created, setCreated] = React.useState<string | null>(null)
-  const [revealed, setRevealed] = React.useState<string | null>(null)
   const [form] = Form.useForm()
 
   const refresh = React.useCallback(() => {
@@ -190,12 +190,10 @@ const TokensPage: React.FC = () => {
   const copyKey = async (t: GatewayToken) => {
     try {
       const r = await revealToken(t.id)
-      try {
-        await navigator.clipboard.writeText(r.plaintext)
+      if (await copyText(r.plaintext)) {
         message.success('已复制到剪贴板')
-      } catch {
-        // 剪贴板不可用（如非安全上下文）时回退为弹窗展示
-        setRevealed(r.plaintext)
+      } else {
+        message.error('复制失败，请重试')
       }
     } catch (e) {
       message.error((e as Error).message)
@@ -257,7 +255,18 @@ const TokensPage: React.FC = () => {
             render: (_, t) =>
               <Space>
                 <a onClick={() => copyKey(t)}>复制密钥</a>
-                {t.revoked ? null : (
+                {t.revoked ? (
+                  <Popconfirm
+                    title="删除该令牌记录？删除后不可恢复"
+                    onConfirm={async () => {
+                      await deleteToken(t.id)
+                      message.success('已删除')
+                      refresh()
+                    }}
+                  >
+                    <a style={{ color: 'red' }}>删除</a>
+                  </Popconfirm>
+                ) : (
                   <Popconfirm
                     title="吊销后立即生效？"
                     onConfirm={async () => {
@@ -293,17 +302,6 @@ const TokensPage: React.FC = () => {
             <DatePicker showTime style={{ width: '100%' }} />
           </Form.Item>
         </Form>
-      </Modal>
-      <Modal
-        open={revealed !== null}
-        title="令牌密钥"
-        onCancel={() => setRevealed(null)}
-        onOk={() => setRevealed(null)}
-      >
-        <Typography.Paragraph>剪贴板不可用，请手动复制：</Typography.Paragraph>
-        <Typography.Paragraph copyable={{ text: revealed ?? '' }} code>
-          {revealed}
-        </Typography.Paragraph>
       </Modal>
       <Modal
         open={created !== null}

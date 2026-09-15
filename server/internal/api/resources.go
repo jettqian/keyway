@@ -539,6 +539,7 @@ func (s *Server) handleCreateToken(c *gin.Context) {
 	s.ok(c, gin.H{"token": tokenDTO(&t), "plaintext": plaintext})
 }
 
+// handleRevokeToken 吊销令牌（保留记录可回看，立即失效）
 func (s *Server) handleRevokeToken(c *gin.Context) {
 	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	res := s.Store.DB().Model(&store.Token{}).
@@ -546,6 +547,21 @@ func (s *Server) handleRevokeToken(c *gin.Context) {
 		Update("revoked", 1)
 	if res.Error != nil {
 		s.fail(c, http.StatusInternalServerError, "吊销失败")
+		return
+	}
+	if res.RowsAffected == 0 {
+		s.fail(c, http.StatusNotFound, "令牌不存在")
+		return
+	}
+	s.ok(c, gin.H{})
+}
+
+// handleDeleteToken 删除令牌记录（吊销后清理；记录删除后令牌自然失效）
+func (s *Server) handleDeleteToken(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	res := s.Store.DB().Where("id = ? AND user_id = ?", id, currentUser(c).ID).Delete(&store.Token{})
+	if res.Error != nil {
+		s.fail(c, http.StatusInternalServerError, "删除失败")
 		return
 	}
 	if res.RowsAffected == 0 {

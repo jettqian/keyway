@@ -67,7 +67,8 @@ export const createToken = (input: { name: string; channelIds?: number[]; modelS
   post<GatewayTokenCreated>('/api/tokens', input)
 export const updateToken = (id: number, input: { name?: string; channelIds?: number[] }) =>
   put<{ token: GatewayToken }>(`/api/tokens/${id}`, input)
-export const revokeToken = (id: number) => del<void>(`/api/tokens/${id}`)
+export const revokeToken = (id: number) => post<void>(`/api/tokens/${id}/revoke`)
+export const deleteToken = (id: number) => del<void>(`/api/tokens/${id}`)
 export const revealToken = (id: number) => post<{ plaintext: string }>(`/api/tokens/${id}/reveal`)
 
 // ---------- 日志与统计 ----------
@@ -127,3 +128,4 @@ export const adminUpdateCatalogModel = (id: number, input: { name?: string; note
   put<{ model: CatalogModel }>(`/api/admin/models/${id}`, input)
 export const adminDeleteCatalogModel = (id: number) => del<void>(`/api/admin/models/${id}`)
 export const adminImportCatalogFromPricing = () => post<{ imported: number }>('/api/admin/models/import_pricing')
+export const adminSyncCatalogToPricing = () => post<{ added: number }>('/api/admin/models/sync_pricing')

@@ -598,14 +598,16 @@ GET /oauth/feishu/callback?code&state
 | POST /api/channels/from_template/:tid | 从模板复制（草稿） |
 | POST /api/channels/:id/test；POST /api/channels/:id/test_keys | 矩阵测试 / 逐密钥测试 |
 | GET /api/templates | 模板列表（用户侧，含复制数） |
-| GET/POST/PUT/DELETE /api/tokens[/:id] | 令牌 CRUD（列表仅返回前缀） |
+| GET/POST/PUT/DELETE /api/tokens[/:id] | 令牌 CRUD（列表仅返回前缀；DELETE 为删除记录） |
 | PUT /api/tokens/:id | 更新令牌（名称 / 限定渠道集合，集合顺序即令牌级路由优先级） |
 | POST /api/tokens/:id/reveal | 所属用户回看完整令牌（复制密钥按钮数据源） |
+| POST /api/tokens/:id/revoke | 吊销令牌（立即失效，保留记录） |
 | GET /api/logs | 自己的日志（分页/过滤） |
 | GET /api/stats | 自己的统计（含最近生效流量 latest） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
-  （模型目录 CRUD + import_pricing 一键导入）、/api/admin/templates、
-  /api/admin/proxies、/api/admin/pricing(+import)、/api/admin/stats、/api/admin/invites | 见 PRD §5.9 |
+  （模型目录 CRUD + import_pricing 价目导入 + sync_pricing 目录同步为价目初始内容）、
+  /api/admin/templates、/api/admin/proxies、/api/admin/pricing(+import)、
+  /api/admin/stats、/api/admin/invites | 见 PRD §5.9 |
 
 ### 11.2 中转 `/v1`（令牌鉴权）
 

@@ -172,7 +172,8 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/tokens", s.handleCreateToken)
 	r.PUT("/tokens/:id", s.handleUpdateToken)
 	r.POST("/tokens/:id/reveal", s.handleRevealToken)
-	r.DELETE("/tokens/:id", s.handleRevokeToken)
+	r.POST("/tokens/:id/revoke", s.handleRevokeToken)
+	r.DELETE("/tokens/:id", s.handleDeleteToken)
 
 	r.GET("/logs", s.handleLogs)
 	r.GET("/logs/export", s.handleLogsExport)
@@ -193,6 +194,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 		admin.PUT("/models/:id", s.handleAdminUpdateCatalogModel)
 		admin.DELETE("/models/:id", s.handleAdminDeleteCatalogModel)
 		admin.POST("/models/import_pricing", s.handleAdminImportCatalogFromPricing)
+		admin.POST("/models/sync_pricing", s.handleAdminSyncCatalogToPricing)
 		admin.GET("/proxies", s.handleAdminProxies)
 		admin.POST("/proxies", s.handleAdminCreateProxy)
 		admin.PUT("/proxies/:id", s.handleAdminUpdateProxy)

@@ -3,6 +3,7 @@ import { Alert, Button, Card, Checkbox, Col, Collapse, Row, Select, Steps, Tabs,
 import { CopyOutlined, RobotOutlined } from '@ant-design/icons'
 import { listTokens, revealToken } from '../api'
 import type { GatewayToken } from '../api/types'
+import { copyText } from '../copy'
 
 const TOKEN_PLACEHOLDER = 'sk-keyway-你的令牌'
 const MASKED_TOKEN = 'sk-keyway-••••••••（复制时自动替换为真实令牌）'
@@ -16,10 +17,9 @@ type ClientKey = (typeof CLIENTS)[number]['key']
 
 const CodeBlock: React.FC<{ text: string }> = ({ text }) => {
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
+    if (await copyText(text)) {
       message.success('已复制')
-    } catch {
+    } else {
       message.error('复制失败，请手动选择复制')
     }
   }
@@ -193,15 +193,6 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
     }
   }
 
-  const copyText = async (text: string): Promise<boolean> => {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch {
-      return false
-    }
-  }
-
   const copyPrompt = async () => {
     if (!tokenId) return
     setCopying(true)
@@ -214,7 +205,7 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
         setCopyFailed(false)
         setRealPrompt(null)
       } else {
-        // 剪贴板不可用：自动展开预览并展示真实指令供手动复制
+        // 剪贴板完全不可用：自动展开预览并展示真实指令供手动复制
         setRealPrompt(text)
         setCopyFailed(true)
         setPreviewOpen(['preview'])
