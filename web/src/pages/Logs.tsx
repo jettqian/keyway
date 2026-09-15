@@ -2,6 +2,7 @@ import React from 'react'
 import { Table, Select, Input, InputNumber, message } from 'antd'
 import { listLogs, listChannels } from '../api'
 import type { LogEntry, Channel } from '../api/types'
+import { formatDateTime } from '../format'
 
 const LogsPage: React.FC = () => {
   const [logs, setLogs] = React.useState<LogEntry[]>([])
@@ -60,7 +61,7 @@ const LogsPage: React.FC = () => {
         dataSource={logs}
         pagination={{ current: page, total, pageSize: 20, onChange: setPage }}
         columns={[
-          { title: '时间', dataIndex: 'createdAt', width: 170 },
+          { title: '时间', dataIndex: 'createdAt', width: 170, render: (v: number | string) => formatDateTime(v) },
           {
             title: '渠道',
             dataIndex: 'channelName',

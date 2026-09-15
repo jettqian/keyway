@@ -20,6 +20,7 @@ import {
   adminStats,
 } from '../api'
 import type { User, ModelPricing, Proxy, ChannelTemplate, StatsResponse, StatsGroup } from '../api/types'
+import { formatDateTime } from '../format'
 
 const UsersTab: React.FC = () => {
   const [users, setUsers] = React.useState<User[]>([])
@@ -46,8 +47,8 @@ const UsersTab: React.FC = () => {
           dataIndex: 'status',
           render: (s: number) => (s === 1 ? <Tag color="green">正常</Tag> : <Tag color="orange">禁用</Tag>),
         },
-        { title: '注册时间', dataIndex: 'createdAt', width: 180 },
-        { title: '最近登录', dataIndex: 'lastLoginAt', width: 180 },
+        { title: '注册时间', dataIndex: 'createdAt', width: 180, render: (v: number | string) => formatDateTime(v) },
+        { title: '最近登录', dataIndex: 'lastLoginAt', width: 180, render: (v: number | string) => formatDateTime(v) },
         {
           title: '操作',
           render: (_, u) => (

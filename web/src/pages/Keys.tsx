@@ -3,6 +3,7 @@ import { Table, Button, Modal, Form, Input, Tag, message, Popconfirm, Space } fr
 import { PlusOutlined } from '@ant-design/icons'
 import { listKeys, createKey, updateKey, deleteKey } from '../api'
 import type { ApiKey } from '../api/types'
+import { formatDateTime } from '../format'
 
 const KeysPage: React.FC = () => {
   const [keys, setKeys] = React.useState<ApiKey[]>([])
@@ -83,7 +84,7 @@ const KeysPage: React.FC = () => {
             ellipsis: true,
             render: (v: string) => v || '-',
           },
-          { title: '创建时间', dataIndex: 'createdAt', width: 180 },
+          { title: '创建时间', dataIndex: 'createdAt', width: 180, render: (v: number | string) => formatDateTime(v) },
           {
             title: '操作',
             width: 160,

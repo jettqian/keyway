@@ -1,0 +1,9 @@
+// 将后端 Unix 秒/毫秒时间戳或 ISO 字符串统一显示为 年/月/日 时:分:秒。
+export function formatDateTime(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '—'
+  const raw = typeof value === 'number' || /^\d+$/.test(value) ? Number(value) : NaN
+  const date = Number.isFinite(raw) ? new Date(raw < 1e12 ? raw * 1000 : raw) : new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}

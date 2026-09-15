@@ -3,6 +3,7 @@ import { Table, Button, Modal, Form, Input, Select, DatePicker, Tag, message, Po
 import { PlusOutlined } from '@ant-design/icons'
 import { listTokens, createToken, revokeToken, revealToken, listChannels } from '../api'
 import type { GatewayToken, Channel } from '../api/types'
+import { formatDateTime } from '../format'
 
 const TokensPage: React.FC = () => {
   const [tokens, setTokens] = React.useState<GatewayToken[]>([])
@@ -71,7 +72,8 @@ const TokensPage: React.FC = () => {
             },
           },
           { title: '模型范围', dataIndex: 'modelScope', render: (v?: string) => v ?? '不限' },
-          { title: '过期时间', dataIndex: 'expiresAt', render: (v?: string) => v ?? '永不过期' },
+          { title: '创建时间', dataIndex: 'createdAt', render: (v: number | string) => formatDateTime(v) },
+          { title: '过期时间', dataIndex: 'expiresAt', render: (v?: number | string) => v ? formatDateTime(v) : '永不过期' },
           {
             title: '状态',
             dataIndex: 'revoked',
