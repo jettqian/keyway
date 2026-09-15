@@ -90,9 +90,9 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
             width: 160,
             render: (_: unknown, row: ModelRow) => (
               <Space>
-                <a onClick={() => { setRenaming(row); form.setFieldsValue({ name: row.name }) }}>重命名</a>
+                <Button size="small" onClick={() => { setRenaming(row); form.setFieldsValue({ name: row.name }) }}>重命名</Button>
                 <Popconfirm title={`删除模型 ${row.name}？将从所有渠道移除`} onConfirm={() => removeModel(row)}>
-                  <a className="danger-link">删除</a>
+                  <Button size="small" danger>删除</Button>
                 </Popconfirm>
               </Space>
             ),

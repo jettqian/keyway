@@ -61,7 +61,8 @@ const UsersTab: React.FC = () => {
           title: '操作',
           render: (_, u) => (
             <Space>
-              <a
+              <Button
+                size="small"
                 onClick={async () => {
                   await adminSetUserStatus(u.id, u.status === 1 ? 2 : 1)
                   message.success('已更新')
@@ -69,15 +70,16 @@ const UsersTab: React.FC = () => {
                 }}
               >
                 {u.status === 1 ? '禁用' : '启用'}
-              </a>
-              <a
+              </Button>
+              <Button
+                size="small"
                 onClick={async () => {
                   const r = await adminResetPassword(u.id)
                   Modal.info({ title: '新密码', content: <Typography.Text copyable>{r.password}</Typography.Text> })
                 }}
               >
                 重置密码
-              </a>
+              </Button>
             </Space>
           ),
         },
@@ -314,7 +316,7 @@ const PricingTab: React.FC = () => {
             width: 130,
             render: (_, p) => (
               <Space>
-                <a onClick={() => openEdit(p)}>编辑</a>
+                <Button size="small" onClick={() => openEdit(p)}>编辑</Button>
                 <Popconfirm
                   title={`删除 ${p.model} 的价目？`}
                   description="删除后该模型的请求费用将记为未定价"
@@ -324,7 +326,7 @@ const PricingTab: React.FC = () => {
                     refresh()
                   }}
                 >
-                  <a className="danger-link">删除</a>
+                  <Button size="small" danger>删除</Button>
                 </Popconfirm>
               </Space>
             ),
@@ -423,7 +425,7 @@ const ProxiesTab: React.FC = () => {
             width: 130,
             render: (_, p) => (
               <Space>
-                <a onClick={() => openEdit(p)}>编辑</a>
+                <Button size="small" onClick={() => openEdit(p)}>编辑</Button>
                 <Popconfirm
                   title={`删除公共代理 ${p.name}？`}
                   description="允许走公共代理的渠道将无法再使用它"
@@ -433,7 +435,7 @@ const ProxiesTab: React.FC = () => {
                     refresh()
                   }}
                 >
-                  <a className="danger-link">删除</a>
+                  <Button size="small" danger>删除</Button>
                 </Popconfirm>
               </Space>
             ),
@@ -558,7 +560,7 @@ const CatalogModelsTab: React.FC = () => {
             width: 130,
             render: (_, m) => (
               <Space>
-                <a onClick={() => openEdit(m)}>编辑</a>
+                <Button size="small" onClick={() => openEdit(m)}>编辑</Button>
                 <Popconfirm
                   title={`从目录移除 ${m.name}？`}
                   description="已引用它的渠道配置不受影响"
@@ -568,7 +570,7 @@ const CatalogModelsTab: React.FC = () => {
                     refresh()
                   }}
                 >
-                  <a className="danger-link">删除</a>
+                  <Button size="small" danger>删除</Button>
                 </Popconfirm>
               </Space>
             ),
@@ -710,7 +712,7 @@ const TemplatesTab: React.FC = () => {
             width: 130,
             render: (_, t) => (
               <Space>
-                <a onClick={() => openEdit(t)}>编辑</a>
+                <Button size="small" onClick={() => openEdit(t)}>编辑</Button>
                 <Popconfirm
                   title={`删除模板 ${t.name}？`}
                   description="已复制的渠道不受影响"
@@ -720,7 +722,7 @@ const TemplatesTab: React.FC = () => {
                     refresh()
                   }}
                 >
-                  <a className="danger-link">删除</a>
+                  <Button size="small" danger>删除</Button>
                 </Popconfirm>
               </Space>
             ),

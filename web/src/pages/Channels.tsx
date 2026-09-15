@@ -14,6 +14,7 @@ import {
   Space,
   Alert,
   Collapse,
+  Spin,
 } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { Link, useParams } from 'react-router-dom'
@@ -21,6 +22,9 @@ import { listChannels, createChannel, updateChannel, deleteChannel, listKeys, te
 import type { ChannelTestResult } from '../api'
 import type { Channel, ChannelInput, ApiKey, CatalogModel } from '../api/types'
 import { fmtMs } from '../format'
+
+// 后端单组合探测超时（probe.probeWait，秒）；矩阵并发执行，整体约等于单组合耗时
+const PROBE_WAIT_SECONDS = 15
 
 const emptyInput: ChannelInput = {
   name: '',
@@ -50,6 +54,9 @@ const ChannelsPage: React.FC = () => {
   const [modalOpen, setModalOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<Channel | null>(null)
   const [testResults, setTestResults] = React.useState<ChannelTestResult[] | null>(null)
+  const [testTarget, setTestTarget] = React.useState<Channel | null>(null)
+  const [testing, setTesting] = React.useState(false)
+  const testSeq = React.useRef(0)
   const [form] = Form.useForm()
 
   const refresh = React.useCallback(() => {
@@ -158,12 +165,22 @@ const ChannelsPage: React.FC = () => {
     }
   }
 
+  // 测试：立即打开结果弹窗进入 loading 态，后端并发探测矩阵，返回后填充
   const runTest = async (c: Channel) => {
+    const seq = ++testSeq.current
+    setTestTarget(c)
+    setTesting(true)
+    setTestResults([])
     try {
       const r = await testChannel(c.id)
+      if (testSeq.current !== seq) return // 期间已关闭弹窗，丢弃过期响应
       setTestResults(r.results)
     } catch (e) {
+      if (testSeq.current !== seq) return
+      setTestResults(null)
       message.error((e as Error).message)
+    } finally {
+      if (testSeq.current === seq) setTesting(false)
     }
   }
 
@@ -267,9 +284,9 @@ const ChannelsPage: React.FC = () => {
             width: 250,
             render: (_, c) => (
               <Space>
-                <a onClick={() => openEdit(c)}>编辑</a>
-                <a onClick={() => toggleEnabled(c)}>{c.enabled ? '停用' : '启用'}</a>
-                <a onClick={() => runTest(c)}>测试</a>
+                <Button size="small" onClick={() => openEdit(c)}>编辑</Button>
+                <Button size="small" onClick={() => toggleEnabled(c)}>{c.enabled ? '停用' : '启用'}</Button>
+                <Button size="small" loading={testing && testTarget?.id === c.id} onClick={() => runTest(c)}>测试</Button>
                 <Popconfirm
                   title="删除该渠道？"
                   onConfirm={async () => {
@@ -278,7 +295,7 @@ const ChannelsPage: React.FC = () => {
                     refresh()
                   }}
                 >
-                  <a className="danger-link">删除</a>
+                  <Button size="small" danger>删除</Button>
                 </Popconfirm>
               </Space>
             ),
@@ -458,25 +475,38 @@ const ChannelsPage: React.FC = () => {
       </Modal>
 
       <Modal
-        title={`线路 × 路径 测试结果${editing ? `：${editing.name}` : ''}`}
+        title={`线路 × 路径 测试结果${testTarget ? `：${testTarget.name}` : ''}`}
         open={testResults !== null}
-        onCancel={() => setTestResults(null)}
+        onCancel={() => {
+          testSeq.current++ // 丢弃仍在途的探测响应
+          setTesting(false)
+          setTestResults(null)
+        }}
         footer={null}
       >
-        {testResults?.map((r, i) => (
-          <Alert
-            key={i}
-            style={{ marginBottom: 8 }}
-            type={r.ok ? 'success' : 'error'}
-            message={r.lineUrl}
-            description={
-              <>
-                <div>路径 {r.via}，延迟 {fmtMs(r.latencyMs)}</div>
-                {r.error ? <div className="text-secondary">{r.error}</div> : null}
-              </>
-            }
-          />
-        ))}
+        {testing ? (
+          <div style={{ textAlign: 'center', padding: '32px 0' }}>
+            <Spin />
+            <div className="text-secondary" style={{ marginTop: 12 }}>
+              正在并发探测全部线路 × 路径组合（每组合最长 {PROBE_WAIT_SECONDS} 秒）…
+            </div>
+          </div>
+        ) : (
+          testResults?.map((r, i) => (
+            <Alert
+              key={i}
+              style={{ marginBottom: 8 }}
+              type={r.ok ? 'success' : 'error'}
+              message={r.lineUrl}
+              description={
+                <>
+                  <div>路径 {r.via}，延迟 {fmtMs(r.latencyMs)}</div>
+                  {r.error ? <div className="text-secondary">{r.error}</div> : null}
+                </>
+              }
+            />
+          ))
+        )}
       </Modal>
     </div>
   )

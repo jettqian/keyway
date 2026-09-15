@@ -360,7 +360,7 @@ const TokensPage: React.FC = () => {
             width: 200,
             render: (_, t) =>
               <Space>
-                <a onClick={() => copyKey(t)} onPointerDown={() => prefetchKey(t.id)} onMouseEnter={() => prefetchKey(t.id)}>复制密钥</a>
+                <Button size="small" onClick={() => copyKey(t)} onPointerDown={() => prefetchKey(t.id)} onMouseEnter={() => prefetchKey(t.id)}>复制密钥</Button>
                 {t.revoked ? (
                   <Popconfirm
                     title="删除该令牌记录？删除后不可恢复"
@@ -370,7 +370,7 @@ const TokensPage: React.FC = () => {
                       refresh()
                     }}
                   >
-                    <a className="danger-link">删除</a>
+                    <Button size="small" danger>删除</Button>
                   </Popconfirm>
                 ) : (
                   <Popconfirm
@@ -381,7 +381,7 @@ const TokensPage: React.FC = () => {
                       refresh()
                     }}
                   >
-                    <a className="danger-link">吊销</a>
+                    <Button size="small" danger>吊销</Button>
                   </Popconfirm>
                 )}
               </Space>,

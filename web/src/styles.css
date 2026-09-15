@@ -6,7 +6,6 @@
   --kw-tertiary: #8a979d;
   --kw-border: #e3e9eb;
   --kw-danger: #c1443c;
-  --kw-danger-hover: #a03530;
 }
 
 * { box-sizing: border-box; }
@@ -20,10 +19,6 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
 .text-secondary { color: var(--kw-secondary); }
 .text-tertiary { color: var(--kw-tertiary); }
 .tab-note { color: var(--kw-secondary); font-size: 13px; line-height: 1.6; margin-bottom: 12px; }
-
-/* 危险操作链接（删除/吊销），语义色走变量 */
-.danger-link { color: var(--kw-danger); }
-.danger-link:hover { color: var(--kw-danger-hover); }
 
 /* 日志状态码：>=400 用语义红并加重 */
 .status-error { color: var(--kw-danger); font-weight: 600; }

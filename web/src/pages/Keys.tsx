@@ -91,8 +91,9 @@ const KeysPage: React.FC = () => {
             width: 200,
             render: (_, k) => (
               <Space>
-                <a onClick={() => openEdit(k)}>编辑</a>
-                <a
+                <Button size="small" onClick={() => openEdit(k)}>编辑</Button>
+                <Button
+                  size="small"
                   onClick={async () => {
                     try {
                       await updateKeyStatus(k.id, k.status === 1 ? 2 : 1)
@@ -104,7 +105,7 @@ const KeysPage: React.FC = () => {
                   }}
                 >
                   {k.status === 1 ? '停用' : '启用'}
-                </a>
+                </Button>
                 <Popconfirm
                   title="删除该密钥？绑定它的渠道将失效"
                   onConfirm={async () => {
@@ -113,7 +114,7 @@ const KeysPage: React.FC = () => {
                     refresh()
                   }}
                 >
-                  <a className="danger-link">删除</a>
+                  <Button size="small" danger>删除</Button>
                 </Popconfirm>
               </Space>
             ),
