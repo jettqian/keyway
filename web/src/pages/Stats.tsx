@@ -8,16 +8,25 @@ import type { LatestUsage, StatsResponse, StatsGroup } from '../api/types'
 import Money from '../components/Money'
 import LineUrl from '../components/LineUrl'
 import { formatDateTime, fmtInt, fmtTokens } from '../format'
+import { useI18n } from '../i18n'
+import type { DictKey } from '../i18n/zh'
+
+// 快捷时间项 label：随语言切换渲染，供本页与 Admin 页共享
+const LocaleText: React.FC<{ k: DictKey }> = ({ k }) => {
+  const { t } = useI18n()
+  return <>{t(k)}</>
+}
 
 // 快捷时间项（自然日口径）
-export const rangePresets: { label: string; value: [Dayjs, Dayjs] }[] = [
-  { label: '今天', value: [dayjs(), dayjs()] },
-  { label: '昨天', value: [dayjs().subtract(1, 'day'), dayjs().subtract(1, 'day')] },
-  { label: '近 7 天', value: [dayjs().subtract(6, 'day'), dayjs()] },
-  { label: '近 30 天', value: [dayjs().subtract(29, 'day'), dayjs()] },
+export const rangePresets: { label: React.ReactNode; value: [Dayjs, Dayjs] }[] = [
+  { label: <LocaleText k="stats.today" />, value: [dayjs(), dayjs()] },
+  { label: <LocaleText k="stats.yesterday" />, value: [dayjs().subtract(1, 'day'), dayjs().subtract(1, 'day')] },
+  { label: <LocaleText k="stats.last7Days" />, value: [dayjs().subtract(6, 'day'), dayjs()] },
+  { label: <LocaleText k="stats.last30Days" />, value: [dayjs().subtract(29, 'day'), dayjs()] },
 ]
 
 const StatsPage: React.FC = () => {
+  const { t } = useI18n()
   const [range, setRange] = React.useState<[Dayjs, Dayjs]>([dayjs().subtract(6, 'day'), dayjs()])
   const [data, setData] = React.useState<StatsResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
@@ -35,28 +44,28 @@ const StatsPage: React.FC = () => {
   const groupColumns = (dimName: string) => [
     { title: dimName, dataIndex: 'dim' },
     {
-      title: '请求数',
+      title: t('stats.requests'),
       dataIndex: 'requests',
       align: 'right' as const,
       render: (v: number) => fmtInt(v),
       sorter: (a: StatsGroup, b: StatsGroup) => a.requests - b.requests,
     },
     {
-      title: '输入 tokens',
+      title: t('stats.inputTokens'),
       dataIndex: 'promptTokens',
       align: 'right' as const,
       render: (v: number) => fmtInt(v),
       sorter: (a: StatsGroup, b: StatsGroup) => a.promptTokens - b.promptTokens,
     },
     {
-      title: '输出 tokens',
+      title: t('stats.outputTokens'),
       dataIndex: 'completionTokens',
       align: 'right' as const,
       render: (v: number) => fmtInt(v),
       sorter: (a: StatsGroup, b: StatsGroup) => a.completionTokens - b.completionTokens,
     },
     {
-      title: '费用估算',
+      title: t('stats.estCost'),
       dataIndex: 'cost',
       render: (v: number) => <Money value={v} mode="cost" />,
       align: 'right' as const,
@@ -67,7 +76,7 @@ const StatsPage: React.FC = () => {
   return (
     <div>
       <div className="page-heading">
-        <div><h2>用量统计</h2><p>查看请求量、Token 消耗与费用估算。</p></div>
+        <div><h2>{t('stats.title')}</h2><p>{t('stats.subtitle')}</p></div>
         <Space>
           <DatePicker.RangePicker
             value={range}
@@ -78,29 +87,29 @@ const StatsPage: React.FC = () => {
             presets={rangePresets}
             allowClear={false}
           />
-          <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>{t('stats.refresh')}</Button>
         </Space>
       </div>
       <Card loading={loading} style={{ marginBottom: 16 }}>
         <div className="stat-strip">
           <div className="stat-cell">
-            <Statistic title="请求数" value={fmtInt(data?.summary.requests ?? 0)} />
+            <Statistic title={t('stats.requests')} value={fmtInt(data?.summary.requests ?? 0)} />
           </div>
           <div className="stat-cell">
-            <Statistic title="错误率" value={data?.summary.errorRate ?? 0} suffix="%" precision={2} />
+            <Statistic title={t('stats.errorRate')} value={data?.summary.errorRate ?? 0} suffix="%" precision={2} />
           </div>
           <div className="stat-cell">
-            <Tooltip title={`入 ${fmtInt(data?.summary.promptTokens ?? 0)} · 出 ${fmtInt(data?.summary.completionTokens ?? 0)}`}>
-              <Statistic title="tokens（入/出）" value={`${fmtTokens(data?.summary.promptTokens ?? 0)} / ${fmtTokens(data?.summary.completionTokens ?? 0)}`} />
+            <Tooltip title={t('stats.tokensTooltip', { input: fmtInt(data?.summary.promptTokens ?? 0), output: fmtInt(data?.summary.completionTokens ?? 0) })}>
+              <Statistic title={t('stats.tokensInOut')} value={`${fmtTokens(data?.summary.promptTokens ?? 0)} / ${fmtTokens(data?.summary.completionTokens ?? 0)}`} />
             </Tooltip>
           </div>
           <div className="stat-cell">
-            <Statistic title="费用估算" value={data?.summary.cost ?? 0} formatter={(v) => <Money value={v as number} mode="cost" big />} />
-            {data?.summary.unpriced ? <span className="stat-note">部分未定价</span> : null}
+            <Statistic title={t('stats.estCost')} value={data?.summary.cost ?? 0} formatter={(v) => <Money value={v as number} mode="cost" big />} />
+            {data?.summary.unpriced ? <span className="stat-note">{t('stats.partiallyUnpriced')}</span> : null}
           </div>
         </div>
       </Card>
-      <Card title="最近生效流量" loading={loading} style={{ marginBottom: 16 }}>
+      <Card title={t('stats.recent')} loading={loading} style={{ marginBottom: 16 }}>
         {data?.recent?.length ? (
           <Table<LatestUsage>
             rowKey="id"
@@ -110,39 +119,39 @@ const StatsPage: React.FC = () => {
             scroll={{ x: 'max-content' }}
             columns={[
               {
-                title: '时间',
+                title: t('common.time'),
                 dataIndex: 'createdAt',
                 width: 180,
                 render: (v: number) => <span className="text-tertiary">{formatDateTime(v)}</span>,
               },
               {
-                title: '渠道',
+                title: t('stats.channel'),
                 dataIndex: 'channelName',
                 width: 130,
                 ellipsis: true,
                 render: (v: string, r: LatestUsage) => v || `#${r.channelId}`,
               },
               {
-                title: '线路',
+                title: t('stats.line'),
                 dataIndex: 'lineUrl',
                 width: 260,
                 ellipsis: { showTitle: false },
                 render: (v: string, r: LatestUsage) => <LineUrl url={v} via={r.via} />,
               },
               {
-                title: '模型',
+                title: t('common.model'),
                 dataIndex: 'model',
                 render: (_, r: LatestUsage) => (
                   <span>
                     <b>{r.model}</b>
                     {r.upstreamModel && r.upstreamModel !== r.model ? (
-                      <span className="text-tertiary">（上游 {r.upstreamModel}）</span>
+                      <span className="text-tertiary">{t('stats.upstreamSuffix', { model: r.upstreamModel })}</span>
                     ) : null}
                   </span>
                 ),
               },
               {
-                title: '状态',
+                title: t('common.status'),
                 dataIndex: 'statusCode',
                 width: 90,
                 render: (v: number) => <Tag color={v < 400 ? 'green' : 'red'}>{v}</Tag>,
@@ -150,23 +159,23 @@ const StatsPage: React.FC = () => {
             ]}
           />
         ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该时间范围内还没有请求" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('stats.emptyRecent')} />
         )}
       </Card>
       <Row gutter={16}>
         <Col xs={24} span={12}>
-          <Card title="按渠道" loading={loading}>
-            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byChannel ?? []} columns={groupColumns('渠道')} />
+          <Card title={t('stats.byChannel')} loading={loading}>
+            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byChannel ?? []} columns={groupColumns(t('stats.channel'))} />
           </Card>
         </Col>
         <Col xs={24} span={12}>
-          <Card title="按模型" loading={loading}>
-            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byModel ?? []} columns={groupColumns('模型')} />
+          <Card title={t('stats.byModel')} loading={loading}>
+            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byModel ?? []} columns={groupColumns(t('common.model'))} />
           </Card>
         </Col>
       </Row>
-      <Card title="按密钥（多账号分账）" style={{ marginTop: 16 }} loading={loading}>
-        <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byKey ?? []} columns={groupColumns('密钥')} />
+      <Card title={t('stats.byKey')} style={{ marginTop: 16 }} loading={loading}>
+        <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byKey ?? []} columns={groupColumns(t('stats.key'))} />
       </Card>
     </div>
   )

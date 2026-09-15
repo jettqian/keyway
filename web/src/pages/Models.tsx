@@ -4,6 +4,7 @@ import { ReloadOutlined } from '@ant-design/icons'
 import { listChannels, updateModelBindings, listCatalogModels } from '../api'
 import type { Channel, CatalogModel } from '../api/types'
 import CatalogPrice from '../components/CatalogPrice'
+import { useI18n } from '../i18n'
 
 interface ModelRow {
   name: string
@@ -11,6 +12,7 @@ interface ModelRow {
 }
 
 const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () => void }> = ({ channels, loading, refresh }) => {
+  const { t } = useI18n()
   const [renaming, setRenaming] = React.useState<ModelRow | null>(null)
   const [form] = Form.useForm()
 
@@ -39,7 +41,7 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
     }
     try {
       await updateModelBindings({ name, previousName: renaming.name, channelIds: renaming.channels.map((c) => c.id) })
-      message.success('已重命名，下一个请求生效')
+      message.success(t('models.renamedNotice'))
       setRenaming(null)
       refresh()
     } catch (e) {
@@ -50,7 +52,7 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
   const removeModel = async (row: ModelRow) => {
     try {
       await updateModelBindings({ name: row.name, previousName: row.name, channelIds: [] })
-      message.success('模型已从所有渠道移除')
+      message.success(t('models.removedFromAll'))
       refresh()
     } catch (e) {
       message.error((e as Error).message)
@@ -59,26 +61,24 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
 
   return (
     <div>
-      <div className="tab-note">
-        模型与渠道的关联在渠道表单中点选维护：编辑渠道时可从模型目录或已有模型点选，也可直接输入新名称。此处仅管理模型名本身。
-      </div>
+      <div className="tab-note">{t('models.mineTabNote')}</div>
       <Table<ModelRow>
         rowKey="name"
         loading={loading}
         dataSource={rows}
         scroll={{ x: 'max-content' }}
-        locale={{ emptyText: '暂无模型：在渠道表单中点选或输入模型名后即出现在这里' }}
+        locale={{ emptyText: t('models.mineEmpty') }}
         columns={[
-          { title: '模型', dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
+          { title: t('common.model'), dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
           {
-            title: '服务渠道',
+            title: t('models.channels'),
             render: (_: unknown, row: ModelRow) =>
               row.channels.length ? (
                 <Space wrap>
                   {row.channels.map((c) => (
                     <Tag key={c.id} color={c.enabled ? 'blue' : undefined}>
                       {c.name}
-                      {!c.enabled ? '（停用）' : ''}
+                      {!c.enabled ? t('models.channelDisabledSuffix') : ''}
                     </Tag>
                   ))}
                 </Space>
@@ -87,13 +87,13 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
               ),
           },
           {
-            title: '操作',
+            title: t('common.action'),
             width: 160,
             render: (_: unknown, row: ModelRow) => (
               <Space>
-                <Button size="small" onClick={() => { setRenaming(row); form.setFieldsValue({ name: row.name }) }}>重命名</Button>
-                <Popconfirm title={`删除模型 ${row.name}？将从所有渠道移除`} onConfirm={() => removeModel(row)}>
-                  <Button size="small" danger>删除</Button>
+                <Button size="small" onClick={() => { setRenaming(row); form.setFieldsValue({ name: row.name }) }}>{t('models.rename')}</Button>
+                <Popconfirm title={t('models.deleteConfirm', { name: row.name })} onConfirm={() => removeModel(row)}>
+                  <Button size="small" danger>{t('common.delete')}</Button>
                 </Popconfirm>
               </Space>
             ),
@@ -101,15 +101,15 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
         ]}
       />
       <Modal
-        title={`重命名模型：${renaming?.name ?? ''}`}
+        title={t('models.renameTitle', { name: renaming?.name ?? '' })}
         open={renaming !== null}
         onOk={submitRename}
         onCancel={() => setRenaming(null)}
         destroyOnClose
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="新模型名" rules={[{ required: true, message: '请输入新模型名' }]} extra={<span className="form-hint">重命名会同步更新所有绑定渠道及模型映射。</span>}>
-            <Input placeholder="如 claude-sonnet-4.5" />
+          <Form.Item name="name" label={t('models.newName')} rules={[{ required: true, message: t('models.newNameRequired') }]} extra={<span className="form-hint">{t('models.renameHint')}</span>}>
+            <Input placeholder={t('models.namePlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
@@ -118,6 +118,7 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
 }
 
 const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ channels, loading }) => {
+  const { t } = useI18n()
   const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
   const [catLoading, setCatLoading] = React.useState(true)
 
@@ -143,31 +144,28 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
 
   return (
     <div>
-      <div className="tab-note">
-        管理员预置的模型目录，作为渠道表单中的点选数据源；未列出的模型仍可在渠道表单中手动输入。
-        单价按模型名关联价目表（费用统计同口径）。
-      </div>
+      <div className="tab-note">{t('models.catalogTabNote')}</div>
       <Table<CatalogModel>
         rowKey="id"
         loading={loading || catLoading}
         dataSource={catalog}
         scroll={{ x: 'max-content' }}
-        locale={{ emptyText: '管理员尚未配置模型目录' }}
+        locale={{ emptyText: t('models.catalogEmpty') }}
         columns={[
-          { title: '模型', dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
+          { title: t('common.model'), dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
           {
-            title: '单价（$/百万 tokens）',
+            title: t('models.unitPrice'),
             width: 230,
             render: (_: unknown, m: CatalogModel) => <CatalogPrice m={m} />,
           },
-          { title: '备注', dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
+          { title: t('common.note'), dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
           {
-            title: '使用情况',
+            title: t('models.usage'),
             width: 220,
             render: (_: unknown, m: CatalogModel) => {
               const chans = usage.get(m.name)
-              if (!chans || chans.length === 0) return <span className="text-tertiary">未使用</span>
-              return <span>已用于 {chans.length} 个渠道</span>
+              if (!chans || chans.length === 0) return <span className="text-tertiary">{t('models.unused')}</span>
+              return <span>{t('models.usedByChannels', { count: chans.length })}</span>
             },
           },
         ]}
@@ -177,6 +175,7 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
 }
 
 const ModelsPage: React.FC = () => {
+  const { t } = useI18n()
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [loading, setLoading] = React.useState(true)
 
@@ -193,13 +192,13 @@ const ModelsPage: React.FC = () => {
   return (
     <div>
       <div className="page-heading">
-        <div><h2>模型管理</h2><p>管理模型目录；渠道关联在渠道表单中点选维护。</p></div>
-        <div className="page-actions"><Button icon={<ReloadOutlined />} onClick={refresh}>刷新</Button></div>
+        <div><h2>{t('models.title')}</h2><p>{t('models.subtitle')}</p></div>
+        <div className="page-actions"><Button icon={<ReloadOutlined />} onClick={refresh}>{t('models.refresh')}</Button></div>
       </div>
       <Tabs
         items={[
-          { key: 'mine', label: '我的模型', children: <MyModelsTab channels={channels} loading={loading} refresh={refresh} /> },
-          { key: 'catalog', label: '模型目录（管理员预置）', children: <CatalogTab channels={channels} loading={loading} /> },
+          { key: 'mine', label: t('models.myModels'), children: <MyModelsTab channels={channels} loading={loading} refresh={refresh} /> },
+          { key: 'catalog', label: t('models.catalogTab'), children: <CatalogTab channels={channels} loading={loading} /> },
         ]}
       />
     </div>

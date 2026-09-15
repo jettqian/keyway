@@ -1,0 +1,28 @@
+export default {
+  'models.title': 'Model Management',
+  'models.subtitle': 'Manage the model catalog; channel associations are maintained in the channel form.',
+  'models.refresh': 'Refresh',
+  'models.myModels': 'My Models',
+  'models.catalogTab': 'Model Catalog (Admin-curated)',
+  'models.mineTabNote':
+    'Model-channel associations are maintained in the channel form: when editing a channel, pick from the model catalog or existing models, or type a new name directly. This page only manages model names themselves.',
+  'models.mineEmpty': 'No models yet: they will appear here once picked or entered in the channel form',
+  'models.channels': 'Channels',
+  'models.channelDisabledSuffix': ' (Disabled)',
+  'models.rename': 'Rename',
+  'models.deleteConfirm': 'Delete model {name}? It will be removed from all channels',
+  'models.renameTitle': 'Rename Model: {name}',
+  'models.newName': 'New model name',
+  'models.newNameRequired': 'Please enter a new model name',
+  'models.renameHint': 'Renaming updates all bound channels and model mappings accordingly.',
+  'models.namePlaceholder': 'e.g. claude-sonnet-4.5',
+  'models.renamedNotice': 'Renamed; takes effect on the next request',
+  'models.removedFromAll': 'Model removed from all channels',
+  'models.catalogTabNote':
+    'The admin-curated model catalog serves as the pick list in the channel form; models not listed can still be entered manually. Unit prices are linked to the pricing table by model name (same basis as cost stats).',
+  'models.catalogEmpty': 'The model catalog has not been configured by the admin yet',
+  'models.unitPrice': 'Unit Price ($/M tokens)',
+  'models.usage': 'Usage',
+  'models.unused': 'Unused',
+  'models.usedByChannels': 'Used by {count} channel(s)',
+}

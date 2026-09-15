@@ -1,0 +1,29 @@
+// 页面文案：key 统一以模块前缀命名，避免与其它字典冲突
+export default {
+  'models.title': '模型管理',
+  'models.subtitle': '管理模型目录；渠道关联在渠道表单中点选维护。',
+  'models.refresh': '刷新',
+  'models.myModels': '我的模型',
+  'models.catalogTab': '模型目录（管理员预置）',
+  'models.mineTabNote':
+    '模型与渠道的关联在渠道表单中点选维护：编辑渠道时可从模型目录或已有模型点选，也可直接输入新名称。此处仅管理模型名本身。',
+  'models.mineEmpty': '暂无模型：在渠道表单中点选或输入模型名后即出现在这里',
+  'models.channels': '服务渠道',
+  'models.channelDisabledSuffix': '（停用）',
+  'models.rename': '重命名',
+  'models.deleteConfirm': '删除模型 {name}？将从所有渠道移除',
+  'models.renameTitle': '重命名模型：{name}',
+  'models.newName': '新模型名',
+  'models.newNameRequired': '请输入新模型名',
+  'models.renameHint': '重命名会同步更新所有绑定渠道及模型映射。',
+  'models.namePlaceholder': '如 claude-sonnet-4.5',
+  'models.renamedNotice': '已重命名，下一个请求生效',
+  'models.removedFromAll': '模型已从所有渠道移除',
+  'models.catalogTabNote':
+    '管理员预置的模型目录，作为渠道表单中的点选数据源；未列出的模型仍可在渠道表单中手动输入。 单价按模型名关联价目表（费用统计同口径）。',
+  'models.catalogEmpty': '管理员尚未配置模型目录',
+  'models.unitPrice': '单价（$/百万 tokens）',
+  'models.usage': '使用情况',
+  'models.unused': '未使用',
+  'models.usedByChannels': '已用于 {count} 个渠道',
+}
