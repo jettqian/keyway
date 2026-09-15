@@ -30,11 +30,13 @@ import {
 } from '../api'
 import type { User, ModelPricing, PricingSource, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings } from '../api/types'
 import { formatDateTime, fmtInt, fmtTokens } from '../format'
+import { useI18n } from '../i18n'
 import CatalogPrice from '../components/CatalogPrice'
 import Money from '../components/Money'
 import { rangePresets } from './Stats'
 
 const UsersTab: React.FC = () => {
+  const { t } = useI18n()
   const [users, setUsers] = React.useState<User[]>([])
   const [loading, setLoading] = React.useState(true)
   const refresh = React.useCallback(() => {
@@ -53,37 +55,37 @@ const UsersTab: React.FC = () => {
       scroll={{ x: 'max-content' }}
       columns={[
         { title: 'ID', dataIndex: 'id', width: 60 },
-        { title: '用户名', dataIndex: 'username' },
-        { title: '角色', dataIndex: 'role', render: (r: number) => (r === 100 ? <Tag color="red">管理员</Tag> : <Tag>用户</Tag>) },
+        { title: t('admin.username'), dataIndex: 'username' },
+        { title: t('common.role'), dataIndex: 'role', render: (r: number) => (r === 100 ? <Tag color="red">{t('admin.adminRole')}</Tag> : <Tag>{t('common.user')}</Tag>) },
         {
-          title: '状态',
+          title: t('common.status'),
           dataIndex: 'status',
-          render: (s: number) => (s === 1 ? <Tag color="green">正常</Tag> : <Tag color="orange">禁用</Tag>),
+          render: (s: number) => (s === 1 ? <Tag color="green">{t('admin.statusNormal')}</Tag> : <Tag color="orange">{t('admin.statusDisabled')}</Tag>),
         },
-        { title: '注册时间', dataIndex: 'createdAt', width: 180, render: (v: number | string) => formatDateTime(v) },
-        { title: '最近登录', dataIndex: 'lastLoginAt', width: 180, render: (v: number | string) => formatDateTime(v) },
+        { title: t('admin.registeredAt'), dataIndex: 'createdAt', width: 180, render: (v: number | string) => formatDateTime(v) },
+        { title: t('admin.lastLoginAt'), dataIndex: 'lastLoginAt', width: 180, render: (v: number | string) => formatDateTime(v) },
         {
-          title: '操作',
+          title: t('common.action'),
           render: (_, u) => (
             <Space>
               <Button
                 size="small"
                 onClick={async () => {
                   await adminSetUserStatus(u.id, u.status === 1 ? 2 : 1)
-                  message.success('已更新')
+                  message.success(t('common.updated'))
                   refresh()
                 }}
               >
-                {u.status === 1 ? '禁用' : '启用'}
+                {u.status === 1 ? t('admin.disableUser') : t('common.enabled')}
               </Button>
               <Button
                 size="small"
                 onClick={async () => {
                   const r = await adminResetPassword(u.id)
-                  Modal.info({ title: '新密码', content: <Typography.Text copyable>{r.password}</Typography.Text> })
+                  Modal.info({ title: t('admin.newPassword'), content: <Typography.Text copyable>{r.password}</Typography.Text> })
                 }}
               >
-                重置密码
+                {t('admin.resetPassword')}
               </Button>
             </Space>
           ),
@@ -96,6 +98,7 @@ const UsersTab: React.FC = () => {
 // UsersTab 中使用 Modal 展示重置密码结果
 
 const PricingTab: React.FC = () => {
+  const { t } = useI18n()
   const [pricing, setPricing] = React.useState<ModelPricing[]>([])
   const [loading, setLoading] = React.useState(true)
   const [modalOpen, setModalOpen] = React.useState(false)
@@ -157,7 +160,7 @@ const PricingTab: React.FC = () => {
     }
     try {
       await adminUpdatePricing(p)
-      message.success(editing ? '已更新（费用快照从下一条日志生效）' : '已添加')
+      message.success(editing ? t('admin.pricingUpdated') : t('common.added'))
       setModalOpen(false)
       refresh()
     } catch (e) {
@@ -178,7 +181,7 @@ const PricingTab: React.FC = () => {
       list = JSON.parse(importText)
       if (!Array.isArray(list)) throw new Error()
     } catch {
-      message.error('不是合法的 JSON 数组')
+      message.error(t('admin.invalidJsonArray'))
       return
     }
     let ok = 0
@@ -195,7 +198,7 @@ const PricingTab: React.FC = () => {
         // 单条失败继续
       }
     }
-    message.success(`导入 ${ok}/${list.length} 条`)
+    message.success(t('admin.importResult', { ok, total: list.length }))
     setImportOpen(false)
     refresh()
   }
@@ -205,9 +208,11 @@ const PricingTab: React.FC = () => {
     try {
       const r = await adminSyncRemotePricing()
       const { litellmAdded, openrouterAdded, skippedExisting, warnings } = r.result
-      const parts = [`LiteLLM 新增 ${litellmAdded}、OpenRouter 新增 ${openrouterAdded}`]
-      if (skippedExisting) parts.push(`已存在 ${skippedExisting} 条未覆盖`)
-      message.success(parts.join('；') + (warnings?.length ? `（${warnings.join('；')}）` : ''))
+      const sep = t('admin.listSeparator')
+      const parts = [t('admin.syncAdded', { litellm: litellmAdded, openrouter: openrouterAdded })]
+      if (skippedExisting) parts.push(t('admin.syncSkipped', { count: skippedExisting }))
+      const head = parts.join(sep)
+      message.success(warnings?.length ? head + t('admin.warningsSuffix', { warnings: warnings.join(sep) }) : head)
       refresh()
     } catch (e) {
       message.error((e as Error).message)
@@ -221,9 +226,9 @@ const PricingTab: React.FC = () => {
         <Space size="middle" className="text-secondary" style={{ fontSize: 13 }}>
           <span>
             {syncedAt ? (
-              <>上次官方价目同步：{formatDateTime(syncedAt)}</>
+              t('admin.lastSyncedAt', { time: formatDateTime(syncedAt) })
             ) : (
-              '尚未同步官方价目'
+              t('admin.notSyncedYet')
             )}
           </span>
           {sources.map((s) => (
@@ -234,15 +239,15 @@ const PricingTab: React.FC = () => {
         </Space>
         <Space>
           <Popconfirm
-            title="从 LiteLLM / OpenRouter 同步官方价目？"
-            description="只补缺：已存在的条目一律不覆盖（如需刷新某条可先删除再同步）。后台也会按 KEYWAY_PRICING_SYNC_HOURS 定期同步（默认 24 小时，0 关闭）。"
+            title={t('admin.syncConfirmTitle')}
+            description={t('admin.syncConfirmDesc')}
             onConfirm={syncRemote}
           >
-            <Button loading={syncing}>同步官方价目</Button>
+            <Button loading={syncing}>{t('admin.syncOfficialPricing')}</Button>
           </Popconfirm>
-          <Button onClick={exportJSON}>导出 JSON</Button>
-          <Button onClick={() => { setImportText(''); setImportOpen(true) }}>导入 JSON</Button>
-          <Button type="primary" onClick={openCreate}>新增模型</Button>
+          <Button onClick={exportJSON}>{t('admin.exportJson')}</Button>
+          <Button onClick={() => { setImportText(''); setImportOpen(true) }}>{t('admin.importJson')}</Button>
+          <Button type="primary" onClick={openCreate}>{t('admin.addModel')}</Button>
         </Space>
       </div>
       <div style={{ marginBottom: 12 }}>
@@ -250,12 +255,14 @@ const PricingTab: React.FC = () => {
           allowClear
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="按模型名搜索筛选"
+          placeholder={t('admin.searchModelPlaceholder')}
           style={{ width: 240 }}
           prefix={<SearchOutlined />}
         />
         <span className="text-tertiary" style={{ fontSize: 12, marginLeft: 12 }}>
-          共 {pricing.length} 条{search.trim() ? `，匹配 ${rows.length} 条` : ''}；模型目录中的条目置前显示
+          {t('admin.totalEntries', { count: pricing.length })}
+          {search.trim() ? t('admin.matchedEntries', { count: rows.length }) : ''}
+          {t('admin.catalogFirstNote')}
         </span>
       </div>
       <Table<ModelPricing>
@@ -266,24 +273,24 @@ const PricingTab: React.FC = () => {
         pagination={{ pageSize: 20 }}
         columns={[
           {
-            title: '模型',
+            title: t('common.model'),
             dataIndex: 'model',
             render: (n: string) => (
               <Space>
                 {n}
-                {catalogNames.has(n) ? <Tag color="blue">目录</Tag> : null}
+                {catalogNames.has(n) ? <Tag color="blue">{t('admin.catalogTag')}</Tag> : null}
               </Space>
             ),
           },
           {
-            title: '输入 $/M',
+            title: t('admin.inputPerM'),
             dataIndex: 'inputPerM',
             align: 'right',
             width: 100,
             render: (v: number) => <Money value={v} />,
           },
           {
-            title: '缓存读 $/M',
+            title: t('admin.cacheReadPerM'),
             dataIndex: 'cachedInputPerM',
             align: 'right',
             width: 110,
@@ -291,13 +298,13 @@ const PricingTab: React.FC = () => {
               v != null ? (
                 <Money value={v} />
               ) : (
-                <Tooltip title="未配置，按输入价回退">
+                <Tooltip title={t('admin.fallbackToInputPrice')}>
                   <span className="text-tertiary"><Money value={p.inputPerM} /></span>
                 </Tooltip>
               ),
           },
           {
-            title: '缓存写 $/M',
+            title: t('admin.cacheWritePerM'),
             dataIndex: 'cacheWritePerM',
             align: 'right',
             width: 110,
@@ -305,66 +312,66 @@ const PricingTab: React.FC = () => {
               v != null ? (
                 <Money value={v} />
               ) : (
-                <Tooltip title="未配置，按输入价回退">
+                <Tooltip title={t('admin.fallbackToInputPrice')}>
                   <span className="text-tertiary"><Money value={p.inputPerM} /></span>
                 </Tooltip>
               ),
           },
           {
-            title: '输出 $/M',
+            title: t('admin.outputPerM'),
             dataIndex: 'outputPerM',
             align: 'right',
             width: 100,
             render: (v: number) => <Money value={v} />,
           },
           {
-            title: '操作',
+            title: t('common.action'),
             width: 130,
             render: (_, p) => (
               <Space>
-                <Button size="small" onClick={() => openEdit(p)}>编辑</Button>
+                <Button size="small" onClick={() => openEdit(p)}>{t('common.edit')}</Button>
                 <Popconfirm
-                  title={`删除 ${p.model} 的价目？`}
-                  description="删除后该模型的请求费用将记为未定价"
+                  title={t('admin.deletePricingConfirm', { model: p.model })}
+                  description={t('admin.deletePricingDesc')}
                   onConfirm={async () => {
                     await adminDeletePricing(p.model)
-                    message.success('已删除')
+                    message.success(t('common.deleted'))
                     refresh()
                   }}
                 >
-                  <Button size="small" danger>删除</Button>
+                  <Button size="small" danger>{t('common.delete')}</Button>
                 </Popconfirm>
               </Space>
             ),
           },
         ]}
       />
-      <Modal title={editing ? `编辑价目：${editing.model}` : '新增模型价目'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
+      <Modal title={editing ? t('admin.editPricingTitle', { model: editing.model }) : t('admin.addPricingTitle')} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
         <Form form={form} layout="vertical">
-          <Form.Item name="model" label="模型名" rules={[{ required: true, message: '请输入模型名' }]}>
-            <Input disabled={!!editing} placeholder="如 deepseek-chat" />
+          <Form.Item name="model" label={t('admin.modelName')} rules={[{ required: true, message: t('admin.modelNameRequired') }]}>
+            <Input disabled={!!editing} placeholder={t('admin.modelNamePlaceholder')} />
           </Form.Item>
           <Space size="large">
-            <Form.Item name="inputPerM" label="输入 $/M" rules={[{ required: true }]}>
+            <Form.Item name="inputPerM" label={t('admin.inputPerM')} rules={[{ required: true }]}>
               <InputNumber min={0} step={0.01} style={{ width: 120 }} />
             </Form.Item>
-            <Form.Item name="outputPerM" label="输出 $/M" rules={[{ required: true }]}>
+            <Form.Item name="outputPerM" label={t('admin.outputPerM')} rules={[{ required: true }]}>
               <InputNumber min={0} step={0.01} style={{ width: 120 }} />
             </Form.Item>
           </Space>
           <Space size="large">
-            <Form.Item name="cachedInputPerM" label="缓存读 $/M（空=同输入价）">
+            <Form.Item name="cachedInputPerM" label={t('admin.cacheReadPerMOptional')}>
               <InputNumber min={0} step={0.01} style={{ width: 150 }} />
             </Form.Item>
-            <Form.Item name="cacheWritePerM" label="缓存写 $/M（空=同输入价）">
+            <Form.Item name="cacheWritePerM" label={t('admin.cacheWritePerMOptional')}>
               <InputNumber min={0} step={0.01} style={{ width: 150 }} />
             </Form.Item>
           </Space>
         </Form>
       </Modal>
-      <Modal title="导入价目 JSON" open={importOpen} onOk={runImport} onCancel={() => setImportOpen(false)} width={560}>
+      <Modal title={t('admin.importPricingTitle')} open={importOpen} onOk={runImport} onCancel={() => setImportOpen(false)} width={560}>
         <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-          粘贴 JSON 数组，字段：model、inputPerM、outputPerM、cachedInputPerM?、cacheWritePerM?（与导出格式一致，同 model 覆盖）
+          {t('admin.importPricingHint')}
         </Typography.Paragraph>
         <Input.TextArea rows={10} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder='[{"model":"deepseek-chat","inputPerM":0.27,"outputPerM":1.1}]' />
       </Modal>
@@ -373,6 +380,7 @@ const PricingTab: React.FC = () => {
 }
 
 const ProxiesTab: React.FC = () => {
+  const { t } = useI18n()
   const [proxies, setProxies] = React.useState<Proxy[]>([])
   const [loading, setLoading] = React.useState(true)
   const [modalOpen, setModalOpen] = React.useState(false)
@@ -402,10 +410,10 @@ const ProxiesTab: React.FC = () => {
     try {
       if (editing) {
         await adminUpdateProxy(editing.id, v)
-        message.success('已更新，缓存即时生效')
+        message.success(t('admin.proxyUpdated'))
       } else {
         await adminCreateProxy(v)
-        message.success('已创建')
+        message.success(t('common.created'))
       }
       setModalOpen(false)
       refresh()
@@ -416,7 +424,7 @@ const ProxiesTab: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: 12, textAlign: 'right' }}>
-        <Button type="primary" onClick={openCreate}>新建公共代理</Button>
+        <Button type="primary" onClick={openCreate}>{t('admin.createProxy')}</Button>
       </div>
       <Table<Proxy>
         rowKey="id"
@@ -424,43 +432,43 @@ const ProxiesTab: React.FC = () => {
         dataSource={proxies}
         scroll={{ x: 'max-content' }}
         columns={[
-          { title: '名称', dataIndex: 'name' },
-          { title: '状态', dataIndex: 'enabled', render: (v: boolean) => (v ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>) },
-          { title: '备注', dataIndex: 'note' },
+          { title: t('common.name'), dataIndex: 'name' },
+          { title: t('common.status'), dataIndex: 'enabled', render: (v: boolean) => (v ? <Tag color="green">{t('common.enabled')}</Tag> : <Tag>{t('common.disabled')}</Tag>) },
+          { title: t('common.note'), dataIndex: 'note' },
           {
-            title: '操作',
+            title: t('common.action'),
             width: 130,
             render: (_, p) => (
               <Space>
-                <Button size="small" onClick={() => openEdit(p)}>编辑</Button>
+                <Button size="small" onClick={() => openEdit(p)}>{t('common.edit')}</Button>
                 <Popconfirm
-                  title={`删除公共代理 ${p.name}？`}
-                  description="允许走公共代理的渠道将无法再使用它"
+                  title={t('admin.deleteProxyConfirm', { name: p.name })}
+                  description={t('admin.deleteProxyDesc')}
                   onConfirm={async () => {
                     await adminDeleteProxy(p.id)
-                    message.success('已删除')
+                    message.success(t('common.deleted'))
                     refresh()
                   }}
                 >
-                  <Button size="small" danger>删除</Button>
+                  <Button size="small" danger>{t('common.delete')}</Button>
                 </Popconfirm>
               </Space>
             ),
           },
         ]}
       />
-      <Modal title={editing ? `编辑代理：${editing.name}` : '新建公共代理'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
+      <Modal title={editing ? t('admin.editProxyTitle', { name: editing.name }) : t('admin.createProxy')} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
-            <Input placeholder="如 mihomo-出口A" />
+          <Form.Item name="name" label={t('common.name')} rules={[{ required: true, message: t('common.nameRequired') }]}>
+            <Input placeholder={t('admin.proxyNamePlaceholder')} />
           </Form.Item>
-          <Form.Item name="url" label={editing ? '代理地址（留空不修改）' : '代理地址'}>
-            <Input placeholder="socks5://127.0.0.1:7890 或 http://host:port" />
+          <Form.Item name="url" label={editing ? t('admin.proxyUrlKeep') : t('admin.proxyUrl')}>
+            <Input placeholder={t('admin.proxyUrlPlaceholder')} />
           </Form.Item>
-          <Form.Item name="note" label="备注">
+          <Form.Item name="note" label={t('common.note')}>
             <Input />
           </Form.Item>
-          <Form.Item name="enabled" label="启用" valuePropName="checked">
+          <Form.Item name="enabled" label={t('common.enabled')} valuePropName="checked">
             <Switch />
           </Form.Item>
         </Form>
@@ -470,6 +478,7 @@ const ProxiesTab: React.FC = () => {
 }
 
 const CatalogModelsTab: React.FC = () => {
+  const { t } = useI18n()
   const [models, setModels] = React.useState<CatalogModel[]>([])
   const [pricingList, setPricingList] = React.useState<ModelPricing[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -499,12 +508,12 @@ const CatalogModelsTab: React.FC = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.model}</span>
             <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-              输入 <Money value={p.inputPerM} /> / 输出 <Money value={p.outputPerM} />
+              {t('common.input')} <Money value={p.inputPerM} /> / {t('common.output')} <Money value={p.outputPerM} />
             </span>
           </div>
         ),
       }))
-  }, [pricingList, models])
+  }, [pricingList, models, t])
   const openCreate = () => {
     setEditing(null)
     setPicked(null)
@@ -523,10 +532,10 @@ const CatalogModelsTab: React.FC = () => {
     try {
       if (editing) {
         await adminUpdateCatalogModel(editing.id, { name: v.name, note: v.note, enabled: v.enabled })
-        message.success('已更新')
+        message.success(t('common.updated'))
       } else {
         await adminCreateCatalogModel({ name: v.name, note: v.note })
-        message.success('已添加')
+        message.success(t('common.added'))
       }
       setModalOpen(false)
       refresh()
@@ -537,11 +546,10 @@ const CatalogModelsTab: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: 12, textAlign: 'right' }}>
-        <Button type="primary" onClick={openCreate}>新增模型</Button>
+        <Button type="primary" onClick={openCreate}>{t('admin.addModel')}</Button>
       </div>
       <div className="tab-note">
-        模型目录是全局点选数据源：用户在渠道表单与模板表单中从这里点选模型；删除目录项不影响已引用它的渠道配置。
-        只收录用户常用的模型即可，无需与价目表对齐；新增时可从价目表搜索点选，价格自动关联。
+        {t('admin.catalogNote1')} {t('admin.catalogNote2')}
       </div>
       <Table<CatalogModel>
         rowKey="id"
@@ -550,61 +558,61 @@ const CatalogModelsTab: React.FC = () => {
         scroll={{ x: 'max-content' }}
         pagination={{ pageSize: 20 }}
         columns={[
-          { title: '模型', dataIndex: 'name' },
+          { title: t('common.model'), dataIndex: 'name' },
           {
-            title: '单价（$/百万 tokens）',
+            title: t('admin.unitPrice'),
             width: 230,
             render: (_: unknown, m: CatalogModel) => <CatalogPrice m={m} />,
           },
-          { title: '备注', dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
+          { title: t('common.note'), dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
           {
-            title: '状态',
+            title: t('common.status'),
             dataIndex: 'enabled',
             width: 90,
-            render: (v: boolean) => (v ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>),
+            render: (v: boolean) => (v ? <Tag color="green">{t('common.enabled')}</Tag> : <Tag>{t('common.disabled')}</Tag>),
           },
           {
-            title: '操作',
+            title: t('common.action'),
             width: 130,
             render: (_, m) => (
               <Space>
-                <Button size="small" onClick={() => openEdit(m)}>编辑</Button>
+                <Button size="small" onClick={() => openEdit(m)}>{t('common.edit')}</Button>
                 <Popconfirm
-                  title={`从目录移除 ${m.name}？`}
-                  description="已引用它的渠道配置不受影响"
+                  title={t('admin.removeCatalogConfirm', { name: m.name })}
+                  description={t('admin.removeCatalogDesc')}
                   onConfirm={async () => {
                     await adminDeleteCatalogModel(m.id)
-                    message.success('已删除')
+                    message.success(t('common.deleted'))
                     refresh()
                   }}
                 >
-                  <Button size="small" danger>删除</Button>
+                  <Button size="small" danger>{t('common.delete')}</Button>
                 </Popconfirm>
               </Space>
             ),
           },
         ]}
       />
-      <Modal title={editing ? `编辑目录模型：${editing.name}` : '新增目录模型'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
+      <Modal title={editing ? t('admin.editCatalogTitle', { name: editing.name }) : t('admin.addCatalogTitle')} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
         <Form form={form} layout="vertical">
           <Form.Item
             name="name"
-            label="模型名"
-            rules={[{ required: true, message: '请输入模型名' }]}
+            label={t('admin.modelName')}
+            rules={[{ required: true, message: t('admin.modelNameRequired') }]}
             extra={
               picked ? (
                 <span>
-                  价目关联：输入 <Money value={picked.inputPerM} /> · 输出 <Money value={picked.outputPerM} /> ·
-                  缓存读 <Money value={picked.cachedInputPerM ?? picked.inputPerM} /> ·
-                  缓存写 <Money value={picked.cacheWritePerM ?? picked.inputPerM} />
+                  {t('admin.priceLinked')}{t('common.input')} <Money value={picked.inputPerM} /> · {t('common.output')} <Money value={picked.outputPerM} /> ·
+                  {t('common.cacheRead')} <Money value={picked.cachedInputPerM ?? picked.inputPerM} /> ·
+                  {t('common.cacheWrite')} <Money value={picked.cacheWritePerM ?? picked.inputPerM} />
                 </span>
               ) : (
-                <span className="form-hint">可从价目表搜索点选，也可直接输入目录外名称（费用将记为未定价）</span>
+                <span className="form-hint">{t('admin.catalogNameHint')}</span>
               )
             }
           >
             {editing ? (
-              <Input placeholder="如 claude-sonnet-4.5" />
+              <Input placeholder={t('admin.catalogEditPlaceholder')} />
             ) : (
               <AutoComplete
                 allowClear
@@ -617,15 +625,15 @@ const CatalogModelsTab: React.FC = () => {
                 filterOption={(input, option) =>
                   String(option?.value ?? '').toLowerCase().includes(input.trim().toLowerCase())
                 }
-                placeholder="输入关键字从价目表搜索选择，如 claude-sonnet"
+                placeholder={t('admin.catalogPickPlaceholder')}
               />
             )}
           </Form.Item>
-          <Form.Item name="note" label="备注">
-            <Input.TextArea rows={2} placeholder="如 2026-09 在售，适合 Agent 主力" />
+          <Form.Item name="note" label={t('common.note')}>
+            <Input.TextArea rows={2} placeholder={t('admin.catalogNotePlaceholder')} />
           </Form.Item>
           {editing ? (
-            <Form.Item name="enabled" label="启用（停用后不再出现在用户点选项中）" valuePropName="checked">
+            <Form.Item name="enabled" label={t('admin.catalogEnabledLabel')} valuePropName="checked">
               <Switch />
             </Form.Item>
           ) : null}
@@ -636,6 +644,7 @@ const CatalogModelsTab: React.FC = () => {
 }
 
 const TemplatesTab: React.FC = () => {
+  const { t } = useI18n()
   const [templates, setTemplates] = React.useState<ChannelTemplate[]>([])
   const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -645,8 +654,8 @@ const TemplatesTab: React.FC = () => {
   const refresh = React.useCallback(() => {
     setLoading(true)
     Promise.all([adminTemplates(), adminCatalogModels()])
-      .then(([t, m]) => {
-        setTemplates(t.templates)
+      .then(([tpl, m]) => {
+        setTemplates(tpl.templates)
         setCatalog(m.models)
       })
       .catch((e) => message.error((e as Error).message))
@@ -659,13 +668,13 @@ const TemplatesTab: React.FC = () => {
     form.setFieldsValue({ baseUrls: [''], models: [], lineStrategy: 'auto', priorityDefault: 0, allowPublicProxyDefault: false, note: '', enabled: true })
     setModalOpen(true)
   }
-  const openEdit = (t: ChannelTemplate) => {
-    setEditing(t)
+  const openEdit = (tpl: ChannelTemplate) => {
+    setEditing(tpl)
     form.setFieldsValue({
-      name: t.name, baseUrls: t.baseUrls, lineStrategy: t.lineStrategy,
-      models: t.models, modelMapping: Object.entries(t.modelMapping).map(([from, to]) => ({ from, to })),
-      priorityDefault: t.priorityDefault, allowPublicProxyDefault: t.allowPublicProxyDefault,
-      note: t.note, enabled: t.enabled,
+      name: tpl.name, baseUrls: tpl.baseUrls, lineStrategy: tpl.lineStrategy,
+      models: tpl.models, modelMapping: Object.entries(tpl.modelMapping).map(([from, to]) => ({ from, to })),
+      priorityDefault: tpl.priorityDefault, allowPublicProxyDefault: tpl.allowPublicProxyDefault,
+      note: tpl.note, enabled: tpl.enabled,
     })
     setModalOpen(true)
   }
@@ -684,10 +693,10 @@ const TemplatesTab: React.FC = () => {
     try {
       if (editing) {
         await adminUpdateTemplate(editing.id, input)
-        message.success('已更新')
+        message.success(t('common.updated'))
       } else {
         await adminCreateTemplate(input)
-        message.success('已创建')
+        message.success(t('common.created'))
       }
       setModalOpen(false)
       refresh()
@@ -698,7 +707,7 @@ const TemplatesTab: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: 12, textAlign: 'right' }}>
-        <Button type="primary" onClick={openCreate}>新建模板</Button>
+        <Button type="primary" onClick={openCreate}>{t('admin.createTemplate')}</Button>
       </div>
       <Table<ChannelTemplate>
         rowKey="id"
@@ -706,107 +715,107 @@ const TemplatesTab: React.FC = () => {
         dataSource={templates}
         scroll={{ x: 'max-content' }}
         columns={[
-          { title: '名称', dataIndex: 'name' },
-          { title: '线路数', width: 90, align: 'right', render: (_, t) => t.baseUrls.length },
-          { title: '模型数', width: 90, align: 'right', render: (_, t) => t.models.length },
-          { title: '复制次数', dataIndex: 'copyCount', width: 90, align: 'right' },
-          { title: '说明', dataIndex: 'note', ellipsis: true },
+          { title: t('common.name'), dataIndex: 'name' },
+          { title: t('admin.lineCount'), width: 90, align: 'right', render: (_, tpl) => tpl.baseUrls.length },
+          { title: t('admin.modelCount'), width: 90, align: 'right', render: (_, tpl) => tpl.models.length },
+          { title: t('admin.copyCount'), dataIndex: 'copyCount', width: 90, align: 'right' },
+          { title: t('common.description'), dataIndex: 'note', ellipsis: true },
           {
-            title: '状态',
+            title: t('common.status'),
             dataIndex: 'enabled',
-            render: (v: boolean) => (v ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>),
+            render: (v: boolean) => (v ? <Tag color="green">{t('common.enabled')}</Tag> : <Tag>{t('common.disabled')}</Tag>),
           },
           {
-            title: '操作',
+            title: t('common.action'),
             width: 130,
-            render: (_, t) => (
+            render: (_, tpl) => (
               <Space>
-                <Button size="small" onClick={() => openEdit(t)}>编辑</Button>
+                <Button size="small" onClick={() => openEdit(tpl)}>{t('common.edit')}</Button>
                 <Popconfirm
-                  title={`删除模板 ${t.name}？`}
-                  description="已复制的渠道不受影响"
+                  title={t('admin.deleteTemplateConfirm', { name: tpl.name })}
+                  description={t('admin.deleteTemplateDesc')}
                   onConfirm={async () => {
-                    await adminDeleteTemplate(t.id)
-                    message.success('已删除（已复制渠道不受影响）')
+                    await adminDeleteTemplate(tpl.id)
+                    message.success(t('admin.templateDeleted'))
                     refresh()
                   }}
                 >
-                  <Button size="small" danger>删除</Button>
+                  <Button size="small" danger>{t('common.delete')}</Button>
                 </Popconfirm>
               </Space>
             ),
           },
         ]}
       />
-      <Modal title={editing ? `编辑模板：${editing.name}` : '新建预制模板'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} width={640} destroyOnClose>
+      <Modal title={editing ? t('admin.editTemplateTitle', { name: editing.name }) : t('admin.createTemplateTitle')} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} width={640} destroyOnClose>
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+          <Form.Item name="name" label={t('common.name')} rules={[{ required: true, message: t('common.nameRequired') }]}>
             <Input />
           </Form.Item>
-          <Form.Item label="线路（base_url，按优先顺序，≤5 条）" required>
+          <Form.Item label={t('admin.baseUrlsLabel')} required>
             <Form.List name="baseUrls">
               {(fields, { add, remove }) => (
                 <>
                   {fields.map((f) => (
                     <Space key={f.key} style={{ display: 'flex', marginBottom: 4 }}>
-                      <Form.Item name={[f.name]} noStyle rules={[{ required: true, message: '线路不能为空' }]}>
+                      <Form.Item name={[f.name]} noStyle rules={[{ required: true, message: t('admin.baseUrlRequired') }]}>
                         <Input placeholder="https://api.example.com" style={{ width: 400 }} />
                       </Form.Item>
-                      {fields.length > 1 ? <a onClick={() => remove(f.name)}>删除</a> : null}
+                      {fields.length > 1 ? <a onClick={() => remove(f.name)}>{t('common.delete')}</a> : null}
                     </Space>
                   ))}
                   {fields.length < 5 ? (
-                    <Button type="dashed" onClick={() => add('')} block>添加线路</Button>
+                    <Button type="dashed" onClick={() => add('')} block>{t('admin.addLine')}</Button>
                   ) : null}
                 </>
               )}
             </Form.List>
           </Form.Item>
-          <Form.Item name="models" label="模型列表" rules={[{ required: true, message: '至少一个模型' }]} extra="从模型目录点选；目录外的名称可直接输入回车添加。">
-            <Select mode="tags" tokenSeparators={[',']} options={catalog.map((m) => ({ value: m.name }))} placeholder="点选或输入模型名" />
+          <Form.Item name="models" label={t('admin.modelList')} rules={[{ required: true, message: t('admin.modelListRequired') }]} extra={t('admin.modelListExtra')}>
+            <Select mode="tags" tokenSeparators={[',']} options={catalog.map((m) => ({ value: m.name }))} placeholder={t('admin.modelListPlaceholder')} />
           </Form.Item>
           <Space size="large">
-            <Form.Item name="lineStrategy" label="线路策略">
+            <Form.Item name="lineStrategy" label={t('admin.lineStrategy')}>
               <Select
                 style={{ width: 150 }}
                 options={[
-                  { value: 'auto', label: 'auto（探测优选）' },
-                  { value: 'manual', label: 'manual（固定第一条）' },
+                  { value: 'auto', label: t('admin.lineStrategyAuto') },
+                  { value: 'manual', label: t('admin.lineStrategyManual') },
                 ]}
               />
             </Form.Item>
-            <Form.Item name="priorityDefault" label="默认优先级">
+            <Form.Item name="priorityDefault" label={t('admin.priorityDefault')}>
               <InputNumber />
             </Form.Item>
-            <Form.Item name="allowPublicProxyDefault" label="默认允许公共代理" valuePropName="checked">
+            <Form.Item name="allowPublicProxyDefault" label={t('admin.allowPublicProxyDefault')} valuePropName="checked">
               <Switch />
             </Form.Item>
           </Space>
-          <Form.Item label="模型映射（请求名 → 上游名）">
+          <Form.Item label={t('admin.modelMappingLabel')}>
             <Form.List name="modelMapping">
               {(fields, { add, remove }) => (
                 <>
                   {fields.map((f) => (
                     <Space key={f.key} style={{ display: 'flex', marginBottom: 4 }}>
                       <Form.Item name={[f.name, 'from']} noStyle>
-                        <Input placeholder="请求模型名" style={{ width: 180 }} />
+                        <Input placeholder={t('admin.mappingFromPlaceholder')} style={{ width: 180 }} />
                       </Form.Item>
                       <span>→</span>
                       <Form.Item name={[f.name, 'to']} noStyle>
-                        <Input placeholder="上游模型名" style={{ width: 180 }} />
+                        <Input placeholder={t('admin.mappingToPlaceholder')} style={{ width: 180 }} />
                       </Form.Item>
-                      <a onClick={() => remove(f.name)}>删除</a>
+                      <a onClick={() => remove(f.name)}>{t('common.delete')}</a>
                     </Space>
                   ))}
-                  <Button type="dashed" onClick={() => add({ from: '', to: '' })} block>添加映射</Button>
+                  <Button type="dashed" onClick={() => add({ from: '', to: '' })} block>{t('admin.addMapping')}</Button>
                 </>
               )}
             </Form.List>
           </Form.Item>
-          <Form.Item name="note" label="说明">
+          <Form.Item name="note" label={t('common.description')}>
             <Input.TextArea rows={2} />
           </Form.Item>
-          <Form.Item name="enabled" label="启用" valuePropName="checked">
+          <Form.Item name="enabled" label={t('common.enabled')} valuePropName="checked">
             <Switch />
           </Form.Item>
         </Form>
@@ -816,6 +825,7 @@ const TemplatesTab: React.FC = () => {
 }
 
 const StatsTab: React.FC = () => {
+  const { t } = useI18n()
   const [range, setRange] = React.useState<[Dayjs, Dayjs]>([dayjs().subtract(6, 'day'), dayjs()])
   const [data, setData] = React.useState<StatsResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
@@ -832,10 +842,10 @@ const StatsTab: React.FC = () => {
 
   const groupColumns = (dimName: string) => [
     { title: dimName, dataIndex: 'dim' },
-    { title: '请求数', dataIndex: 'requests', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.requests - b.requests },
-    { title: '输入 tokens', dataIndex: 'promptTokens', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.promptTokens - b.promptTokens },
-    { title: '输出 tokens', dataIndex: 'completionTokens', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.completionTokens - b.completionTokens },
-    { title: '费用估算', dataIndex: 'cost', align: 'right' as const, render: (v: number) => <Money value={v} mode="cost" />, sorter: (a: StatsGroup, b: StatsGroup) => a.cost - b.cost },
+    { title: t('admin.requestCount'), dataIndex: 'requests', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.requests - b.requests },
+    { title: t('admin.inputTokens'), dataIndex: 'promptTokens', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.promptTokens - b.promptTokens },
+    { title: t('admin.outputTokens'), dataIndex: 'completionTokens', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.completionTokens - b.completionTokens },
+    { title: t('admin.costEstimate'), dataIndex: 'cost', align: 'right' as const, render: (v: number) => <Money value={v} mode="cost" />, sorter: (a: StatsGroup, b: StatsGroup) => a.cost - b.cost },
   ]
 
   const exportUrl = `/api/admin/stats/export?start=${range[0].format('YYYY-MM-DD')}&end=${range[1].format('YYYY-MM-DD')}`
@@ -853,40 +863,41 @@ const StatsTab: React.FC = () => {
           allowClear={false}
         />
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>刷新</Button>
-          <Button icon={<DownloadOutlined />} href={exportUrl}>导出 CSV</Button>
+          <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>{t('admin.refresh')}</Button>
+          <Button icon={<DownloadOutlined />} href={exportUrl}>{t('admin.exportCsv')}</Button>
         </Space>
       </div>
       <Card loading={loading} style={{ marginBottom: 16 }}>
         <div className="stat-strip">
           <div className="stat-cell">
-            <Statistic title="请求数" value={fmtInt(data?.summary.requests ?? 0)} />
+            <Statistic title={t('admin.requestCount')} value={fmtInt(data?.summary.requests ?? 0)} />
           </div>
           <div className="stat-cell">
-            <Statistic title="错误率" value={data?.summary.errorRate ?? 0} suffix="%" precision={2} />
+            <Statistic title={t('admin.errorRate')} value={data?.summary.errorRate ?? 0} suffix="%" precision={2} />
           </div>
           <div className="stat-cell">
-            <Tooltip title={`入 ${fmtInt(data?.summary.promptTokens ?? 0)} · 出 ${fmtInt(data?.summary.completionTokens ?? 0)}`}>
-              <Statistic title="tokens（入/出）" value={`${fmtTokens(data?.summary.promptTokens ?? 0)} / ${fmtTokens(data?.summary.completionTokens ?? 0)}`} />
+            <Tooltip title={t('admin.tokensSummary', { in: fmtInt(data?.summary.promptTokens ?? 0), out: fmtInt(data?.summary.completionTokens ?? 0) })}>
+              <Statistic title={t('admin.tokensInOut')} value={`${fmtTokens(data?.summary.promptTokens ?? 0)} / ${fmtTokens(data?.summary.completionTokens ?? 0)}`} />
             </Tooltip>
           </div>
           <div className="stat-cell">
-            <Statistic title="费用估算" value={data?.summary.cost ?? 0} formatter={(v) => <Money value={v as number} mode="cost" big />} />
-            {data?.summary.unpriced ? <span className="stat-note">部分未定价</span> : null}
+            <Statistic title={t('admin.costEstimate')} value={data?.summary.cost ?? 0} formatter={(v) => <Money value={v as number} mode="cost" big />} />
+            {data?.summary.unpriced ? <span className="stat-note">{t('admin.partiallyUnpriced')}</span> : null}
           </div>
         </div>
       </Card>
-      <Card title="按用户" loading={loading} style={{ marginBottom: 16 }}>
-        <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={data?.byUser ?? []} columns={groupColumns('用户')} />
+      <Card title={t('admin.byUser')} loading={loading} style={{ marginBottom: 16 }}>
+        <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={data?.byUser ?? []} columns={groupColumns(t('common.user'))} />
       </Card>
-      <Card title="按模型" loading={loading}>
-        <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={false} dataSource={data?.byModel ?? []} columns={groupColumns('模型')} />
+      <Card title={t('admin.byModel')} loading={loading}>
+        <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={false} dataSource={data?.byModel ?? []} columns={groupColumns(t('common.model'))} />
       </Card>
     </div>
   )
 }
 
 const SettingsTab: React.FC = () => {
+  const { t } = useI18n()
   const [form] = Form.useForm()
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
@@ -926,10 +937,10 @@ const SettingsTab: React.FC = () => {
       const res = r.result
       if (apply) {
         setFxInfo((prev) => ({ rate: res.rate, source: res.source, sourceUrl: res.sourceUrl, updatedAt: res.updatedAt ?? prev.updatedAt }))
-        message.success(`已同步：1 USD = ${res.rate} CNY（来源 ${res.source}）`)
+        message.success(t('admin.rateSynced', { rate: res.rate, source: res.source }))
       } else {
         form.setFieldValue('exchangeRate', res.rate)
-        message.success(`已获取最新汇率 ${res.rate}，确认后保存`)
+        message.success(t('admin.rateFetched', { rate: res.rate }))
       }
     } catch (e) {
       message.error((e as Error).message)
@@ -949,7 +960,7 @@ const SettingsTab: React.FC = () => {
           await adminUpdateSettings(v as AdminSettings)
           // 切到自动同步后立即拉一次，避免等到下个周期
           if (v.exchangeRateMode === 'auto') await doSync(true)
-          else message.success('已保存')
+          else message.success(t('admin.saved'))
         } catch (e) {
           message.error((e as Error).message)
         } finally {
@@ -957,50 +968,50 @@ const SettingsTab: React.FC = () => {
         }
       }}
     >
-      <Form.Item name="registerMode" label="注册策略">
+      <Form.Item name="registerMode" label={t('admin.registerMode')}>
         <Select
           options={[
-            { value: 'open', label: '开放注册' },
-            { value: 'invite', label: '邀请码制' },
-            { value: 'closed', label: '关闭注册' },
+            { value: 'open', label: t('admin.registerOpen') },
+            { value: 'invite', label: t('admin.registerInvite') },
+            { value: 'closed', label: t('admin.registerClosed') },
           ]}
         />
       </Form.Item>
-      <Form.Item name="feishuEnabled" label="飞书登录" valuePropName="checked">
+      <Form.Item name="feishuEnabled" label={t('admin.feishuLogin')} valuePropName="checked">
         <Switch />
       </Form.Item>
-      <Form.Item name="feishuAppId" label="飞书 App ID">
+      <Form.Item name="feishuAppId" label={t('admin.feishuAppId')}>
         <Input placeholder="cli_xxxx" />
       </Form.Item>
-      <Form.Item name="feishuAppSecret" label={`飞书 App Secret${hasSecret ? '（已配置，留空不修改）' : ''}`}>
-        <Input.Password placeholder="仅保存时提交，不回显" />
+      <Form.Item name="feishuAppSecret" label={t('admin.feishuAppSecret') + (hasSecret ? t('admin.feishuSecretKeep') : '')}>
+        <Input.Password placeholder={t('admin.secretPlaceholder')} />
       </Form.Item>
-      <Form.Item name="feishuBaseUrl" label="飞书开放平台地址（默认官方，测试可覆盖）">
+      <Form.Item name="feishuBaseUrl" label={t('admin.feishuBaseUrlLabel')}>
         <Input placeholder="https://open.feishu.cn" />
       </Form.Item>
       <Form.Item
         name="exchangeRateMode"
-        label="美元兑人民币汇率"
-        extra="人民币渠道（cny_ratio）的费用折算用；自动同步每 24 小时从公共汇率源拉取"
+        label={t('admin.exchangeRateLabel')}
+        extra={t('admin.exchangeRateExtra')}
       >
         <Radio.Group
           onChange={(e) => setFxMode(e.target.value)}
           options={[
-            { value: 'auto', label: '自动同步' },
-            { value: 'manual', label: '固定值' },
+            { value: 'auto', label: t('admin.fxAuto') },
+            { value: 'manual', label: t('admin.fixedValue') },
           ]}
         />
       </Form.Item>
       {fxMode === 'auto' ? (
-        <Form.Item label="当前汇率">
+        <Form.Item label={t('admin.currentRate')}>
           <Space wrap>
             <span>
               1 USD = <Typography.Text strong>{fxInfo.rate ?? 7.2}</Typography.Text> CNY
             </span>
             {fxInfo.source && <Tag>{fxInfo.source}</Tag>}
-            <Typography.Text type="secondary">更新于 {formatDateTime(fxInfo.updatedAt)}</Typography.Text>
+            <Typography.Text type="secondary">{t('admin.rateUpdatedAt', { time: formatDateTime(fxInfo.updatedAt) })}</Typography.Text>
             <Button size="small" loading={syncing} onClick={() => doSync(true)}>
-              立即同步
+              {t('admin.syncNow')}
             </Button>
           </Space>
           {fxInfo.sourceUrl && (
@@ -1012,41 +1023,44 @@ const SettingsTab: React.FC = () => {
           )}
         </Form.Item>
       ) : (
-        <Form.Item label="固定值" required>
+        <Form.Item label={t('admin.fixedValue')} required>
           <Space>
-            <Form.Item name="exchangeRate" noStyle rules={[{ required: true, message: '请输入汇率固定值' }]}>
+            <Form.Item name="exchangeRate" noStyle rules={[{ required: true, message: t('admin.exchangeRateRequired') }]}>
               <InputNumber min={0.5} max={20} step={0.1} style={{ width: 160 }} />
             </Form.Item>
             <Button size="small" loading={syncing} onClick={() => doSync(false)}>
-              获取最新
+              {t('admin.fetchLatest')}
             </Button>
           </Space>
         </Form.Item>
       )}
       <Button type="primary" htmlType="submit" loading={loading || saving}>
-        保存
+        {t('common.save')}
       </Button>
     </Form>
   )
 }
 
-const AdminPage: React.FC = () => (
-  <div>
-    <div className="page-heading">
-      <div><h2>管理</h2><p>系统级配置：用量、用户、模型目录、价目、代理与模板。</p></div>
+const AdminPage: React.FC = () => {
+  const { t } = useI18n()
+  return (
+    <div>
+      <div className="page-heading">
+        <div><h2>{t('admin.title')}</h2><p>{t('admin.subtitle')}</p></div>
+      </div>
+      <Tabs
+        items={[
+          { key: 'stats', label: t('admin.tabStats'), children: <StatsTab /> },
+          { key: 'users', label: t('common.user'), children: <UsersTab /> },
+          { key: 'models', label: t('admin.tabCatalog'), children: <CatalogModelsTab /> },
+          { key: 'pricing', label: t('admin.tabPricing'), children: <PricingTab /> },
+          { key: 'proxies', label: t('admin.tabProxies'), children: <ProxiesTab /> },
+          { key: 'templates', label: t('admin.tabTemplates'), children: <TemplatesTab /> },
+          { key: 'settings', label: t('admin.tabSettings'), children: <SettingsTab /> },
+        ]}
+      />
     </div>
-    <Tabs
-      items={[
-        { key: 'stats', label: '用量/花费', children: <StatsTab /> },
-        { key: 'users', label: '用户', children: <UsersTab /> },
-        { key: 'models', label: '模型目录', children: <CatalogModelsTab /> },
-        { key: 'pricing', label: '模型价目表', children: <PricingTab /> },
-        { key: 'proxies', label: '公共代理池', children: <ProxiesTab /> },
-        { key: 'templates', label: '预制模板', children: <TemplatesTab /> },
-        { key: 'settings', label: '系统设置', children: <SettingsTab /> },
-      ]}
-    />
-  </div>
-)
+  )
+}
 
 export default AdminPage
