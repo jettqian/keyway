@@ -107,6 +107,7 @@ const StatsPage: React.FC = () => {
             size="small"
             pagination={false}
             dataSource={data.recent}
+            scroll={{ x: 'max-content' }}
             columns={[
               {
                 title: '时间',
@@ -115,16 +116,18 @@ const StatsPage: React.FC = () => {
                 render: (v: number) => <span className="text-tertiary">{formatDateTime(v)}</span>,
               },
               {
-                title: '线路',
-                dataIndex: 'lineUrl',
-                width: 240,
-                ellipsis: { showTitle: false },
-                render: (v: string, r: LatestUsage) => <LineUrl url={v} via={r.via} />,
-              },
-              {
                 title: '渠道',
                 dataIndex: 'channelName',
+                width: 130,
+                ellipsis: true,
                 render: (v: string, r: LatestUsage) => v || `#${r.channelId}`,
+              },
+              {
+                title: '线路',
+                dataIndex: 'lineUrl',
+                width: 260,
+                ellipsis: { showTitle: false },
+                render: (v: string, r: LatestUsage) => <LineUrl url={v} via={r.via} />,
               },
               {
                 title: '模型',
@@ -151,19 +154,19 @@ const StatsPage: React.FC = () => {
         )}
       </Card>
       <Row gutter={16}>
-        <Col span={12}>
+        <Col xs={24} span={12}>
           <Card title="按渠道" loading={loading}>
-            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} dataSource={data?.byChannel ?? []} columns={groupColumns('渠道')} />
+            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byChannel ?? []} columns={groupColumns('渠道')} />
           </Card>
         </Col>
-        <Col span={12}>
+        <Col xs={24} span={12}>
           <Card title="按模型" loading={loading}>
-            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} dataSource={data?.byModel ?? []} columns={groupColumns('模型')} />
+            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byModel ?? []} columns={groupColumns('模型')} />
           </Card>
         </Col>
       </Row>
       <Card title="按密钥（多账号分账）" style={{ marginTop: 16 }} loading={loading}>
-        <Table<StatsGroup> rowKey="dim" size="small" pagination={false} dataSource={data?.byKey ?? []} columns={groupColumns('密钥')} />
+        <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byKey ?? []} columns={groupColumns('密钥')} />
       </Card>
     </div>
   )
