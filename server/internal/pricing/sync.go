@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"keyway/internal/store"
+	"keyway/internal/usage"
 )
 
 const (
@@ -87,6 +88,7 @@ func SyncRemote(db *gorm.DB, timeout time.Duration) (*Result, error) {
 	if err := markSynced(db); err != nil {
 		res.Warnings = append(res.Warnings, "记录同步时间失败："+err.Error())
 	}
+	usage.InvalidatePricingCache(db)
 	return res, nil
 }
 

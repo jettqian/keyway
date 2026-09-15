@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -494,6 +495,195 @@ func TestHealthz(t *testing.T) {
 }
 
 var _ = url.Parse
+
+// TestE2E流式无usage兜底估算：杂牌上游流式不回 usage chunk 时，网关应
+// ① 向上游注入 stream_options.include_usage；② 统计仍按本地估算兜底
+// （prompt 来自入站请求、completion 来自累计输出文本），tokens 不再记 0
+func TestE2E流式无usage兜底估算(t *testing.T) {
+	c, _ := setupApp(t)
+	var sawIncludeUsage atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		json.NewDecoder(r.Body).Decode(&req)
+		if so, ok := req["stream_options"].(map[string]any); ok {
+			if v, _ := so["include_usage"].(bool); v {
+				sawIncludeUsage.Store(true)
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		fmt.Fprint(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n")
+		flusher.Flush()
+		fmt.Fprint(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"上游未回传usage时的兜底估算回答内容\"}}]}\n\n")
+		flusher.Flush()
+		fmt.Fprint(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		flusher.Flush()
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+	c.bootstrap(t, upstream.URL)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		bytes.NewBufferString(`{"model":"test-stream","stream":true,"messages":[{"role":"user","content":"这是用于估算的提问内容"}]}`))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	w := httptest.NewRecorder()
+	c.e.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("状态码 %d: %s", w.Code, w.Body.String())
+	}
+	if !sawIncludeUsage.Load() {
+		t.Fatal("上游应收到 stream_options.include_usage=true 注入")
+	}
+	// 异步日志：usage 估算兜底（上游未回传 → prompt/completion 均为估算值且 > 0）
+	var last store.Log
+	for i := 0; i < 30; i++ {
+		c.store.DB().Order("id DESC").First(&last)
+		if last.PromptTokens != nil && *last.PromptTokens > 0 && last.CompletionTokens != nil && *last.CompletionTokens > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if last.PromptTokens == nil || *last.PromptTokens <= 0 || last.CompletionTokens == nil || *last.CompletionTokens <= 0 {
+		t.Fatalf("估算兜底缺失: prompt=%v completion=%v", last.PromptTokens, last.CompletionTokens)
+	}
+}
+
+// TestE2E非流式无usage估算：上游非流式响应缺 usage 字段时按响应文本估算 completion
+func TestE2E非流式无usage估算(t *testing.T) {
+	c, _ := setupApp(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"c1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"非流式响应缺usage字段时的估算回答"},"finish_reason":"stop"}]}`)
+	}))
+	defer upstream.Close()
+	c.bootstrap(t, upstream.URL)
+
+	w := c.do("POST", "/v1/chat/completions", map[string]any{
+		"model": "test-model", "messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, false)
+	if w.Code != 200 {
+		t.Fatalf("状态码 %d: %s", w.Code, w.Body.String())
+	}
+	var last store.Log
+	for i := 0; i < 30; i++ {
+		c.store.DB().Order("id DESC").First(&last)
+		if last.CompletionTokens != nil && *last.CompletionTokens > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if last.CompletionTokens == nil || *last.CompletionTokens <= 0 {
+		t.Fatalf("completion 估算缺失: %v", last.CompletionTokens)
+	}
+}
+
+// TestE2E价目缓存失效：写日志走内存价目缓存（DESIGN §8.2），管理员更新价目后
+// 新请求的费用必须立即按新价计算（显式失效，不等 60s TTL）
+func TestE2E价目缓存失效(t *testing.T) {
+	c, upstream := setupApp(t)
+	c.bootstrap(t, upstream.URL)
+	// 请求 1（mock 上游非流式 usage：prompt=10 completion=5，上游模型 real-model）：
+	// 无价目 → 费用 NULL，同时价目缓存已建立（空表）
+	c.do("POST", "/v1/chat/completions", map[string]any{
+		"model": "test-model", "messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, false)
+	var first store.Log
+	for i := 0; i < 30; i++ {
+		c.store.DB().Order("id DESC").First(&first)
+		if first.ID != 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if first.InputCost != nil {
+		t.Fatalf("无价目时费用应为 NULL，实际 %v", *first.InputCost)
+	}
+	// 管理员添加价目（走管理 API → 触发缓存失效）
+	if w := c.do("PUT", "/api/admin/pricing/real-model", map[string]any{
+		"inputPerM": 1, "outputPerM": 2,
+	}, true); w.Code != 200 {
+		t.Fatalf("添加价目失败: %s", w.Body.String())
+	}
+	// 请求 2：费用应立即按新价计算（10/1M×1 + 5/1M×2 = 0.00002）
+	c.do("POST", "/v1/chat/completions", map[string]any{
+		"model": "test-model", "messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, false)
+	var second store.Log
+	for i := 0; i < 30; i++ {
+		// 注意：GORM First 会把结构体现有主键作为查询条件，须用全新零值结构体轮询
+		var probe store.Log
+		c.store.DB().Order("id DESC").First(&probe)
+		if probe.ID != 0 && probe.ID != first.ID {
+			second = probe
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if second.ID == first.ID {
+		t.Fatal("第二条日志未落库")
+	}
+	want := 10.0/1e6*1 + 5.0/1e6*2
+	if second.InputCost == nil || second.OutputCost == nil ||
+		*second.InputCost != 10.0/1e6*1 || *second.OutputCost != 5.0/1e6*2 {
+		t.Fatalf("费用未按新价目计算: input=%v output=%v（期望 %v/%v）",
+			second.InputCost, second.OutputCost, 10.0/1e6*1, 5.0/1e6*2)
+	}
+	_ = want
+}
+
+// TestE2E流式空闲超时：上游发完首块后僵死（不再发数据），网关应在
+// IdleStreamTimeoutSec 后主动断开并告知客户端（": keyway: upstream idle timeout"）
+func TestE2E流式空闲超时(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir, err := os.MkdirTemp("", "keyway-idle-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	cfg := config.Config{
+		Secret:               "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		DataDir:              dir,
+		BodyLimitMB:          50,
+		IdleStreamTimeoutSec: 1,
+	}
+	a, err := buildApp(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.stop)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"first\"}}]}\n\n")
+		flusher.Flush()
+		// 僵死：不再发数据，直到客户端/网关断开
+		<-r.Context().Done()
+	}))
+	defer upstream.Close()
+
+	// 注册→建密钥→建渠道→签令牌（复用 ctx 流程）
+	c := &ctx{e: a.engine, store: a.store, jar: newSimpleJar()}
+	c.bootstrap(t, upstream.URL)
+
+	start := time.Now()
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		bytes.NewBufferString(`{"model":"test-stream","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	w := httptest.NewRecorder()
+	c.e.ServeHTTP(w, req)
+	elapsed := time.Since(start)
+	if !strings.Contains(w.Body.String(), "upstream idle timeout") {
+		t.Fatalf("期望空闲超时注释行，响应: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "first") {
+		t.Fatalf("首块数据应已透传: %s", w.Body.String())
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("空闲超时应及时触发（1s 配置），实际 %v", elapsed)
+	}
+}
 
 func TestE2E价目表CRUD(t *testing.T) {
 	c, _ := setupApp(t)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"keyway/internal/store"
+	"keyway/internal/usage"
 )
 
 const (
@@ -150,6 +151,8 @@ func (e *Engine) ApplyRate(res Result) time.Time {
 	e.store.SetSetting(KeySource, res.Source)
 	e.store.SetSetting(KeySourceURL, res.SourceURL)
 	e.store.SetSetting(KeyUpdatedAt, now.Format(time.RFC3339))
+	// 汇率变化影响费用快照缓存（usage.ComputeCost），写入后失效
+	usage.InvalidatePricingCache(e.store.DB())
 	return now
 }
 

@@ -555,33 +555,51 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 		_ = err
 	}
 
-	// 保活/止损协程
+	// 保活/止损协程（引用局部变量而非 gin.Context：其对象池会被后续请求复用）
+	reqCtx := c.Request.Context()
 	done := make(chan struct{})
+	watchDone := make(chan struct{})
 	var lastUpstream atomic.Int64
 	lastUpstream.Store(time.Now().UnixMilli())
 	idle := time.Duration(s.Cfg.IdleStreamTimeoutSec) * time.Second
 	go func() {
-		ping := time.NewTicker(15 * time.Second)
-		defer ping.Stop()
+		defer close(watchDone)
+		// 检查粒度 500ms：空闲超时（可低至秒级）与 ping（15s）共用同一循环
+		const pingEvery = 15 * time.Second
+		tick := 500 * time.Millisecond
+		if idle > 0 && idle/4 < tick {
+			tick = idle / 4
+		}
+		lastPing := time.Now()
+		t := time.NewTicker(tick)
+		defer t.Stop()
 		for {
 			select {
 			case <-done:
 				return
-			case <-c.Request.Context().Done():
+			case <-reqCtx.Done():
 				// 客户端断开：立即关闭上游止损
 				resp.Body.Close()
 				return
-			case <-ping.C:
+			case <-t.C:
 				if idle > 0 && time.Since(time.UnixMilli(lastUpstream.Load())) > idle {
 					writeOut([]byte(": keyway: upstream idle timeout\n\n"))
 					resp.Body.Close()
 					return
 				}
-				writeOut([]byte(": ping\n\n"))
+				if time.Since(lastPing) >= pingEvery {
+					lastPing = time.Now()
+					writeOut([]byte(": ping\n\n"))
+				}
 			}
 		}
 	}()
-	defer close(done)
+	// 收尾顺序：先通知协程退出并等其完全退出，再返回（gin.Context/Writer 会被
+	// 下一个请求复用，避免协程残留访问）
+	defer func() {
+		close(done)
+		<-watchDone
+	}()
 
 	buf := make([]byte, 32*1024)
 	var lineBuf []byte

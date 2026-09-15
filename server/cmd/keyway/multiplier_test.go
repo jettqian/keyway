@@ -37,8 +37,12 @@ func Test渠道计价模式(t *testing.T) {
 		t.Fatalf("cny_ratio 费用错误: %v（期望 %v）", *ic2, want)
 	}
 
-	// 管理员改汇率后生效
-	c.store.SetSetting("usd_cny_rate", "7.0")
+	// 管理员改汇率后生效（走管理 API → fxrate.ApplyRate → 价目缓存失效）
+	if w := c.do("PUT", "/api/admin/settings", map[string]any{
+		"registerMode": "open", "exchangeRateMode": "manual", "exchangeRate": 7.0,
+	}, true); w.Code != 200 {
+		t.Fatalf("设置汇率失败: %s", w.Body.String())
+	}
 	ic3, _ := usage.ComputeCost(c.store.DB(), "price-model", "price-model", "cny_ratio", 1, 0.5, u)
 	want3 := 0.01 * 0.5 / 7.0
 	if *ic3 < want3-0.000001 || *ic3 > want3+0.000001 {

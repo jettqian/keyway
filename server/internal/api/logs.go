@@ -242,6 +242,7 @@ func (s *Server) handleAdminUpdatePricing(c *gin.Context) {
 	p.Model = model // URL 参数为权威
 	p.UpdatedAt = time.Now().Unix()
 	s.Store.DB().Save(&p)
+	usage.InvalidatePricingCache(s.Store.DB())
 	s.ok(c, gin.H{"pricing": p})
 }
 
@@ -251,6 +252,7 @@ func (s *Server) handleAdminDeletePricing(c *gin.Context) {
 		s.fail(c, http.StatusInternalServerError, "删除失败: "+err.Error())
 		return
 	}
+	usage.InvalidatePricingCache(s.Store.DB())
 	s.ok(c, gin.H{})
 }
 

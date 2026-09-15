@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"strings"
 
 	"keyway/internal/convert"
@@ -89,7 +90,10 @@ func (t *streamTally) feed(line []byte) {
 }
 
 func (t *streamTally) tokens() int {
-	return int(float64(t.runes) / 3.6)
+	if t.runes == 0 {
+		return 0
+	}
+	return int(math.Ceil(float64(t.runes) / 3.6))
 }
 
 // ssePayload 剥离 SSE 行的 data: 前缀；非数据行返回 nil
