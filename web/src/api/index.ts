@@ -13,6 +13,7 @@ import type {
   LogQuery,
   StatsResponse,
   ModelPricing,
+  PricingListResponse,
   CatalogModel,
   Proxy,
   ProxyInput,
@@ -83,7 +84,7 @@ export const adminSetUserStatus = (id: number, status: number) =>
   put<{ user: User }>(`/api/admin/users/${id}/status`, { status })
 export const adminResetPassword = (id: number) => post<{ password: string }>(`/api/admin/users/${id}/reset_password`)
 export const adminStats = (days: number) => get<StatsResponse>(`/api/admin/stats?days=${days}`)
-export const adminPricing = () => get<{ pricing: ModelPricing[] }>('/api/admin/pricing')
+export const adminPricing = () => get<PricingListResponse>('/api/admin/pricing')
 export const adminUpdatePricing = (p: ModelPricing) =>
   put<{ pricing: ModelPricing }>(`/api/admin/pricing/${encodeURIComponent(p.model)}`, p)
 export const adminDeletePricing = (model: string) =>

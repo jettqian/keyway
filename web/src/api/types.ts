@@ -177,6 +177,19 @@ export interface ModelPricing {
   outputPerM: number
 }
 
+/** 官方价目远程同步源（名称 + 链接） */
+export interface PricingSource {
+  name: string
+  url: string
+}
+
+/** 价目表列表响应：条目 + 远程同步元信息 */
+export interface PricingListResponse {
+  pricing: ModelPricing[]
+  syncedAt?: string
+  sources?: PricingSource[]
+}
+
 export interface CatalogModel {
   id: number
   name: string

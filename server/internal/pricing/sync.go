@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"keyway/internal/store"
 )
@@ -19,7 +20,24 @@ import (
 const (
 	litellmURL    = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 	openrouterURL = "https://openrouter.ai/api/v1/models"
+
+	// KeySyncedAt settings 表键：最近一次同步完成时间（RFC3339；双源全失败不记录）
+	KeySyncedAt = "pricing_synced_at"
 )
+
+// Source 官方价目同步源（名称 + 链接，供管理界面展示）
+type Source struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// Sources 返回全部同步源信息
+func Sources() []Source {
+	return []Source{
+		{Name: "LiteLLM", URL: litellmURL},
+		{Name: "OpenRouter", URL: openrouterURL},
+	}
+}
 
 // ModelPrice 归一化后的单模型价目（USD/百万 token）
 type ModelPrice struct {
@@ -65,7 +83,27 @@ func SyncRemote(db *gorm.DB, timeout time.Duration) (*Result, error) {
 	if len(res.Warnings) == 2 {
 		return res, fmt.Errorf("两个价目源均拉取失败")
 	}
+	// 记录最近一次同步完成时间（至少单源成功才记录）
+	if err := markSynced(db); err != nil {
+		res.Warnings = append(res.Warnings, "记录同步时间失败："+err.Error())
+	}
 	return res, nil
+}
+
+// SyncedAt 读取最近一次同步完成时间；未同步过返回空串
+func SyncedAt(db *gorm.DB) string {
+	var row store.Setting
+	if err := db.Where("key = ?", KeySyncedAt).First(&row).Error; err != nil {
+		return ""
+	}
+	return row.Value
+}
+
+func markSynced(db *gorm.DB) error {
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value"}),
+	}).Create(&store.Setting{Key: KeySyncedAt, Value: time.Now().Format(time.RFC3339)}).Error
 }
 
 // StartSyncLoop 启动时执行一次，此后按周期执行；供 main 后台协程调用

@@ -2,7 +2,11 @@ package pricing
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
+
+	"keyway/internal/store"
 )
 
 // LiteLLM 解析：仅保留 chat 模式且输入输出价均大于 0 的条目；缓存价 0 归 NULL
@@ -76,4 +80,44 @@ func TestParseInvalid(t *testing.T) {
 		t.Error("OpenRouter 非法 JSON 应报错")
 	}
 	var _ = json.Marshal // 保留 import
+}
+
+// 同步时间记录：markSynced upsert 写入 settings，SyncedAt 读取；Sources 暴露全部源链接
+func TestSyncedAtRoundTrip(t *testing.T) {
+	st, err := store.Open(store.Options{DataDir: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	db := st.DB()
+
+	if got := SyncedAt(db); got != "" {
+		t.Errorf("未同步时应返回空串，实际 %q", got)
+	}
+	if err := markSynced(db); err != nil {
+		t.Fatal(err)
+	}
+	first := SyncedAt(db)
+	if first == "" {
+		t.Fatal("同步后应能读取到时间")
+	}
+	if _, err := time.Parse(time.RFC3339, first); err != nil {
+		t.Errorf("时间应为 RFC3339 格式：%q", first)
+	}
+	if err := markSynced(db); err != nil {
+		t.Fatal(err)
+	}
+	if SyncedAt(db) == "" {
+		t.Error("重复写入不应清空")
+	}
+
+	srcs := Sources()
+	if len(srcs) != 2 || srcs[0].Name != "LiteLLM" || srcs[1].Name != "OpenRouter" {
+		t.Errorf("同步源信息不符：%+v", srcs)
+	}
+	for _, s := range srcs {
+		if !strings.HasPrefix(s.URL, "https://") {
+			t.Errorf("同步源链接非法：%s", s.URL)
+		}
+	}
 }

@@ -1,5 +1,6 @@
 import React from 'react'
 import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography, Radio, Tooltip } from 'antd'
+import { SearchOutlined } from '@ant-design/icons'
 import {
   adminUsers,
   adminSetUserStatus,
@@ -26,8 +27,9 @@ import {
   adminSyncExchangeRate,
   adminStats,
 } from '../api'
-import type { User, ModelPricing, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings } from '../api/types'
+import type { User, ModelPricing, PricingSource, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings } from '../api/types'
 import { formatDateTime } from '../format'
+import CatalogPrice from '../components/CatalogPrice'
 
 const UsersTab: React.FC = () => {
   const [users, setUsers] = React.useState<User[]>([])
@@ -94,15 +96,36 @@ const PricingTab: React.FC = () => {
   const [editing, setEditing] = React.useState<ModelPricing | null>(null)
   const [importOpen, setImportOpen] = React.useState(false)
   const [importText, setImportText] = React.useState('')
+  const [search, setSearch] = React.useState('')
+  const [syncedAt, setSyncedAt] = React.useState('')
+  const [sources, setSources] = React.useState<PricingSource[]>([])
+  const [catalogNames, setCatalogNames] = React.useState<Set<string>>(new Set())
   const [form] = Form.useForm()
   const refresh = React.useCallback(() => {
     setLoading(true)
-    adminPricing()
-      .then((r) => setPricing(r.pricing))
+    Promise.all([adminPricing(), adminCatalogModels()])
+      .then(([p, m]) => {
+        setPricing(p.pricing)
+        setSyncedAt(p.syncedAt ?? '')
+        setSources(p.sources ?? [])
+        setCatalogNames(new Set(m.models.map((c) => c.name)))
+      })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
   }, [])
   React.useEffect(refresh, [refresh])
+
+  // 目录内模型置前显示，其余按名称排后；支持按模型名搜索筛选
+  const rows = React.useMemo(() => {
+    const kw = search.trim().toLowerCase()
+    return pricing
+      .filter((p) => !kw || p.model.toLowerCase().includes(kw))
+      .sort((a, b) => {
+        const inA = catalogNames.has(a.model) ? 0 : 1
+        const inB = catalogNames.has(b.model) ? 0 : 1
+        return inA - inB || a.model.localeCompare(b.model)
+      })
+  }, [pricing, search, catalogNames])
 
   const openCreate = () => {
     setEditing(null)
@@ -188,25 +211,63 @@ const PricingTab: React.FC = () => {
   }
   return (
     <div>
-      <div style={{ marginBottom: 12, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <Popconfirm
-          title="从 LiteLLM / OpenRouter 同步官方价目？"
-          description="只补缺：已存在的条目一律不覆盖（如需刷新某条可先删除再同步）。后台也会按 KEYWAY_PRICING_SYNC_HOURS 定期同步（默认 24 小时，0 关闭）。"
-          onConfirm={syncRemote}
-        >
-          <Button loading={syncing}>同步官方价目</Button>
-        </Popconfirm>
-        <Button onClick={exportJSON}>导出 JSON</Button>
-        <Button onClick={() => { setImportText(''); setImportOpen(true) }}>导入 JSON</Button>
-        <Button type="primary" onClick={openCreate}>新增模型</Button>
+      <div style={{ marginBottom: 8, display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
+        <Space size="middle" style={{ color: '#777', fontSize: 13 }}>
+          <span>
+            {syncedAt ? (
+              <>上次官方价目同步：{formatDateTime(syncedAt)}</>
+            ) : (
+              '尚未同步官方价目'
+            )}
+          </span>
+          {sources.map((s) => (
+            <Tooltip key={s.url} title={s.url}>
+              <a href={s.url} target="_blank" rel="noreferrer">{s.name}</a>
+            </Tooltip>
+          ))}
+        </Space>
+        <Space>
+          <Popconfirm
+            title="从 LiteLLM / OpenRouter 同步官方价目？"
+            description="只补缺：已存在的条目一律不覆盖（如需刷新某条可先删除再同步）。后台也会按 KEYWAY_PRICING_SYNC_HOURS 定期同步（默认 24 小时，0 关闭）。"
+            onConfirm={syncRemote}
+          >
+            <Button loading={syncing}>同步官方价目</Button>
+          </Popconfirm>
+          <Button onClick={exportJSON}>导出 JSON</Button>
+          <Button onClick={() => { setImportText(''); setImportOpen(true) }}>导入 JSON</Button>
+          <Button type="primary" onClick={openCreate}>新增模型</Button>
+        </Space>
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <Input
+          allowClear
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="按模型名搜索筛选"
+          style={{ width: 240 }}
+          prefix={<SearchOutlined />}
+        />
+        <span style={{ color: '#999', fontSize: 12, marginLeft: 12 }}>
+          共 {pricing.length} 条{search.trim() ? `，匹配 ${rows.length} 条` : ''}；模型目录中的条目置前显示
+        </span>
       </div>
       <Table<ModelPricing>
         rowKey="model"
         loading={loading}
-        dataSource={pricing}
+        dataSource={rows}
         pagination={{ pageSize: 20 }}
         columns={[
-          { title: '模型', dataIndex: 'model' },
+          {
+            title: '模型',
+            dataIndex: 'model',
+            render: (n: string) => (
+              <Space>
+                {n}
+                {catalogNames.has(n) ? <Tag color="blue">目录</Tag> : null}
+              </Space>
+            ),
+          },
           { title: '输入 $/M', dataIndex: 'inputPerM' },
           {
             title: '缓存读 $/M',
@@ -448,17 +509,8 @@ const CatalogModelsTab: React.FC = () => {
           { title: '模型', dataIndex: 'name' },
           {
             title: '单价（$/百万 tokens）',
-            width: 190,
-            render: (_: unknown, m: CatalogModel) =>
-              m.inputPerM != null ? (
-                <span>
-                  输入 {m.inputPerM} / 输出 {m.outputPerM}
-                </span>
-              ) : (
-                <Tooltip title="价目表中无同名条目；该模型费用将记为未定价">
-                  <span style={{ color: '#999' }}>未定价</span>
-                </Tooltip>
-              ),
+            width: 230,
+            render: (_: unknown, m: CatalogModel) => <CatalogPrice m={m} />,
           },
           { title: '备注', dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
           {
