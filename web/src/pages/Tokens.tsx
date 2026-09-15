@@ -7,6 +7,10 @@ import type { GatewayToken, Channel } from '../api/types'
 import { formatDateTime } from '../format'
 import { copyText } from '../copy'
 
+// 会话级记忆：令牌 → 最近一次非空的启用集合。主开关关闭（启用集合清空为"不限"）后
+// 重新打开时恢复该集合，而不是全部打开；仅存内存，刷新后回退为恢复全部配置渠道。
+const lastEnabledMemory = new Map<number, number[]>()
+
 // 令牌的渠道面板：顺序（channelOrder，含已关闭渠道）与启用集合（channelIds，路由范围）
 // 分离——关闭渠道只改启用集合，渠道保持原位、顺序不变。
 // 面板操作走乐观更新 + onSaved 静默更新列表（不触发整表 loading，避免弹层抖动与卡顿）
@@ -39,26 +43,13 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
     overRef.current = v
     setOverIndexState(v)
   }
-  // 点击交互控件（开关/↑↓）时抑制整行拖拽：HTML5 dragstart 的目标是行本身，
-  // 无法在子控件上拦截，改为按下时标记、起拖时取消——避免点击微动误触拖拽
-  const noDrag = React.useRef(false)
-  const pressCtrl = {
-    onPointerDown: () => {
-      noDrag.current = true
-    },
-    onPointerUp: () => {
-      noDrag.current = false
-    },
-    onPointerCancel: () => {
-      noDrag.current = false
-    },
-  }
 
   const save = async (nextIds: number[], nextOrder: number[]) => {
     const prevIds = ids
     const prevOrder = order
     setIds(nextIds)
     setOrder(nextOrder)
+    if (nextIds.length > 0) lastEnabledMemory.set(token.id, nextIds)
     try {
       const r = await updateToken(token.id, { channelIds: nextIds, channelOrder: nextOrder })
       onSaved(r.token)
@@ -69,10 +60,16 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
     }
   }
 
-  // 打开限定：恢复已配置的顺序（含曾关闭的渠道）；从未配置过才默认全选（按渠道优先级排序）
+  // 打开限定：优先恢复上次启用的集合（会话级记忆，避免重开变成全部打开）；
+  // 其次恢复全部配置渠道；从未配置过才按渠道优先级全选
   const enableRestrict = () => {
     if (channels.length === 0) {
       message.info('暂无渠道，请先在渠道页创建')
+      return
+    }
+    const mem = (lastEnabledMemory.get(token.id) ?? []).filter((id) => byId.has(id))
+    if (mem.length > 0) {
+      save(mem, rows)
       return
     }
     if (rows.length > 0) {
@@ -83,13 +80,18 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
     save(all, all)
   }
 
-  // 渠道开关：只增删启用集合，顺序保持不变（关闭的渠道原位保留）
+  // 渠道开关：只增删启用集合，顺序保持不变（关闭的渠道原位保留）。
+  // 至少保留一个启用渠道——全部关闭会落入"不限"形态（语义陷阱），需要不限请直接关主开关
   const toggle = (id: number, on: boolean) => {
     if (on) {
       const set = new Set(ids)
       set.add(id)
       save(rows.filter((x) => set.has(x)), rows)
     } else {
+      if (ids.length <= 1) {
+        message.info('至少保留一个启用的渠道；如需路由到全部渠道，请关闭「限定渠道范围」主开关')
+        return
+      }
       save(ids.filter((x) => x !== id), rows)
     }
   }
@@ -161,13 +163,13 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
           type="info"
           showIcon
           message={`未限定渠道：令牌可路由到所有启用渠道，按渠道优先级路由。${
-            rows.length > 0 ? '上次配置的渠道与顺序已保留，打开开关即恢复。' : '打开开关可限定为指定渠道。'
+            rows.length > 0 ? '上次的渠道配置已保留，打开开关即恢复（含各渠道的开关状态）。' : '打开开关可限定为指定渠道。'
           }`}
         />
       ) : (
         <>
           <div className="text-secondary" style={{ fontSize: 12, marginBottom: 6 }}>
-            整行可拖动，或用 ↑↓ 按钮调整优先级（自上而下依次尝试）；关闭的渠道保持原位，只是不参与路由。
+            拖动行首手柄，或用 ↑↓ 按钮调整优先级（自上而下依次尝试）；关闭的渠道保持原位，只是不参与路由。
           </div>
           {rows.map((id, i) => {
             const c = byId.get(id)!
@@ -175,36 +177,33 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSave
             return (
               <div
                 key={id}
-                draggable
-                onDragStart={(e) => {
-                  if (noDrag.current) {
-                    e.preventDefault()
-                    noDrag.current = false
-                    return
-                  }
-                  dragFrom.current = i
-                  setDragging(i)
-                }}
-                onDragEnd={finishDrag}
                 onDragOver={(e) => onRowDragOver(e, i)}
                 onDrop={onDrop}
                 onDragLeave={() => {
                   const v = overRef.current
                   if (v === i || v === i + 1) setOverIndex(null)
                 }}
-                style={{ ...rowStyle, ...(on ? {} : closedStyle), ...insertShadow(i), cursor: 'grab', opacity: dragging === i ? 0.45 : undefined }}
-                title="拖动整行调整顺序"
+                style={{ ...rowStyle, ...(on ? {} : closedStyle), ...insertShadow(i), opacity: dragging === i ? 0.45 : undefined }}
               >
-                <HolderOutlined style={{ color: on ? '#176b87' : '#b7c4c9' }} />
+                <span
+                  draggable
+                  onDragStart={() => {
+                    dragFrom.current = i
+                    setDragging(i)
+                  }}
+                  onDragEnd={finishDrag}
+                  style={{ display: 'inline-flex', alignItems: 'center', cursor: 'grab', padding: '6px 6px 6px 2px', marginLeft: -8 }}
+                  title="拖动调整顺序"
+                >
+                  <HolderOutlined style={{ color: on ? '#176b87' : '#b7c4c9' }} />
+                </span>
                 <span style={{ flex: 1 }}>{c.name}</span>
                 {c.enabled ? null : <Tag>渠道停用</Tag>}
                 <Space size={2}>
-                  <Button {...pressCtrl} type="text" size="small" icon={<CaretUpOutlined />} disabled={i === 0} onClick={() => move(i, i - 1)} title="上移" />
-                  <Button {...pressCtrl} type="text" size="small" icon={<CaretDownOutlined />} disabled={i === rows.length - 1} onClick={() => move(i, i + 1)} title="下移" />
+                  <Button type="text" size="small" icon={<CaretUpOutlined />} disabled={i === 0} onClick={() => move(i, i - 1)} title="上移" />
+                  <Button type="text" size="small" icon={<CaretDownOutlined />} disabled={i === rows.length - 1} onClick={() => move(i, i + 1)} title="下移" />
                 </Space>
-                <span {...pressCtrl} style={{ display: 'inline-flex' }} title={on ? '关闭后保持原位' : '打开'}>
-                  <Switch size="small" checked={on} onChange={(v) => toggle(id, v)} />
-                </span>
+                <Switch size="small" checked={on} onChange={(v) => toggle(id, v)} title={on ? '关闭后保持原位' : '打开'} />
               </div>
             )
           })}

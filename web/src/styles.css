@@ -60,10 +60,10 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
 .stat-strip .stat-note { color: var(--kw-tertiary); font-size: 12px; margin-left: 6px; }
 
 /* 令牌列表「限定渠道」入口：胶囊按钮，明确可点击展开配置面板。
-   宽度固定（列宽 230 - 单元格 padding 32）：摘要文本变化不引起表格列宽重排，
-   避免面板操作时展开弹层跟随锚点位移 */
+   宽度固定（列宽 230 - 单元格 padding 32）：摘要文本变化既不引起表格列宽重排，
+   胶囊自身也不收缩——弹层锚点恒定，面板操作时展开框完全不动 */
 .channel-pill {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 198px;
+  display: inline-flex; align-items: center; gap: 6px; width: 198px; max-width: 100%;
   padding: 2px 10px; border: 1px solid #c9d9df; border-radius: 999px;
   background: #fff; color: #176b87; font-size: 12px; line-height: 20px;
   cursor: pointer; user-select: none;
