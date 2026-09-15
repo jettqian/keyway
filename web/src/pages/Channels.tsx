@@ -239,6 +239,7 @@ const ChannelsPage: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={channels}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: '暂无渠道，点击右上角「新建渠道」或从预制模板复制' }}
         columns={[
           {

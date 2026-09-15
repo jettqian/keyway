@@ -54,6 +54,11 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
 .user-chip .ant-avatar { background: #176b87; font-weight: 600; }
 .user-chip-name { font-weight: 500; }
 
+/* 窄屏头部：汉堡入口 + 精简品牌（侧栏在 <lg 时由抽屉替代，见 Layout.tsx） */
+.nav-trigger { font-size: 18px; margin-inline-end: 2px; }
+.nav-brand { font-size: 16px; }
+.nav-drawer .console-menu { border-inline-end: 0 !important; padding: 0 10px; }
+
 /* 统计汇总带：一条卡片内用分隔线分段，替代等宽同款卡片阵列 */
 .stat-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 20px; }
 .stat-strip .ant-statistic-title { color: var(--kw-secondary); }
@@ -92,11 +97,28 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
 
 @media (max-width: 768px) {
   .console-content { padding: 20px 16px 32px !important; }
+  .console-header { padding-inline: 12px !important; }
   .page-heading { align-items: stretch; flex-direction: column; }
+  .page-heading h2 { font-size: 21px; }
   .page-actions { justify-content: flex-start; }
   .ant-table { font-size: 12px; }
+  /* 表格密度：横向滚动（scroll x）配合压缩的单元格内边距 */
+  .ant-table-wrapper .ant-table-cell { padding: 8px !important; }
+  .ant-modal { max-width: calc(100vw - 16px) !important; margin: 8px auto !important; top: 8px !important; padding-bottom: 8px; }
+  /* 弹窗过高时限高 + 内容区滚动，避免顶出屏幕 */
+  .ant-modal .ant-modal-content { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; }
+  .ant-modal .ant-modal-body { overflow-y: auto; }
+  /* 弹窗内固定宽度控件（width: 400 等）收窄到容器内；行内组合自动换行 */
+  .ant-modal .ant-space { flex-wrap: wrap; }
+  .ant-modal .ant-input,
+  .ant-modal .ant-input-number,
+  .ant-modal .ant-select,
+  .ant-modal .ant-picker { max-width: 100% !important; }
+  /* 弹出层（令牌渠道面板 / 日志错误详情）不超出视口 */
+  .ant-popover { max-width: calc(100vw - 16px) !important; }
   .auth-card .ant-card-body { padding: 24px; }
   .stat-strip { grid-template-columns: 1fr 1fr; gap: 16px 12px; }
   .stat-strip > .stat-cell + .stat-cell { border-left: 0; }
   .stat-strip > .stat-cell { padding: 0; }
+  .stat-strip .ant-statistic-content { font-size: 20px; }
 }

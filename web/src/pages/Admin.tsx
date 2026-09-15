@@ -50,6 +50,7 @@ const UsersTab: React.FC = () => {
       rowKey="id"
       loading={loading}
       dataSource={users}
+      scroll={{ x: 'max-content' }}
       columns={[
         { title: 'ID', dataIndex: 'id', width: 60 },
         { title: '用户名', dataIndex: 'username' },
@@ -261,6 +262,7 @@ const PricingTab: React.FC = () => {
         rowKey="model"
         loading={loading}
         dataSource={rows}
+        scroll={{ x: 'max-content' }}
         pagination={{ pageSize: 20 }}
         columns={[
           {
@@ -420,6 +422,7 @@ const ProxiesTab: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={proxies}
+        scroll={{ x: 'max-content' }}
         columns={[
           { title: '名称', dataIndex: 'name' },
           { title: '状态', dataIndex: 'enabled', render: (v: boolean) => (v ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>) },
@@ -544,6 +547,7 @@ const CatalogModelsTab: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={models}
+        scroll={{ x: 'max-content' }}
         pagination={{ pageSize: 20 }}
         columns={[
           { title: '模型', dataIndex: 'name' },
@@ -700,6 +704,7 @@ const TemplatesTab: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={templates}
+        scroll={{ x: 'max-content' }}
         columns={[
           { title: '名称', dataIndex: 'name' },
           { title: '线路数', width: 90, align: 'right', render: (_, t) => t.baseUrls.length },
@@ -872,10 +877,10 @@ const StatsTab: React.FC = () => {
         </div>
       </Card>
       <Card title="按用户" loading={loading} style={{ marginBottom: 16 }}>
-        <Table<StatsGroup> rowKey="dim" size="small" pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={data?.byUser ?? []} columns={groupColumns('用户')} />
+        <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={data?.byUser ?? []} columns={groupColumns('用户')} />
       </Card>
       <Card title="按模型" loading={loading}>
-        <Table<StatsGroup> rowKey="dim" size="small" pagination={false} dataSource={data?.byModel ?? []} columns={groupColumns('模型')} />
+        <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={false} dataSource={data?.byModel ?? []} columns={groupColumns('模型')} />
       </Card>
     </div>
   )

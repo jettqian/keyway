@@ -66,6 +66,7 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
         rowKey="name"
         loading={loading}
         dataSource={rows}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: '暂无模型：在渠道表单中点选或输入模型名后即出现在这里' }}
         columns={[
           { title: '模型', dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
@@ -150,6 +151,7 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
         rowKey="id"
         loading={loading || catLoading}
         dataSource={catalog}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: '管理员尚未配置模型目录' }}
         columns={[
           { title: '模型', dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },

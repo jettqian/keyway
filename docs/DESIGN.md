@@ -1,6 +1,16 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.35（与 PRD v1.5.37 对应；最近生效流量**线路列左移**（撤销 v1.34 的
+- 版本：v1.36（与 PRD v1.5.38 对应；前端**移动端适配**——Layout 用
+  `Grid.useBreakpoint`（`screens.lg === false` 判定，首帧按桌面渲染防闪烁）
+  在窄屏（<992px）切换为头部汉堡按钮 + Drawer 抽屉导航（width 280，菜单/品牌
+  与侧栏复用同一 JSX）；各列表与分组 Table 统一加 `scroll={{ x: 'max-content' }}`
+  （列不再挤压，窄屏横向滚动）；styles.css 移动端媒体查询（≤768px）扩充：
+  Modal `max-width: calc(100vw - 16px)` + content 限高 `100dvh` 纵向滚动、
+  Modal 内 Input/InputNumber/Select/Picker `max-width: 100%`、Space 自动换行、
+  Popover 限幅视口内、表格单元格 8px 紧凑、汇总带大数字缩小；Stats 页
+  按渠道/按模型两列 `Col` 补 `xs={24}` 窄屏堆叠；index.html viewport 补
+  `viewport-fit=cover` 与 `theme-color`；
+  前版 v1.35：与 PRD v1.5.37 对应；最近生效流量**线路列左移**（撤销 v1.34 的
   列序交换）——渠道列改定宽 130（auto 平分曾占约 1/3 表宽把线路列挤右），
   线路列加宽至 260；列序维持 时间 → 渠道 → 线路 → 模型 → 状态；
   前版 v1.34：与 PRD v1.5.36 对应；最近生效流量**列序调整**——「线路」列左移

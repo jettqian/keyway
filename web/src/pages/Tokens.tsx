@@ -281,6 +281,7 @@ const TokensPage: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={tokens}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: '暂无令牌，点击右上角「新建令牌」创建' }}
         columns={[
           { title: '名称', dataIndex: 'name' },

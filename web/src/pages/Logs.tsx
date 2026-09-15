@@ -61,6 +61,7 @@ const LogsPage: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={logs}
+        scroll={{ x: 'max-content' }}
         pagination={{ current: page, total, pageSize: 20, onChange: setPage }}
         columns={[
           { title: '时间', dataIndex: 'createdAt', width: 170, render: (v: number | string) => formatDateTime(v) },

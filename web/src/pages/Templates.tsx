@@ -33,6 +33,7 @@ const TemplatesPage: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={templates}
+        scroll={{ x: 'max-content' }}
         columns={[
           { title: '名称', dataIndex: 'name' },
           { title: '线路数', width: 90, align: 'right', render: (_, t) => t.baseUrls.length },

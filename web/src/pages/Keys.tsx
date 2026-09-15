@@ -62,6 +62,7 @@ const KeysPage: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={keys}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: '暂无密钥，点击右上角「新建密钥」添加' }}
         columns={[
           { title: '名称', dataIndex: 'name' },
