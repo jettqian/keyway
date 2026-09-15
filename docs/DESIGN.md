@@ -1,10 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.19（与 PRD v1.5.21 对应；限定渠道面板体验修正——面板操作乐观更新 +
-  静默局部刷新（不触发整表 loading，弹层不位移）、胶囊入口固定宽度防列宽重排、
-  交互控件按下标记抑制行拖拽（纯前端，接口不变）；
-  前版 v1.18：模型目录价目点选；v1.17：流式保活与止损、usage 兜底估算；
-  v1.16：撤销目录价目导入与价格展示优化；
+- 版本：v1.20（与 PRD v1.5.22 对应；探测修正——协议判定/模型映射与真实转发对齐
+  （passthrough 按模型名族推断 + 失败回退另一协议）、探测矩阵并发化、测试按钮前端
+  即时反馈（见 §6）；
+  前版 v1.19：限定渠道面板体验修正；v1.18：模型目录价目点选；v1.17：流式保活与止损、
+  usage 兜底估算；v1.16：撤销目录价目导入与价格展示优化；
   v1.15：令牌渠道顺序与启用集合分离；v1.14：统计页名称化/补算/时间窗/最近流量；
   v1.13：限定渠道面板交互优化；
   历史变更见文档各节与 PRD 变更记录）
@@ -396,13 +396,23 @@ graph LR
 - 单 goroutine 调度：每 30s 扫描到期渠道（`now ≥ next_probe_at`），带 ±20% jitter
   防同步风暴；探测失败连续 ≥3 次 → 频率×2 指数退避，上限 60 分钟；成功恢复基准频率
 - 每渠道探测矩阵：线路（≤5）× 路径（直连+个人+公共 ≤4）= ≤20 组合，
-  每组合发最小请求：openai 型 `POST /v1/chat/completions {model, max_tokens:8,
-  messages:[{role:user,content:"ping"}]}`；anthropic 型同理（max_tokens:8）；
-  2xx 却返回 text/html 视为线路无该端点（SPA 回退）而非健康
+  **组合间并发探测**（≤20 个独立 HTTP 请求，总耗时≈单组合而非串行叠加），每组合发
+  最小请求：openai 型 `POST /v1/chat/completions {model, max_tokens:8,
+  messages:[{role:user,content:"ping"}]}`；anthropic 型 `POST /v1/messages` 同理
+  （max_tokens:8）；2xx 却返回 text/html 视为线路无该端点（SPA 回退）而非健康
+- **探测协议判定与真实转发一致**（v1.5.22 修正，消除透明转发渠道假失败）：
+  - 请求模型名先经渠道 model_mapping 映射为上游模型名（`routing.ApplyModelMapping`，
+    relay 与 probe 共用）；
+  - convert 渠道用其显式目标协议 `type`，失败不回退（配错就应报失败）；
+  - passthrough 渠道 `type` 恒为空且不参与转发，按模型名族推断首选协议
+    （`claude*` → anthropic，其余 → openai），**失败时回退另一协议**再试一次
+    （兼容 claude 模型走 openai 兼容中转 / gpt 模型走 anthropic 站），任一成功即
+    通过，全部失败时汇报各协议错误摘要
 - 探测使用该渠道当前首选可用密钥（会消耗极少量上游额度，文档明示；矩阵上限×频率
   约束见 PRD 非功能需求）
 - 结果 UPSERT line_stats（latency_ms / ok / last_error / last_probe_at）
-- 管理员"立即探测"与用户"测试渠道"按钮走同一矩阵，实时返回结果矩阵
+- 管理员"立即探测"与用户"测试渠道"按钮走同一矩阵，实时返回结果矩阵；前端点击后
+  立即打开结果弹窗进入探测中状态（矩阵并发，整体≈单组合 15s 超时上限）
 - 探测不产生 logs 记录（PRD FR-S6）
 
 ## 7. 协议转换（PRD 开放问题 Q4 决策表）

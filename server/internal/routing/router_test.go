@@ -68,3 +68,18 @@ func TestResolveTokenChannelOrder(t *testing.T) {
 		t.Errorf("令牌限定 [c3,c1,c2] 时期望按令牌顺序 c3,c1,c2，实际 %s", got)
 	}
 }
+
+// 模型映射：命中且目标非空时替换为上游名；未命中或目标为空时原样返回
+func TestApplyModelMapping(t *testing.T) {
+	ch := &store.Channel{ModelMappingJSON: `{"gpt-4o":"custom-gpt","empty":""}`}
+	cases := []struct{ in, want string }{
+		{"gpt-4o", "custom-gpt"},
+		{"gpt-4o-mini", "gpt-4o-mini"},
+		{"empty", "empty"},
+	}
+	for _, c := range cases {
+		if got := ApplyModelMapping(ch, c.in); got != c.want {
+			t.Errorf("ApplyModelMapping(%q) = %q，期望 %q", c.in, got, c.want)
+		}
+	}
+}

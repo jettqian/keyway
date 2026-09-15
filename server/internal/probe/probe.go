@@ -155,7 +155,7 @@ func min64(a, b int64) int64 {
 	return b
 }
 
-// ProbeChannel 同步探测一个渠道的全部"线路 × 路径"组合并写 line_stats
+// ProbeChannel 并发探测一个渠道的全部"线路 × 路径"组合并写 line_stats
 func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 	rc, err := e.routing.ForChannel(ch)
 	if err != nil {
@@ -168,6 +168,8 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 	if model == "" {
 		return nil, fmt.Errorf("渠道未配置模型列表，无法探测")
 	}
+	upstreamModel := routing.ApplyModelMapping(ch, model)
+	protocols := probeProtocols(ch, model)
 	key := pickKey(rc.Keys)
 	keyPlain, err := routing.DecodeKeyValue(e.secret, key)
 	if err != nil {
@@ -177,20 +179,32 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 	// 路径集合：proxyman（直连 → 个人 → 公共代理，渠道 opt-in）
 	paths := e.pm.Paths(rc.PersonalProxyURL, ch.AllowPublicProxy == 1)
 
-	var results []Result
+	type target struct{ line, proxyURL, via string }
+	var targets []target
 	for _, line := range rc.BaseURLs {
 		for _, p := range paths {
-			if len(results) >= matrixCap {
+			if len(targets) >= matrixCap {
 				break
 			}
-			results = append(results, e.probeOnce(ch, model, keyPlain, line, p.ProxyURL, p.Via))
+			targets = append(targets, target{line, p.ProxyURL, p.Via})
 		}
 	}
+	// 组合并发探测（≤20 个独立 HTTP 请求），消除串行等待（否则最坏 20×15s）
+	results := make([]Result, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = e.probeOnce(ch, upstreamModel, keyPlain, t.line, t.proxyURL, t.via, protocols)
+		}()
+	}
+	wg.Wait()
 	e.saveResults(ch.ID, results)
 	return results, nil
 }
 
-// ProbeKeys 逐密钥测试（首线路直连路径）
+// ProbeKeys 并发逐密钥测试（首线路直连路径）
 func (e *Engine) ProbeKeys(ch *store.Channel) ([]KeyResult, error) {
 	rc, err := e.routing.ForChannel(ch)
 	if err != nil {
@@ -203,24 +217,65 @@ func (e *Engine) ProbeKeys(ch *store.Channel) ([]KeyResult, error) {
 	if len(rc.BaseURLs) == 0 {
 		return nil, fmt.Errorf("渠道无线路")
 	}
+	upstreamModel := routing.ApplyModelMapping(ch, model)
+	protocols := probeProtocols(ch, model)
 	line := rc.BaseURLs[0]
-	var out []KeyResult
-	for _, k := range rc.Keys {
+	out := make([]KeyResult, len(rc.Keys))
+	var wg sync.WaitGroup
+	for i, k := range rc.Keys {
 		plain, err := routing.DecodeKeyValue(e.secret, k)
 		if err != nil {
-			out = append(out, KeyResult{KeyID: k.ID, Name: k.Name, Error: err.Error()})
+			out[i] = KeyResult{KeyID: k.ID, Name: k.Name, Error: err.Error()}
 			continue
 		}
-		res := e.probeOnce(ch, model, plain, line, "", "direct")
-		out = append(out, KeyResult{
-			KeyID: k.ID, Name: k.Name, OK: res.OK, LatencyMs: res.LatencyMs, Error: res.Error,
-		})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res := e.probeOnce(ch, upstreamModel, plain, line, "", "direct", protocols)
+			out[i] = KeyResult{
+				KeyID: k.ID, Name: k.Name, OK: res.OK, LatencyMs: res.LatencyMs, Error: res.Error,
+			}
+		}()
 	}
+	wg.Wait()
 	return out, nil
 }
 
-// probeOnce 发送最小请求并计时
-func (e *Engine) probeOnce(ch *store.Channel, model, keyPlain, line, proxyURL, via string) Result {
+// probeProtocols 探测协议尝试序列：
+//   - convert 模式上游协议由渠道显式指定，只测该协议（配错就应报失败）；
+//   - passthrough 沿用入站协议、无法预知，按模型名族推断首选（claude* → anthropic，
+//     其余 → openai），失败时回退另一协议——兼容 claude 模型走 openai 兼容中转站等场景。
+//     渠道上的 type 字段在 passthrough 下不参与转发（relay 忽略），探测同样不依赖它
+func probeProtocols(ch *store.Channel, model string) []string {
+	if ch.ForwardMode == "convert" && ch.Type != "" {
+		return []string{ch.Type}
+	}
+	if strings.HasPrefix(model, "claude") {
+		return []string{"anthropic", "openai"}
+	}
+	return []string{"openai", "anthropic"}
+}
+
+// probeOnce 发送最小请求并计时；protocols 依序尝试，任一成功即通过，
+// 全部失败时汇报各协议错误摘要（协议判定回退，见 probeProtocols）
+func (e *Engine) probeOnce(ch *store.Channel, model, keyPlain, line, proxyURL, via string, protocols []string) Result {
+	result := Result{LineURL: line, Via: via}
+	var errs []string
+	start := time.Now()
+	for _, proto := range protocols {
+		r := e.probeOne(ch, model, keyPlain, line, proxyURL, via, proto)
+		if r.OK {
+			return r
+		}
+		errs = append(errs, fmt.Sprintf("%s 协议: %s", proto, r.Error))
+	}
+	result.LatencyMs = time.Since(start).Milliseconds()
+	result.Error = strings.Join(errs, "；")
+	return result
+}
+
+// probeOne 按指定协议发送最小请求并计时
+func (e *Engine) probeOne(ch *store.Channel, model, keyPlain, line, proxyURL, via, protocol string) Result {
 	result := Result{LineURL: line, Via: via}
 
 	body, _ := json.Marshal(map[string]any{
@@ -229,7 +284,7 @@ func (e *Engine) probeOnce(ch *store.Channel, model, keyPlain, line, proxyURL, v
 		"messages":   []map[string]any{{"role": "user", "content": "ping"}},
 	})
 	var target string
-	if ch.Type == "anthropic" {
+	if protocol == "anthropic" {
 		target = httpx.UpstreamEndpoint(line, "/messages")
 	} else {
 		target = httpx.UpstreamEndpoint(line, "/chat/completions")
@@ -243,7 +298,7 @@ func (e *Engine) probeOnce(ch *store.Channel, model, keyPlain, line, proxyURL, v
 		return result
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if ch.Type == "anthropic" {
+	if protocol == "anthropic" {
 		req.Header.Set("x-api-key", keyPlain)
 		req.Header.Set("anthropic-version", "2023-06-01")
 	} else {

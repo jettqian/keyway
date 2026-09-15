@@ -29,6 +29,17 @@ func New(st *store.Store, secret string) *Service {
 	return &Service{store: st, secret: secret}
 }
 
+// ApplyModelMapping 请求模型名 → 上游模型名（渠道 model_mapping；缺失或目标为空时原样返回）。
+// relay 与 probe 共用，保证探测请求与真实转发使用同一个上游模型名
+func ApplyModelMapping(ch *store.Channel, model string) string {
+	var mapping map[string]string
+	json.Unmarshal([]byte(ch.ModelMappingJSON), &mapping)
+	if to, ok := mapping[model]; ok && to != "" {
+		return to
+	}
+	return model
+}
+
 // DecodeKeyValue 解密某把密钥的明文值
 func DecodeKeyValue(secret string, k *store.Key) (string, error) {
 	b, err := crypto.Decrypt(secret, "key", k.ValueEnc)
