@@ -1,5 +1,5 @@
 import React from 'react'
-import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography } from 'antd'
+import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Tag, Space, Select, InputNumber, Typography } from 'antd'
 import {
   adminUsers,
   adminSetUserStatus,
@@ -20,7 +20,6 @@ import {
   adminUpdateCatalogModel,
   adminDeleteCatalogModel,
   adminImportCatalogFromPricing,
-  adminSyncCatalogToPricing,
   adminSettings,
   adminUpdateSettings,
   adminStats,
@@ -386,26 +385,10 @@ const CatalogModelsTab: React.FC = () => {
       message.error((e as Error).message)
     }
   }
-  const syncToPricing = async () => {
-    try {
-      const r = await adminSyncCatalogToPricing()
-      message.success(r.added > 0 ? `已为 ${r.added} 个目录模型创建 0 价占位条目，请在价目表补充单价` : '目录中的模型均已有价目')
-      refresh()
-    } catch (e) {
-      message.error((e as Error).message)
-    }
-  }
   return (
     <div>
       <div style={{ marginBottom: 12, textAlign: 'right' }}>
         <Space>
-          <Popconfirm
-            title="把目录同步到价目表？"
-            description="目录中尚未定价的模型将以 0 价占位写入价目表（已有价目的不受影响），便于后续统一补单价。"
-            onConfirm={syncToPricing}
-          >
-            <Button>同步到价目表</Button>
-          </Popconfirm>
           <Button onClick={importFromPricing}>从价目表导入</Button>
           <Button type="primary" onClick={openCreate}>新增模型</Button>
         </Space>

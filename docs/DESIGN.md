@@ -605,9 +605,8 @@ GET /oauth/feishu/callback?code&state
 | GET /api/logs | 自己的日志（分页/过滤） |
 | GET /api/stats | 自己的统计（含最近生效流量 latest） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
-  （模型目录 CRUD + import_pricing 价目导入 + sync_pricing 目录同步为价目初始内容）、
-  /api/admin/templates、/api/admin/proxies、/api/admin/pricing(+import)、
-  /api/admin/stats、/api/admin/invites | 见 PRD §5.9 |
+  （模型目录 CRUD + import_pricing 价目导入）、/api/admin/templates、
+  /api/admin/proxies、/api/admin/pricing(+import)、/api/admin/stats、/api/admin/invites | 见 PRD §5.9 |
 
 ### 11.2 中转 `/v1`（令牌鉴权）
 

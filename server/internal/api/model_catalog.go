@@ -142,31 +142,3 @@ func (s *Server) handleAdminImportCatalogFromPricing(c *gin.Context) {
 	}
 	s.ok(c, gin.H{"imported": imported})
 }
-
-// handleAdminSyncCatalogToPricing 把模型目录同步到价目表：目录中尚未定价的模型以 0 价占位
-// 写入 model_pricing（已有价目的模型不受影响），供管理员后续补单价
-func (s *Server) handleAdminSyncCatalogToPricing(c *gin.Context) {
-	var catalog []store.CatalogModel
-	s.Store.DB().Where("enabled = 1").Order("name").Find(&catalog)
-	var pricing []store.ModelPricing
-	s.Store.DB().Find(&pricing)
-	seen := make(map[string]bool, len(pricing))
-	for i := range pricing {
-		seen[pricing[i].Model] = true
-	}
-	now := time.Now().Unix()
-	added := 0
-	for i := range catalog {
-		name := trimOrEmpty(catalog[i].Name)
-		if name == "" || seen[name] {
-			continue
-		}
-		seen[name] = true
-		if err := s.Store.DB().Create(&store.ModelPricing{
-			Model: name, InputPerM: 0, OutputPerM: 0, UpdatedAt: now,
-		}).Error; err == nil {
-			added++
-		}
-	}
-	s.ok(c, gin.H{"added": added})
-}
