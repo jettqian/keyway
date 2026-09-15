@@ -8,8 +8,9 @@ import { formatDateTime } from '../format'
 import { copyText } from '../copy'
 
 // 令牌的渠道面板：顺序（channelOrder，含已关闭渠道）与启用集合（channelIds，路由范围）
-// 分离——关闭渠道只改启用集合，渠道保持原位、顺序不变
-const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChanged: () => void }> = ({ token, channels, onChanged }) => {
+// 分离——关闭渠道只改启用集合，渠道保持原位、顺序不变。
+// 面板操作走乐观更新 + onSaved 静默更新列表（不触发整表 loading，避免弹层抖动与卡顿）
+const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onSaved: (t: GatewayToken) => void }> = ({ token, channels, onSaved }) => {
   const boundIds = token.channelIds ?? []
   const boundOrder = token.channelOrder ?? []
   // 服务端 order 为空（旧数据）时用启用集合兜底，保证顺序信息自愈
@@ -38,14 +39,32 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
     overRef.current = v
     setOverIndexState(v)
   }
+  // 点击交互控件（开关/↑↓）时抑制整行拖拽：HTML5 dragstart 的目标是行本身，
+  // 无法在子控件上拦截，改为按下时标记、起拖时取消——避免点击微动误触拖拽
+  const noDrag = React.useRef(false)
+  const pressCtrl = {
+    onPointerDown: () => {
+      noDrag.current = true
+    },
+    onPointerUp: () => {
+      noDrag.current = false
+    },
+    onPointerCancel: () => {
+      noDrag.current = false
+    },
+  }
 
   const save = async (nextIds: number[], nextOrder: number[]) => {
+    const prevIds = ids
+    const prevOrder = order
     setIds(nextIds)
     setOrder(nextOrder)
     try {
-      await updateToken(token.id, { channelIds: nextIds, channelOrder: nextOrder })
-      onChanged()
+      const r = await updateToken(token.id, { channelIds: nextIds, channelOrder: nextOrder })
+      onSaved(r.token)
     } catch (e) {
+      setIds(prevIds)
+      setOrder(prevOrder)
       message.error((e as Error).message)
     }
   }
@@ -157,7 +176,12 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
               <div
                 key={id}
                 draggable
-                onDragStart={() => {
+                onDragStart={(e) => {
+                  if (noDrag.current) {
+                    e.preventDefault()
+                    noDrag.current = false
+                    return
+                  }
                   dragFrom.current = i
                   setDragging(i)
                 }}
@@ -175,10 +199,12 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
                 <span style={{ flex: 1 }}>{c.name}</span>
                 {c.enabled ? null : <Tag>渠道停用</Tag>}
                 <Space size={2}>
-                  <Button type="text" size="small" icon={<CaretUpOutlined />} disabled={i === 0} onClick={() => move(i, i - 1)} title="上移" />
-                  <Button type="text" size="small" icon={<CaretDownOutlined />} disabled={i === rows.length - 1} onClick={() => move(i, i + 1)} title="下移" />
+                  <Button {...pressCtrl} type="text" size="small" icon={<CaretUpOutlined />} disabled={i === 0} onClick={() => move(i, i - 1)} title="上移" />
+                  <Button {...pressCtrl} type="text" size="small" icon={<CaretDownOutlined />} disabled={i === rows.length - 1} onClick={() => move(i, i + 1)} title="下移" />
                 </Space>
-                <Switch size="small" checked={on} onChange={(v) => toggle(id, v)} title={on ? '关闭后保持原位' : '打开'} />
+                <span {...pressCtrl} style={{ display: 'inline-flex' }} title={on ? '关闭后保持原位' : '打开'}>
+                  <Switch size="small" checked={on} onChange={(v) => toggle(id, v)} />
+                </span>
               </div>
             )
           })}
@@ -225,6 +251,12 @@ const TokensPage: React.FC = () => {
   }, [])
 
   React.useEffect(refresh, [refresh])
+
+  // 面板内渠道开关/排序操作：用接口返回的 token 静默更新对应行，
+  // 不触发整表 loading——避免弹层抖动、开关卡顿与列宽重排
+  const applyTokenUpdate = React.useCallback((t: GatewayToken) => {
+    setTokens((ts) => ts.map((x) => (x.id === t.id ? t : x)))
+  }, [])
 
   const submit = async () => {
     const v = await form.validateFields()
@@ -305,7 +337,7 @@ const TokensPage: React.FC = () => {
                   placement="rightTop"
                   overlayStyle={{ maxWidth: 600 }}
                   title={`渠道范围与顺序：${t.name}`}
-                  content={<TokenChannels token={t} channels={channels} onChanged={refresh} />}
+                  content={<TokenChannels token={t} channels={channels} onSaved={applyTokenUpdate} />}
                 >
                   <a className="channel-pill" title="点击配置渠道范围与优先级">
                     <span className="channel-pill-text">{summary}</span>
