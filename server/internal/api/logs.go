@@ -178,9 +178,14 @@ func (s *Server) handleAdminResetPassword(c *gin.Context) {
 // ---------- 管理员：价目表 ----------
 
 func (s *Server) handleAdminPricing(c *gin.Context) {
-	var pricing []store.ModelPricing
-	s.Store.DB().Order("model").Find(&pricing)
-	s.ok(c, gin.H{"pricing": pricing})
+	var rows []store.ModelPricing
+	s.Store.DB().Order("model").Find(&rows)
+	// 附带远程同步元信息：最近一次同步时间与同步源链接（管理页展示）
+	s.ok(c, gin.H{
+		"pricing":  rows,
+		"syncedAt": pricing.SyncedAt(s.Store.DB()),
+		"sources":  pricing.Sources(),
+	})
 }
 
 func (s *Server) handleAdminUpdatePricing(c *gin.Context) {

@@ -1,7 +1,8 @@
 # Keyway 技术方案（DESIGN）
 
 - 版本：v1.12（与 PRD v1.5.14 对应；汇率同步落库并回显命中源请求地址
-  `usd_cny_rate_source_url`，设置页以链接展示；
+  `usd_cny_rate_source_url`；价目表与模型目录体验增强——目录模型置前 +
+  搜索筛选、目录单价完整四档展示、远程同步元信息（时间 + 源链接）持久化展示；
   前版 v1.11：上游响应头超时可配；v1.10：汇率自动同步；
   历史变更见文档各节与 PRD 变更记录）
 - 日期：2026-09-15
@@ -578,6 +579,23 @@ new-api 的已知语义（仅参考行为，代码自研）。
   `usd_cny_rate_source_url` 命中源请求地址，manual 为空 /
   `usd_cny_rate_updated_at` RFC3339），usage 层每次读库计算，同步后即时生效；
   写入经 mutex 串行化（手动同步与定时循环可能并发）。
+
+### 8.6 官方价目远程同步与同步元信息（FR-M4.2）
+
+- **同步**：LiteLLM（`model_prices_and_context_window.json`）与 OpenRouter
+  （`/api/v1/models`）双源，归一化 USD/百万 token（含缓存读/写档）；**只补缺不覆盖**
+  （applyMissing 事务内查库判重）；手动 `POST /api/admin/pricing/sync_remote` 与
+  定时 `StartSyncLoop`（`KEYWAY_PRICING_SYNC_HOURS`，0 关闭）共用 `SyncRemote`
+  （mutex 串行化），单源失败降级为警告，双源失败报错。
+- **同步元信息**：至少单源成功时把完成时间写入 `settings.pricing_synced_at`
+  （RFC3339，markSynced upsert），双源失败不记录；`pricing.Sources()` 暴露双源
+  名称 + 链接（LiteLLM / OpenRouter）。
+- **展示**：`GET /api/admin/pricing` 在价目列表外一并返回 `syncedAt` 与 `sources`，
+  管理页价目表头部展示"最近同步时间 + 同步源链接"；价目表排序为**模型目录中的条目
+  置前**（前端按 catalog_models 名称集合排序并打"目录"标签），并支持按模型名搜索筛选。
+- **模型目录关联单价**：目录（用户页与管理员页）单价列直接展示完整四档价
+  （输入/输出主行 + 缓存读/写副行，未配置标注回退输入价），数据来自
+  `catalogModelDTOWithPricing` 按模型名精确匹配 model_pricing（与费用计算同口径）。
 
 ## 9. 预制渠道复制（FR-X2/X3）
 
