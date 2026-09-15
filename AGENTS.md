@@ -6,11 +6,12 @@
 
 ## 提交规范
 - **每完成一轮任务（一个需求、修复或文档更新收尾）即自动 commit**，无需再次向用户确认
+- commit 后**询问用户是否执行 git push、是否构建镜像并 docker push**，确认后再执行，不主动推送
 - commit message 采用 conventional-commit 前缀 + 中文描述，如：
   `docs: 补充缓存计价需求`、`feat: 实现路由与失败切换引擎`
 - 提交前仅暂存本轮任务涉及的文件；密钥、运行时数据（`./data`）、构建产物不入库
 - 提交前运行可用的一致性检查（lint / test / 构建），失败则先修复再提交
-- 当前处于设计阶段（无代码），后续进入编码阶段后以本仓库根目录为准执行
+- 镜像推送惯例：`harbor.xg.bytedance.net/octarray/keyway`，打 commit 短哈希 + `latest` 双标签
 
 ## 项目文档
 - `docs/PRD.md`：需求文档（功能需求 FR-*、验收标准 A*、开放问题 Q*）
