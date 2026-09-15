@@ -741,7 +741,7 @@ const StatsTab: React.FC = () => {
   const [data, setData] = React.useState<StatsResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
   React.useEffect(() => {
-    adminStats(30)
+    adminStats({ days: 30 })
       .then(setData)
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))

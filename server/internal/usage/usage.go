@@ -89,9 +89,6 @@ func (w *Writer) Dropped() int64 {
 //
 // 未定价返回 (nil, nil)
 func ComputeCost(db *gorm.DB, model, upstreamModel, pricingMode string, multiplier, cnyRatio float64, u convert.Usage) (inputCost, outputCost *float64) {
-	if multiplier <= 0 {
-		multiplier = 1
-	}
 	if pricingMode != "cny_ratio" {
 		pricingMode = "usd"
 	}
@@ -105,6 +102,22 @@ func ComputeCost(db *gorm.DB, model, upstreamModel, pricingMode string, multipli
 		if err := db.Where("model = ?", model).First(&p).Error; err != nil {
 			return nil, nil
 		}
+	}
+	var fx float64
+	if pricingMode == "cny_ratio" {
+		fx = usdCNYRate(db)
+	}
+	ic, oc := applyPricing(&p, pricingMode, multiplier, cnyRatio, fx, u)
+	return &ic, &oc
+}
+
+// applyPricing 按价目与渠道计价模式计算费用（缓存档回退见 DESIGN §8.2）
+func applyPricing(p *store.ModelPricing, pricingMode string, multiplier, cnyRatio, fxRate float64, u convert.Usage) (inputCost, outputCost float64) {
+	if pricingMode != "cny_ratio" {
+		pricingMode = "usd"
+	}
+	if multiplier <= 0 {
+		multiplier = 1
 	}
 	cachedInput := p.InputPerM
 	if p.CachedInputPerM != nil {
@@ -126,14 +139,41 @@ func ComputeCost(db *gorm.DB, model, upstreamModel, pricingMode string, multipli
 		if cnyRatio <= 0 {
 			cnyRatio = 7.2 // 兜底：按官方等价
 		}
-		rate := usdCNYRate(db)
-		ic = ic * cnyRatio / rate
-		oc = oc * cnyRatio / rate
+		ic = ic * cnyRatio / fxRate
+		oc = oc * cnyRatio / fxRate
 	} else {
 		ic *= multiplier
 		oc *= multiplier
 	}
-	return &ic, &oc
+	return ic, oc
+}
+
+// pricingTable 一次性载入价目表（统计补算用，避免逐行查库）
+func pricingTable(db *gorm.DB) map[string]store.ModelPricing {
+	var list []store.ModelPricing
+	db.Find(&list)
+	m := make(map[string]store.ModelPricing, len(list))
+	for i := range list {
+		m[list[i].Model] = list[i]
+	}
+	return m
+}
+
+// lookupPricing 与 ComputeCost 同口径取价：upstream 优先、回退入站名
+func lookupPricing(m map[string]store.ModelPricing, model, upstreamModel string) (store.ModelPricing, bool) {
+	name := upstreamModel
+	if name == "" {
+		name = model
+	}
+	if p, ok := m[name]; ok {
+		return p, true
+	}
+	if upstreamModel != "" {
+		if p, ok := m[model]; ok {
+			return p, true
+		}
+	}
+	return store.ModelPricing{}, false
 }
 
 // usdCNYRate 全局美元兑人民币汇率（settings.usd_cny_rate，默认 7.2）
@@ -219,8 +259,9 @@ type StatsSummary struct {
 	Unpriced         bool    `json:"unpriced"`
 }
 
-// LatestUsage 最近一次生效流量（成功请求命中的渠道与模型）
+// LatestUsage 最近生效流量（成功请求命中的渠道与模型）
 type LatestUsage struct {
+	ID            int64  `json:"id"`
 	CreatedAt     int64  `json:"createdAt"`
 	ChannelID     int64  `json:"channelId"`
 	ChannelName   string `json:"channelName,omitempty"`
@@ -235,38 +276,38 @@ type Stats struct {
 	ByChannel []StatsGroup  `json:"byChannel"`
 	ByModel   []StatsGroup  `json:"byModel"`
 	ByKey     []StatsGroup  `json:"byKey"`
-	Latest    *LatestUsage  `json:"latest,omitempty"`
+	Recent    []LatestUsage `json:"recent"` // 最近生效流量（最新 5 条成功请求）
 }
 
-// QueryStats 用量/花费统计（userID 为 nil 时全员）
-func QueryStats(db *gorm.DB, userID *int64, days int) (*Stats, error) {
-	if days < 1 {
-		days = 7
+// QueryStats 用量/花费统计（userID 为 nil 时全员；since/until 为 Unix 秒，0 表示该侧不限）
+func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) {
+	if since <= 0 && until <= 0 {
+		since = time.Now().AddDate(0, 0, -7).Unix()
 	}
-	since := time.Now().AddDate(0, 0, -days).Unix()
 	base := func() *gorm.DB {
-		tx := db.Model(&store.Log{}).Where("created_at >= ?", since)
-		if userID != nil {
-			tx = tx.Where("user_id = ?", *userID)
+		tx := db.Model(&store.Log{})
+		if since > 0 {
+			tx = tx.Where("created_at >= ?", since)
 		}
-		return tx
+		if until > 0 {
+			tx = tx.Where("created_at < ?", until)
+		}
+		return tx.Scopes(whereUser(userID))
 	}
 
 	var sum struct {
-		Requests     int64
-		Errors       int64
-		Prompt       int64
-		Completion   int64
-		Cost         float64
-		UnpricedRows int64
+		Requests   int64
+		Errors     int64
+		Prompt     int64
+		Completion int64
+		Cost       float64
 	}
 	if err := base().Select(`
 		COUNT(*) AS requests,
 		SUM(CASE WHEN status_code >= 400 OR status_code IS NULL THEN 1 ELSE 0 END) AS errors,
 		COALESCE(SUM(prompt_tokens),0) AS prompt,
 		COALESCE(SUM(completion_tokens),0) AS completion,
-		COALESCE(SUM(input_cost),0)+COALESCE(SUM(output_cost),0) AS cost,
-		SUM(CASE WHEN input_cost IS NULL AND status_code < 400 THEN 1 ELSE 0 END) AS unpriced_rows
+		COALESCE(SUM(input_cost),0)+COALESCE(SUM(output_cost),0) AS cost
 	`).Scan(&sum).Error; err != nil {
 		return nil, err
 	}
@@ -277,7 +318,6 @@ func QueryStats(db *gorm.DB, userID *int64, days int) (*Stats, error) {
 			PromptTokens:     sum.Prompt,
 			CompletionTokens: sum.Completion,
 			Cost:             sum.Cost,
-			Unpriced:         sum.UnpricedRows > 0,
 		},
 	}
 	if sum.Requests > 0 {
@@ -286,17 +326,14 @@ func QueryStats(db *gorm.DB, userID *int64, days int) (*Stats, error) {
 
 	group := func(col string) []StatsGroup {
 		var rows []StatsGroup
-		db.Model(&store.Log{}).
-			Where("created_at >= ?", since).
-			Scopes(whereUser(userID)).
-			Select(fmt.Sprintf(`
-				IFNULL(CAST(%s AS TEXT),'-') AS dim,
-				COUNT(*) AS requests,
-				COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
-				COALESCE(SUM(completion_tokens),0) AS completion_tokens,
-				COALESCE(SUM(input_cost),0)+COALESCE(SUM(output_cost),0) AS cost,
-				SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors
-			`, col)).
+		base().Select(fmt.Sprintf(`
+			IFNULL(CAST(%s AS TEXT),'-') AS dim,
+			COUNT(*) AS requests,
+			COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
+			COALESCE(SUM(completion_tokens),0) AS completion_tokens,
+			COALESCE(SUM(input_cost),0)+COALESCE(SUM(output_cost),0) AS cost,
+			SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors
+		`, col)).
 			Group(col).
 			Order("requests DESC").
 			Limit(50).
@@ -307,8 +344,23 @@ func QueryStats(db *gorm.DB, userID *int64, days int) (*Stats, error) {
 	st.ByModel = group("model")
 	st.ByKey = group("key_id")
 
-	// 最近一次生效流量（不受 days 窗口限制，取最新成功请求）
-	var latest struct {
+	// 价目补算：写入时未定价（费用 NULL）的成功请求按当前价目补算并合入汇总与分组；
+	// 补算后仍未命中价目的行才计入"部分未定价"（快照语义仅覆盖已定价行）
+	chNames, keyNames, chParams := channelMaps(db, userID)
+	extra, unpriced := recomputeUnpricedCost(db, base, chParams)
+	st.Summary.Cost += extra.total
+	st.Summary.Unpriced = unpriced > 0
+	mergeCost(st.ByChannel, extra.byChannel)
+	mergeCost(st.ByModel, extra.byModel)
+	mergeCost(st.ByKey, extra.byKey)
+
+	// 分组维度显示名称：渠道/密钥 id → 名称（已删除的回退 #id）
+	applyIDNames(st.ByChannel, chNames)
+	applyIDNames(st.ByKey, keyNames)
+
+	// 最近生效流量（不受统计窗口限制，取最新 5 条成功请求）
+	var recent []struct {
+		ID            int64
 		CreatedAt     int64
 		ChannelID     int64
 		Model         string
@@ -318,19 +370,166 @@ func QueryStats(db *gorm.DB, userID *int64, days int) (*Stats, error) {
 	err := db.Model(&store.Log{}).
 		Where("channel_id IS NOT NULL AND status_code < 400").
 		Scopes(whereUser(userID)).
-		Select("created_at, channel_id, COALESCE(model,'') AS model, COALESCE(upstream_model,'') AS upstream_model, COALESCE(status_code,0) AS status_code").
-		Order("id DESC").Limit(1).
-		Scan(&latest).Error
-	if err == nil && latest.ChannelID != 0 {
-		st.Latest = &LatestUsage{
-			CreatedAt:     latest.CreatedAt,
-			ChannelID:     latest.ChannelID,
-			Model:         latest.Model,
-			UpstreamModel: latest.UpstreamModel,
-			StatusCode:    latest.StatusCode,
+		Select("id, created_at, channel_id, COALESCE(model,'') AS model, COALESCE(upstream_model,'') AS upstream_model, COALESCE(status_code,0) AS status_code").
+		Order("id DESC").Limit(5).
+		Scan(&recent).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range recent {
+		if recent[i].ChannelID == 0 {
+			continue
 		}
+		st.Recent = append(st.Recent, LatestUsage{
+			ID:            recent[i].ID,
+			CreatedAt:     recent[i].CreatedAt,
+			ChannelID:     recent[i].ChannelID,
+			Model:         recent[i].Model,
+			UpstreamModel: recent[i].UpstreamModel,
+			StatusCode:    recent[i].StatusCode,
+		})
 	}
 	return st, nil
+}
+
+// recomputeCosts 价目补算结果（维度 key 与 SQL 分组口径一致：渠道/密钥为 id 文本，模型为名称）
+type recomputeCosts struct {
+	total     float64
+	byChannel map[string]float64
+	byModel   map[string]float64
+	byKey     map[string]float64
+}
+
+// recomputeUnpricedCost 用当前价目补算窗口内成功但未定价的行；返回补算费用与仍未定价行数。
+// 渠道计价参数（模式/倍率/换算比）取当前值，渠道已删除时按 usd × 1 兜底。
+func recomputeUnpricedCost(db *gorm.DB, base func() *gorm.DB, chParams map[int64]*store.Channel) (recomputeCosts, int64) {
+	res := recomputeCosts{
+		byChannel: map[string]float64{},
+		byModel:   map[string]float64{},
+		byKey:     map[string]float64{},
+	}
+	var rows []store.Log
+	if err := base().
+		Select("channel_id, key_id, model, upstream_model, prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens").
+		Where("input_cost IS NULL AND status_code IS NOT NULL AND status_code < 400").
+		Find(&rows).Error; err != nil {
+		return res, 0
+	}
+	if len(rows) == 0 {
+		return res, 0
+	}
+	pricing := pricingTable(db)
+	fx := usdCNYRate(db)
+	var unpriced int64
+	for i := range rows {
+		l := &rows[i]
+		model, upstream := derefStr(l.Model), derefStr(l.UpstreamModel)
+		p, ok := lookupPricing(pricing, model, upstream)
+		if !ok {
+			unpriced++
+			continue
+		}
+		mode, mult, ratio := "usd", 1.0, 0.0
+		var ch *store.Channel
+		if l.ChannelID != nil {
+			ch = chParams[*l.ChannelID]
+		}
+		if ch != nil {
+			mode, mult, ratio = ch.PricingMode, ch.PriceMultiplier, ch.CNYRatio
+		}
+		u := convert.Usage{
+			PromptTokens:     int(derefI64(l.PromptTokens)),
+			CompletionTokens: int(derefI64(l.CompletionTokens)),
+			CachedTokens:     int(derefI64(l.CachedTokens)),
+			CacheWriteTokens: int(derefI64(l.CacheWriteTokens)),
+		}
+		ic, oc := applyPricing(&p, mode, mult, ratio, fx, u)
+		cost := ic + oc
+		res.total += cost
+		res.byChannel[dimOfID(l.ChannelID)] += cost
+		res.byModel[dimOfStr(l.Model)] += cost
+		res.byKey[dimOfID(l.KeyID)] += cost
+	}
+	return res, unpriced
+}
+
+// channelMaps 渠道/密钥 id → 名称与渠道计价参数（一次载入；用户视角只取自己的）
+func channelMaps(db *gorm.DB, userID *int64) (chNames, keyNames map[int64]string, chParams map[int64]*store.Channel) {
+	chNames, keyNames, chParams = map[int64]string{}, map[int64]string{}, map[int64]*store.Channel{}
+	var chans []store.Channel
+	q := db.Select("id, name, pricing_mode, price_multiplier, cny_ratio")
+	if userID != nil {
+		q = q.Where("user_id = ?", *userID)
+	}
+	q.Find(&chans)
+	for i := range chans {
+		chNames[chans[i].ID] = chans[i].Name
+		chParams[chans[i].ID] = &chans[i]
+	}
+	var keys []store.Key
+	q = db.Select("id, name")
+	if userID != nil {
+		q = q.Where("user_id = ?", *userID)
+	}
+	q.Find(&keys)
+	for i := range keys {
+		keyNames[keys[i].ID] = keys[i].Name
+	}
+	return chNames, keyNames, chParams
+}
+
+// applyIDNames 把 id 型分组维度替换为名称，无名称时回退 #id
+func applyIDNames(rows []StatsGroup, names map[int64]string) {
+	for i := range rows {
+		if rows[i].Dim == "-" {
+			continue
+		}
+		id, err := strconv.ParseInt(rows[i].Dim, 10, 64)
+		if err != nil {
+			continue
+		}
+		if n := names[id]; n != "" {
+			rows[i].Dim = n
+		} else {
+			rows[i].Dim = "#" + rows[i].Dim
+		}
+	}
+}
+
+// mergeCost 把补算费用合入分组行（须在维度名称化之前调用）
+func mergeCost(rows []StatsGroup, extra map[string]float64) {
+	for i := range rows {
+		rows[i].Cost += extra[rows[i].Dim]
+	}
+}
+
+// dimOfID / dimOfStr 与分组 SQL 的 IFNULL 口径一致：NULL → "-"，其余原样
+func dimOfID(p *int64) string {
+	if p == nil {
+		return "-"
+	}
+	return strconv.FormatInt(*p, 10)
+}
+
+func dimOfStr(p *string) string {
+	if p == nil {
+		return "-"
+	}
+	return *p
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func derefI64(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 func whereUser(userID *int64) func(db *gorm.DB) *gorm.DB {

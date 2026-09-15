@@ -90,36 +90,80 @@ func (s *Server) handleLogs(c *gin.Context) {
 
 func (s *Server) handleStats(c *gin.Context) {
 	u := currentUser(c)
-	st, err := usage.QueryStats(s.Store.DB(), &u.ID, queryInt(c, "days", 7))
+	since, until := statsRange(c)
+	st, err := usage.QueryStats(s.Store.DB(), &u.ID, since, until)
 	if err != nil {
 		s.fail(c, http.StatusInternalServerError, "查询失败")
 		return
 	}
-	s.fillLatestChannelName(st)
+	s.fillRecentChannelNames(st)
 	s.ok(c, st)
 }
 
 func (s *Server) handleAdminStats(c *gin.Context) {
-	st, err := usage.QueryStats(s.Store.DB(), nil, queryInt(c, "days", 7))
+	since, until := statsRange(c)
+	st, err := usage.QueryStats(s.Store.DB(), nil, since, until)
 	if err != nil {
 		s.fail(c, http.StatusInternalServerError, "查询失败")
 		return
 	}
-	s.fillLatestChannelName(st)
+	s.fillRecentChannelNames(st)
 	s.ok(c, st)
 }
 
-// fillLatestChannelName 为最近生效流量补充渠道名（日志行已按用户隔离，渠道按 ID 查名即可）
-func (s *Server) fillLatestChannelName(st *usage.Stats) {
-	if st == nil || st.Latest == nil {
+// statsRange 解析统计时间窗：优先 start/end（YYYY-MM-DD，end 含当天），
+// 未提供时回退 days（默认 7，向后兼容）
+func statsRange(c *gin.Context) (since, until int64) {
+	var start, end time.Time
+	if v := c.Query("start"); v != "" {
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			start = t
+		}
+	}
+	if v := c.Query("end"); v != "" {
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			end = t
+		}
+	}
+	if !start.IsZero() || !end.IsZero() {
+		if !start.IsZero() {
+			since = start.Unix()
+		}
+		if !end.IsZero() {
+			until = end.Add(24 * time.Hour).Unix()
+		}
+		return since, until
+	}
+	days := queryInt(c, "days", 7)
+	if days < 1 {
+		days = 7
+	}
+	return time.Now().AddDate(0, 0, -days).Unix(), 0
+}
+
+// fillRecentChannelNames 为最近生效流量批量补充渠道名（日志行已按用户隔离；
+// 渠道已删除时回退 #id）
+func (s *Server) fillRecentChannelNames(st *usage.Stats) {
+	if st == nil || len(st.Recent) == 0 {
 		return
 	}
-	var ch store.Channel
-	if err := s.Store.DB().Select("name").Where("id = ?", st.Latest.ChannelID).First(&ch).Error; err != nil {
-		st.Latest.ChannelName = "#" + strconv.FormatInt(st.Latest.ChannelID, 10)
-		return
+	ids := make([]int64, 0, len(st.Recent))
+	for i := range st.Recent {
+		ids = append(ids, st.Recent[i].ChannelID)
 	}
-	st.Latest.ChannelName = ch.Name
+	var chans []store.Channel
+	s.Store.DB().Select("id, name").Where("id IN ?", ids).Find(&chans)
+	names := make(map[int64]string, len(chans))
+	for i := range chans {
+		names[chans[i].ID] = chans[i].Name
+	}
+	for i := range st.Recent {
+		if n := names[st.Recent[i].ChannelID]; n != "" {
+			st.Recent[i].ChannelName = n
+		} else {
+			st.Recent[i].ChannelName = "#" + strconv.FormatInt(st.Recent[i].ChannelID, 10)
+		}
+	}
 }
 
 // ---------- 管理员：用户 ----------

@@ -80,7 +80,8 @@ func exportStatsCSV(c *gin.Context, s *Server, userID int64) {
 	if userID > 0 {
 		id = &userID
 	}
-	st, err := usage.QueryStats(s.Store.DB(), id, queryInt(c, "days", 7))
+	since, until := statsRange(c)
+	st, err := usage.QueryStats(s.Store.DB(), id, since, until)
 	if err != nil {
 		s.fail(c, http.StatusInternalServerError, "查询失败")
 		return

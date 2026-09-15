@@ -1,21 +1,34 @@
 import React from 'react'
-import { Card, Col, Row, Space, Statistic, Table, Segmented, Tag, message } from 'antd'
+import { Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tag, message } from 'antd'
+import { ReloadOutlined } from '@ant-design/icons'
+import type { Dayjs } from 'dayjs'
+import dayjs from 'dayjs'
 import { myStats } from '../api'
-import type { StatsResponse, StatsGroup } from '../api/types'
+import type { LatestUsage, StatsResponse, StatsGroup } from '../api/types'
 import { formatDateTime } from '../format'
 
+// 快捷时间项（自然日口径）
+const rangePresets: { label: string; value: [Dayjs, Dayjs] }[] = [
+  { label: '今天', value: [dayjs(), dayjs()] },
+  { label: '昨天', value: [dayjs().subtract(1, 'day'), dayjs().subtract(1, 'day')] },
+  { label: '近 7 天', value: [dayjs().subtract(6, 'day'), dayjs()] },
+  { label: '近 30 天', value: [dayjs().subtract(29, 'day'), dayjs()] },
+]
+
 const StatsPage: React.FC = () => {
-  const [days, setDays] = React.useState(7)
+  const [range, setRange] = React.useState<[Dayjs, Dayjs]>([dayjs().subtract(6, 'day'), dayjs()])
   const [data, setData] = React.useState<StatsResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
 
-  React.useEffect(() => {
+  const refresh = React.useCallback(() => {
     setLoading(true)
-    myStats(days)
+    myStats({ start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') })
       .then(setData)
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
-  }, [days])
+  }, [range])
+
+  React.useEffect(refresh, [refresh])
 
   const groupColumns = (dimName: string) => [
     { title: dimName, dataIndex: 'dim' },
@@ -42,31 +55,58 @@ const StatsPage: React.FC = () => {
     <div>
       <div className="page-heading">
         <div><h2>用量统计</h2><p>查看请求量、Token 消耗与费用估算。</p></div>
-        <Segmented
-          options={[
-            { label: '今天', value: 1 },
-            { label: '近 7 天', value: 7 },
-            { label: '近 30 天', value: 30 },
-          ]}
-          value={days}
-          onChange={(v) => setDays(v as number)}
-        />
+        <Space>
+          <DatePicker.RangePicker
+            value={range}
+            onChange={(v) => {
+              if (v && v[0] && v[1]) setRange([v[0], v[1]])
+            }}
+            disabledDate={(d) => d.isAfter(dayjs(), 'day')}
+            presets={rangePresets}
+            allowClear={false}
+          />
+          <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>刷新</Button>
+        </Space>
       </div>
       <Card title="最近生效流量" loading={loading} style={{ marginBottom: 16 }}>
-        {data?.latest ? (
-          <Space size="large" wrap>
-            <span>
-              渠道：<b>{data.latest.channelName || `#${data.latest.channelId}`}</b>
-            </span>
-            <span>
-              模型：<b>{data.latest.model}</b>
-              {data.latest.upstreamModel && data.latest.upstreamModel !== data.latest.model ? (
-                <span style={{ color: '#999' }}>（上游 {data.latest.upstreamModel}）</span>
-              ) : null}
-            </span>
-            <span style={{ color: '#999' }}>{formatDateTime(data.latest.createdAt)}</span>
-            <Tag color="green">{data.latest.statusCode}</Tag>
-          </Space>
+        {data?.recent?.length ? (
+          <Table<LatestUsage>
+            rowKey="id"
+            size="small"
+            pagination={false}
+            dataSource={data.recent}
+            columns={[
+              {
+                title: '时间',
+                dataIndex: 'createdAt',
+                width: 180,
+                render: (v: number) => <span style={{ color: '#999' }}>{formatDateTime(v)}</span>,
+              },
+              {
+                title: '渠道',
+                dataIndex: 'channelName',
+                render: (v: string, r: LatestUsage) => v || `#${r.channelId}`,
+              },
+              {
+                title: '模型',
+                dataIndex: 'model',
+                render: (_, r: LatestUsage) => (
+                  <span>
+                    <b>{r.model}</b>
+                    {r.upstreamModel && r.upstreamModel !== r.model ? (
+                      <span style={{ color: '#999' }}>（上游 {r.upstreamModel}）</span>
+                    ) : null}
+                  </span>
+                ),
+              },
+              {
+                title: '状态',
+                dataIndex: 'statusCode',
+                width: 90,
+                render: (v: number) => <Tag color={v < 400 ? 'green' : 'red'}>{v}</Tag>,
+              },
+            ]}
+          />
         ) : (
           <span style={{ color: '#999' }}>暂无流量</span>
         )}

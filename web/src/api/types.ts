@@ -157,7 +157,7 @@ export interface StatsResponse {
   byChannel: StatsGroup[]
   byModel: StatsGroup[]
   byKey: StatsGroup[]
-  latest?: LatestUsage | null
+  recent?: LatestUsage[]
 }
 
 export interface LatestUsage {

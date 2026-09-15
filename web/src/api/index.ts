@@ -76,14 +76,23 @@ export const revealToken = (id: number) => post<{ plaintext: string }>(`/api/tok
 // ---------- 日志与统计 ----------
 export const listLogs = (q: LogQuery) =>
   get<{ logs: LogEntry[]; total: number }>(`/api/logs?${qs(q as unknown as Record<string, unknown>)}`)
-export const myStats = (days: number) => get<StatsResponse>(`/api/stats?days=${days}`)
+
+// 统计时间窗：start/end（YYYY-MM-DD，end 含当天）自定义起止；缺省回退 days
+export interface StatsRange {
+  days?: number
+  start?: string
+  end?: string
+}
+export const myStats = (q: StatsRange) =>
+  get<StatsResponse>(`/api/stats?${qs(q as unknown as Record<string, unknown>)}`)
 
 // ---------- 管理员 ----------
 export const adminUsers = () => get<{ users: User[] }>('/api/admin/users')
 export const adminSetUserStatus = (id: number, status: number) =>
   put<{ user: User }>(`/api/admin/users/${id}/status`, { status })
 export const adminResetPassword = (id: number) => post<{ password: string }>(`/api/admin/users/${id}/reset_password`)
-export const adminStats = (days: number) => get<StatsResponse>(`/api/admin/stats?days=${days}`)
+export const adminStats = (q: StatsRange) =>
+  get<StatsResponse>(`/api/admin/stats?${qs(q as unknown as Record<string, unknown>)}`)
 export const adminPricing = () => get<PricingListResponse>('/api/admin/pricing')
 export const adminUpdatePricing = (p: ModelPricing) =>
   put<{ pricing: ModelPricing }>(`/api/admin/pricing/${encodeURIComponent(p.model)}`, p)

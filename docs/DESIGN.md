@@ -1,9 +1,8 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.13（与 PRD v1.5.15 对应；令牌「限定渠道」面板交互优化：入口胶囊化、
-  整行拖拽 + ↑↓ 按钮排序、移出重加/主开关重开的会话级位置记忆（纯前端，
-  路由与存储不变）；
-  前版 v1.12：汇率源地址回显与价目表体验增强；v1.11：上游响应头超时可配；
+- 版本：v1.14（与 PRD v1.5.16 对应；统计页：分组维度名称化（渠道/密钥 id→名称）、
+  未定价费用按当前价目查询时补算、自定义时间窗（start/end）、最近生效流量 5 条；
+  前版 v1.13：令牌「限定渠道」面板交互优化；
   历史变更见文档各节与 PRD 变更记录）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
@@ -520,7 +519,10 @@ new-api 的已知语义（仅参考行为，代码自研）。
     见 §8.5）
 - 缓存档回退：`cached_input_per_m` 为 NULL → 取 `input_per_m`；`cache_write_per_m`
   为 NULL → 取 `input_per_m`（Anthropic 实际 1.25×，在价目中显式配置）
-- 未命中价目 → 费用 NULL；统计页区分"已定价/未定价"两档展示
+- 未命中价目 → 费用 NULL；**统计查询时对窗口内费用 NULL 的成功请求按当前价目补算**
+  （计入汇总与分组费用；快照语义仅覆盖已定价行——价目补齐后历史未定价行不再长期显示
+  "部分未定价"；补算的渠道计价参数取当前值，渠道已删除按 usd × 1 兜底），补算后仍未
+  命中价目的行才计入"部分未定价"
 - 耗时指标（v1.0）：`ttft_ms`（请求开始到首个写出块）、`total_ms` 随日志落库
 
 ### 8.2.1 usage 与缓存 token 归一化（转换/透传通用）
@@ -540,10 +542,14 @@ new-api 的已知语义（仅参考行为，代码自研）。
 ### 8.3 聚合查询
 
 - 用户页/管理员页均直接 `GROUP BY` logs（30 天 × ≤百用户 ≈ 10^6 行，命中索引足够）
-- 维度：user / model / channel / key / 天；管理员追加全员与公共代理流量（proxy_usage）
-- 最近生效流量（`stats.latest`）：`ORDER BY id DESC LIMIT 1` 取该用户最新一条成功
-  （status_code < 400 且 channel_id 非空）日志，回传渠道名/模型/时间；不受 days 窗口限制，
-  API 层按 channel_id 补渠道名
+- 维度：user / model / channel / key / 天；管理员追加全员与公共代理流量（proxy_usage）；
+  channel / key 分组查询后把 id 维度映射为**名称**（渠道表/密钥表 id→name，查询一次
+  载入；已删除的回退 `#id`）
+- 时间窗：`start` / `end`（YYYY-MM-DD，end 含当天）自定义起止（`GET /api/stats` 与
+  管理端同参），未传时回退 `days`（默认 7，向后兼容）
+- 最近生效流量（`stats.recent`）：`ORDER BY id DESC LIMIT 5` 取该用户最新 5 条成功
+  （status_code < 400 且 channel_id 非空）日志，回传渠道名/模型/时间；不受统计窗口限制，
+  API 层按 channel_id 批量补渠道名
 - CSV：服务端流式生成 `text/csv` 下载
 - 若 v1.1 出现慢查询 → 增加 daily rollup 表（计划内，不在 MVP）
 
@@ -648,7 +654,7 @@ GET /oauth/feishu/callback?code&state
 | POST /api/tokens/:id/reveal | 所属用户回看完整令牌（复制密钥按钮数据源） |
 | POST /api/tokens/:id/revoke | 吊销令牌（立即失效，保留记录） |
 | GET /api/logs | 自己的日志（分页/过滤） |
-| GET /api/stats | 自己的统计（含最近生效流量 latest） |
+| GET /api/stats | 自己的统计（含最近生效流量 recent 最新 5 条；start/end 自定义时间窗，缺省 days） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
   （模型目录 CRUD + import_pricing 价目导入）、/api/admin/templates、
   /api/admin/proxies、/api/admin/pricing(+import、+sync_remote 远程同步)、
