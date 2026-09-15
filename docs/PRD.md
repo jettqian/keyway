@@ -1,12 +1,13 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.2
+- 版本：v1.3
 - 日期：2026-09-15
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.3：完成模型批量绑定页、令牌回看、渠道转发模式设置；默认透明转发，跨协议转换须显式开启
 > - v1.2：① 明确一个渠道可绑定多个模型，统一模型页仅作为批量编辑入口；② 默认透明转发，跨协议转换移入渠道高级设置；③ 模型列表保留在渠道基础配置
 > - v1.1：① 新增统一模型管理页；模型在渠道配置中维护，可批量把一个模型加入多个渠道并按渠道优先级路由；②
 >   明确渠道独立启用开关与优先级的控制台交互；③ 网关令牌支持所有者主动回看完整密钥（管理员仍不可见）；④
@@ -473,10 +474,6 @@ channels(id, user_id, copied_from_template_id NULL,       -- 仅来源标记，�
          models_json, model_mapping_json, forward_mode,
          priority, price_multiplier, pricing_mode, cny_ratio,
          is_default, enabled, last_ok_at, last_error, created_at)
-
-models(id, user_id, name, display_name, note, enabled, created_at, updated_at)
-channel_models(id, channel_id, model_id, upstream_model, enabled,
-               created_at, updated_at, UNIQUE(channel_id, model_id))
 
 line_stats(channel_id, line_url, via,         -- via: direct | personal | proxy:{id}
            last_probe_at, latency_ms, ok, last_error)

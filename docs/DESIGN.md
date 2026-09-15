@@ -1,6 +1,6 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.4（与 PRD v1.2 对应；补充统一模型管理、令牌回看和透明转发边界）
+- 版本：v1.5（与 PRD v1.3 对应；补充统一模型管理、令牌回看和透明转发边界）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
 - 本文档解决：架构、技术选型、数据模型落地、核心机制设计、协议转换决策表（PRD 开放
@@ -60,7 +60,7 @@ keyway/
 │       ├── api/             # /api console 处理器（按资源分文件）
 │       ├── relay/           # /v1 入口：openai.go / anthropic.go / models.go
 │       ├── convert/         # 转换器（见 §7）+ 金样本测试夹具
-│       ├── routing/         # 模型目录路由、attempt plan、失败切换、缓存失效
+│       ├── routing/         # 渠道模型路由、attempt plan、失败切换、缓存失效
 │       ├── probe/           # 探测调度器
 │       ├── proxyman/        # http.Client 池（按代理 URL）、流量计数
 │       ├── usage/           # 异步日志写、价目、聚合查询
@@ -131,24 +131,6 @@ CREATE TABLE channels (
   last_ok_at INTEGER, last_error TEXT, created_at INTEGER
 );
 CREATE INDEX idx_channels_user ON channels(user_id, enabled);
-
-CREATE TABLE models (                         -- 用户级模型去重目录（展示与导入用）
-  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
-  name TEXT NOT NULL, display_name TEXT DEFAULT '', note TEXT DEFAULT '',
-  enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER, updated_at INTEGER,
-  UNIQUE(user_id, name)
-);
-
-CREATE TABLE channel_models (                 -- 渠道绑定的模型（一个渠道可有多个模型）
-  id INTEGER PRIMARY KEY, model_id INTEGER NOT NULL, channel_id INTEGER NOT NULL,
-  upstream_model TEXT NOT NULL,               -- 该渠道实际请求的模型名
-  priority INTEGER,                            -- NULL 继承 channels.priority
-  enabled INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER, updated_at INTEGER,
-  UNIQUE(model_id, channel_id)
-);
-CREATE INDEX idx_model_bindings_model ON channel_models(model_id, enabled);
-CREATE INDEX idx_model_bindings_channel ON channel_models(channel_id, enabled);
 
 CREATE TABLE line_stats (                  -- 探测结果（渠道×线路×路径）
   channel_id INTEGER NOT NULL, line_url TEXT NOT NULL, via TEXT NOT NULL,
@@ -541,15 +523,12 @@ new-api 的已知语义（仅参考行为，代码自研）。
 - CSV：服务端流式生成 `text/csv` 下载
 - 若 v1.1 出现慢查询 → 增加 daily rollup 表（计划内，不在 MVP）
 
-### 8.4 渠道模型列表迁移与写入
+### 8.4 渠道模型列表批量写入
 
-- 启动迁移扫描现有 `channels.models_json` 和 `model_mapping_json`，按用户去重创建 `models`，
-  再创建 `channel_models`；`upstream_model` 取映射值，未映射时取逻辑模型名。
-- 迁移过程使用事务和幂等唯一键，重复启动不会生成重复模型；原 JSON 字段保留用于回滚读取，
-  迁移完成后控制台以渠道模型列表和 `channel_models` 为唯一写入来源；模型页只是批量编辑
-  渠道列表的统一入口。
-- 模型页的批量绑定在一个事务内提交；提交后清除用户路由快照，保证下一个请求可见。删除模型
-  只删除其绑定和目录记录，不删除渠道或上游密钥。
+- 模型管理页读取各渠道的 `models_json` 并集，按渠道维度批量编辑；保存时通过事务同时更新
+  所选渠道的 `models_json` 和 `model_mapping_json`。
+- 模型页不创建独立模型实体；空绑定模型不会出现在列表中。渠道详情页和模型管理页共享同一
+  数据来源，避免两套配置产生分歧。
 
 ## 9. 预制渠道复制（FR-X2/X3）
 
@@ -590,9 +569,8 @@ GET /oauth/feishu/callback?code&state
 | GET /api/auth/feishu/url；PUT /api/auth/feishu/bind | 登录跳转 / 绑定解绑 |
 | GET/POST/PUT/DELETE /api/keys[/:id] | 密钥池 CRUD |
 | GET/POST/PUT/DELETE /api/channels[/:id] | 渠道 CRUD |
-| GET/POST/PUT/DELETE /api/models[/:id] | 用户模型目录查询与导入 |
-| GET/POST/PUT/DELETE /api/models/:id/bindings[/:bid] | 渠道模型列表及批量绑定 |
-| POST /api/models/import | 从渠道或上游模型列表导入并去重 |
+| GET /api/channels | 读取渠道及其模型列表（模型管理页数据源） |
+| PUT /api/models/bindings | 原子批量加入、移出或重命名渠道模型 |
 | POST /api/channels/from_template/:tid | 从模板复制（草稿） |
 | POST /api/channels/:id/test；POST /api/channels/:id/test_keys | 矩阵测试 / 逐密钥测试 |
 | GET /api/templates | 模板列表（用户侧，含复制数） |

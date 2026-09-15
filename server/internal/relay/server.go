@@ -72,6 +72,8 @@ func (s *Server) getClient(proxyURL string) (*http.Client, error) {
 // ---------- 尝试计划 ----------
 
 type attempt struct {
+	protocol string
+	request  *http.Request
 	rc       *routing.ResolvedChannel
 	lineURL  string
 	proxyURL string // "" = 直连

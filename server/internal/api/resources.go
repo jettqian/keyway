@@ -124,6 +124,7 @@ type channelInput struct {
 	AllowPublicProxy bool              `json:"allowPublicProxy"`
 	Models           []string          `json:"models"`
 	ModelMapping     map[string]string `json:"modelMapping"`
+	ForwardMode      string            `json:"forwardMode"`
 	Priority         int               `json:"priority"`
 	PriceMultiplier  float64           `json:"priceMultiplier"`
 	PricingMode      string            `json:"pricingMode"`
@@ -159,6 +160,12 @@ func (s *Server) validateChannel(in *channelInput) string {
 	if in.PricingMode == "" {
 		in.PricingMode = "usd"
 	}
+	if in.ForwardMode == "" {
+		in.ForwardMode = "passthrough"
+	}
+	if in.ForwardMode != "passthrough" && in.ForwardMode != "convert" {
+		return "转发模式必须为 passthrough 或 convert"
+	}
 	if in.PricingMode != "usd" && in.PricingMode != "cny_ratio" {
 		return "计价模式须为 usd 或 cny_ratio"
 	}
@@ -185,6 +192,7 @@ func (s *Server) applyChannelInput(ch *store.Channel, in *channelInput, copyFrom
 	ch.AllowPublicProxy = boolToInt(in.AllowPublicProxy)
 	ch.ModelsJSON = string(mustJSONStr(nonEmpty(in.Models)))
 	ch.ModelMappingJSON = string(mustJSONStr(in.ModelMapping))
+	ch.ForwardMode = in.ForwardMode
 	ch.Priority = in.Priority
 	if in.PriceMultiplier > 0 {
 		ch.PriceMultiplier = in.PriceMultiplier
@@ -283,7 +291,7 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 			"name": ch.Name, "type": ch.Type, "base_urls_json": ch.BaseURLsJSON,
 			"key_ids_json": ch.KeyIDsJSON, "key_strategy": ch.KeyStrategy, "line_strategy": ch.LineStrategy,
 			"allow_public_proxy": ch.AllowPublicProxy, "models_json": ch.ModelsJSON,
-			"model_mapping_json": ch.ModelMappingJSON, "priority": ch.Priority,
+			"model_mapping_json": ch.ModelMappingJSON, "forward_mode": ch.ForwardMode, "priority": ch.Priority,
 			"price_multiplier": ch.PriceMultiplier, "pricing_mode": ch.PricingMode, "cny_ratio": ch.CNYRatio,
 			"is_default": ch.IsDefault, "enabled": ch.Enabled,
 		})
@@ -522,6 +530,22 @@ func (s *Server) handleRevokeToken(c *gin.Context) {
 	s.ok(c, gin.H{})
 }
 
+// handleRevealToken 返回令牌所有者保存的完整令牌。
+func (s *Server) handleRevealToken(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var t store.Token
+	if err := s.Store.DB().Where("id = ? AND user_id = ?", id, currentUser(c).ID).First(&t).Error; err != nil {
+		s.fail(c, http.StatusNotFound, "令牌不存在")
+		return
+	}
+	plaintext, err := crypto.Decrypt(s.Secret, "token", t.KeyEnc)
+	if err != nil {
+		s.fail(c, http.StatusInternalServerError, "令牌解密失败")
+		return
+	}
+	s.ok(c, gin.H{"plaintext": string(plaintext)})
+}
+
 // ---------- 辅助 ----------
 
 func (s *Server) ownsKeys(userID int64, keyIDs []int64) bool {
@@ -554,7 +578,8 @@ func channelDTO(ch *store.Channel) gin.H {
 		"hasPersonalProxy": ch.ProxyURLEnc != nil,
 		"allowPublicProxy": ch.AllowPublicProxy == 1,
 		"models":           models, "modelMapping": mapping,
-		"priority": ch.Priority, "priceMultiplier": ch.PriceMultiplier,
+		"forwardMode": ch.ForwardMode,
+		"priority":    ch.Priority, "priceMultiplier": ch.PriceMultiplier,
 		"pricingMode": ch.PricingMode, "cnyRatio": ch.CNYRatio,
 		"isDefault": ch.IsDefault == 1,
 		"enabled":   ch.Enabled == 1, "createdAt": ch.CreatedAt,

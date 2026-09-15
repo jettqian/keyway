@@ -1,7 +1,7 @@
 import React from 'react'
-import { Table, Button, Modal, Form, Input, Select, DatePicker, Tag, message, Popconfirm, Typography } from 'antd'
+import { Table, Button, Modal, Form, Input, Select, DatePicker, Tag, message, Popconfirm, Typography, Space } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
-import { listTokens, createToken, revokeToken, listChannels } from '../api'
+import { listTokens, createToken, revokeToken, revealToken, listChannels } from '../api'
 import type { GatewayToken, Channel } from '../api/types'
 
 const TokensPage: React.FC = () => {
@@ -10,6 +10,7 @@ const TokensPage: React.FC = () => {
   const [loading, setLoading] = React.useState(true)
   const [modalOpen, setModalOpen] = React.useState(false)
   const [created, setCreated] = React.useState<string | null>(null)
+  const [revealed, setRevealed] = React.useState<string | null>(null)
   const [form] = Form.useForm()
 
   const refresh = React.useCallback(() => {
@@ -78,20 +79,32 @@ const TokensPage: React.FC = () => {
           },
           {
             title: '操作',
-            width: 100,
+            width: 160,
             render: (_, t) =>
-              t.revoked ? null : (
-                <Popconfirm
-                  title="吊销后立即生效？"
-                  onConfirm={async () => {
-                    await revokeToken(t.id)
-                    message.success('已吊销')
-                    refresh()
-                  }}
-                >
-                  <a style={{ color: 'red' }}>吊销</a>
+              <Space>
+                <Popconfirm title="显示完整令牌密钥？" onConfirm={async () => {
+                    try {
+                      const r = await revealToken(t.id)
+                      setRevealed(r.plaintext)
+                    } catch (e) {
+                      message.error((e as Error).message)
+                    }
+                  }}>
+                  <a>查看密钥</a>
                 </Popconfirm>
-              ),
+                {t.revoked ? null : (
+                  <Popconfirm
+                    title="吊销后立即生效？"
+                    onConfirm={async () => {
+                      await revokeToken(t.id)
+                      message.success('已吊销')
+                      refresh()
+                    }}
+                  >
+                    <a style={{ color: 'red' }}>吊销</a>
+                  </Popconfirm>
+                )}
+              </Space>,
           },
         ]}
       />
@@ -117,12 +130,23 @@ const TokensPage: React.FC = () => {
         </Form>
       </Modal>
       <Modal
+        open={revealed !== null}
+        title="令牌密钥"
+        onCancel={() => setRevealed(null)}
+        onOk={() => setRevealed(null)}
+      >
+        <Typography.Paragraph>仅本人可查看，复制后请妥善保管。</Typography.Paragraph>
+        <Typography.Paragraph copyable={{ text: revealed ?? '' }} code>
+          {revealed}
+        </Typography.Paragraph>
+      </Modal>
+      <Modal
         open={created !== null}
         title="令牌已创建"
         onCancel={() => setCreated(null)}
         onOk={() => setCreated(null)}
       >
-        <Typography.Paragraph>请立即复制保存，令牌明文仅展示一次：</Typography.Paragraph>
+        <Typography.Paragraph>请复制保存；之后也可在令牌列表中回看：</Typography.Paragraph>
         <Typography.Paragraph copyable={{ text: created ?? '' }} code>
           {created}
         </Typography.Paragraph>

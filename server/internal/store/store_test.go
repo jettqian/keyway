@@ -34,7 +34,7 @@ var expectedColumns = map[string][]string{
 	"sessions":          {"token_hash", "user_id", "expires_at"},
 	"keys":              {"id", "user_id", "name", "value_enc", "note", "status", "last_error", "cooldown_until", "created_at"},
 	"channel_templates": {"id", "name", "type", "base_urls_json", "line_strategy", "models_json", "model_mapping_json", "priority_default", "allow_public_proxy_default", "note", "enabled", "copy_count", "updated_at"},
-	"channels":          {"id", "user_id", "copied_from_template_id", "name", "type", "base_urls_json", "key_ids_json", "key_strategy", "line_strategy", "proxy_url_enc", "allow_public_proxy", "models_json", "model_mapping_json", "priority", "price_multiplier", "pricing_mode", "cny_ratio", "is_default", "enabled", "last_ok_at", "last_error", "created_at"},
+	"channels":          {"id", "user_id", "copied_from_template_id", "name", "type", "base_urls_json", "key_ids_json", "key_strategy", "line_strategy", "proxy_url_enc", "allow_public_proxy", "models_json", "model_mapping_json", "forward_mode", "priority", "price_multiplier", "pricing_mode", "cny_ratio", "is_default", "enabled", "last_ok_at", "last_error", "created_at"},
 	"line_stats":        {"channel_id", "line_url", "via", "last_probe_at", "latency_ms", "ok", "last_error"},
 	"proxies":           {"id", "name", "url_enc", "enabled", "note", "created_at"},
 	"proxy_usage":       {"user_id", "proxy_id", "day", "bytes"},

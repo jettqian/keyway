@@ -63,6 +63,7 @@ export const listTokens = () => get<{ tokens: GatewayToken[] }>('/api/tokens')
 export const createToken = (input: { name: string; channelIds?: number[]; modelScope?: string; expiresAt?: string }) =>
   post<GatewayTokenCreated>('/api/tokens', input)
 export const revokeToken = (id: number) => del<void>(`/api/tokens/${id}`)
+export const revealToken = (id: number) => post<{ plaintext: string }>(`/api/tokens/${id}/reveal`)
 
 // ---------- 日志与统计 ----------
 export const listLogs = (q: LogQuery) =>
@@ -107,3 +108,7 @@ function qs(q: Record<string, unknown>): string {
   }
   return params.toString()
 }
+
+// ---------- 模型列表 ----------
+export const updateModelBindings = (input: { name: string; previousName: string; channelIds: number[] }) =>
+  put<void>('/api/models/bindings', input)

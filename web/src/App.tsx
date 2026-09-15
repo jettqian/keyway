@@ -5,6 +5,7 @@ import LoginPage from './pages/Login'
 import RegisterPage from './pages/Register'
 import KeysPage from './pages/Keys'
 import ChannelsPage from './pages/Channels'
+import ModelsPage from './pages/Models'
 import TemplatesPage from './pages/Templates'
 import TokensPage from './pages/Tokens'
 import LogsPage from './pages/Logs'
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
       { path: 'keys', element: <KeysPage /> },
       { path: 'channels', element: <ChannelsPage /> },
       { path: 'channels/:id', element: <ChannelsPage /> },
+      { path: 'models', element: <ModelsPage /> },
       { path: 'templates', element: <TemplatesPage /> },
       { path: 'tokens', element: <TokensPage /> },
       { path: 'logs', element: <LogsPage /> },

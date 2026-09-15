@@ -31,6 +31,7 @@ const emptyInput: ChannelInput = {
   allowPublicProxy: false,
   models: [],
   modelMapping: {},
+  forwardMode: 'passthrough',
   priority: 0,
   priceMultiplier: 1,
   pricingMode: 'usd',
@@ -82,6 +83,7 @@ const ChannelsPage: React.FC = () => {
       allowPublicProxy: c.allowPublicProxy,
       models: c.models,
       modelMapping: Object.entries(c.modelMapping).map(([from, to]) => ({ from, to })),
+      forwardMode: c.forwardMode ?? 'passthrough',
       priority: c.priority,
       priceMultiplier: c.priceMultiplier ?? 1,
       pricingMode: c.pricingMode ?? 'usd',
@@ -109,6 +111,7 @@ const ChannelsPage: React.FC = () => {
       allowPublicProxy: v.allowPublicProxy,
       models: v.models || [],
       modelMapping: mapping,
+      forwardMode: v.forwardMode ?? 'passthrough',
       priority: v.priority,
       priceMultiplier: v.priceMultiplier || 1,
       pricingMode: v.pricingMode,
@@ -211,14 +214,6 @@ const ChannelsPage: React.FC = () => {
           <Form.Item name="name" label="名称" tooltip="给自己看的标识，建议包含供应商或用途" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="如 openai-官方" />
           </Form.Item>
-          <Form.Item name="type" label="协议类型" tooltip="上游接口遵循的协议格式" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'openai', label: 'openai（OpenAI 兼容：DeepSeek/GLM/Kimi/Groq/中转站）' },
-                { value: 'anthropic', label: 'anthropic（Anthropic 兼容）' },
-              ]}
-            />
-          </Form.Item>
           <Form.Item label="线路地址" extra={<span className="form-hint">按优先顺序填写，最多 5 条；系统会自动选择可用线路。</span>} required>
             <Form.List name="baseUrls">
               {(fields, { add, remove }) => (
@@ -267,16 +262,24 @@ const ChannelsPage: React.FC = () => {
               />
             </Form.Item>
           </Space>
+          <Form.Item name="models" label="模型列表" extra="基础配置：一个渠道可以绑定多个模型；也可在模型管理页批量维护。">
+            <Select mode="tags" placeholder="该渠道服务的模型名，回车添加" />
+          </Form.Item>
           <Collapse ghost defaultActiveKey={[]} style={{ marginTop: 4, marginBottom: 8 }}>
             <Collapse.Panel header="高级选项" key="advanced">
+          <Form.Item name="type" label="目标协议（仅跨协议转换时使用）" tooltip="透明转发模式下沿用入站协议，无需关注此项。" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'openai', label: 'openai' },
+                { value: 'anthropic', label: 'anthropic' },
+              ]}
+            />
+          </Form.Item>
           <Form.Item name="proxyUrl" label="个人出站代理" extra={<span className="form-hint">支持 http 或 socks5；不需要代理时留空。</span>}>
             <Input placeholder="socks5://127.0.0.1:7890" />
           </Form.Item>
           <Form.Item name="allowPublicProxy" label="允许使用公共代理参与优选" valuePropName="checked">
             <Switch />
-          </Form.Item>
-          <Form.Item name="models" label="模型列表">
-            <Select mode="tags" placeholder="该渠道服务的模型名，回车添加" />
           </Form.Item>
           <Form.Item label="模型映射（请求名 → 上游名）">
             <Form.List name="modelMapping">
@@ -315,6 +318,15 @@ const ChannelsPage: React.FC = () => {
               />
             </Form.Item>
           </Space>
+          <Form.Item name="forwardMode" label="转发模式" extra="默认透明转发；跨协议转换仅在高级设置中显式开启。">
+            <Select
+              style={{ width: 260 }}
+              options={[
+                { value: 'passthrough', label: '透明转发（默认）' },
+                { value: 'convert', label: '跨协议转换（高级）' },
+              ]}
+            />
+          </Form.Item>
           <Form.Item noStyle shouldUpdate={(a, b) => a.pricingMode !== b.pricingMode}>
             {({ getFieldValue }) =>
               getFieldValue('pricingMode') === 'cny_ratio' ? (

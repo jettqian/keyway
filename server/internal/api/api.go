@@ -164,9 +164,11 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/channels/:id/test_keys", s.handleTestKeys)
 
 	r.GET("/templates", s.handleListTemplates)
+	r.PUT("/models/bindings", s.handleUpdateModelBindings)
 
 	r.GET("/tokens", s.handleListTokens)
 	r.POST("/tokens", s.handleCreateToken)
+	r.POST("/tokens/:id/reveal", s.handleRevealToken)
 	r.DELETE("/tokens/:id", s.handleRevokeToken)
 
 	r.GET("/logs", s.handleLogs)

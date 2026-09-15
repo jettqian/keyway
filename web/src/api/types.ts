@@ -36,6 +36,7 @@ export interface Channel {
   allowPublicProxy: boolean
   models: string[]
   modelMapping: Record<string, string>
+  forwardMode: 'passthrough' | 'convert'
   priority: number
   priceMultiplier?: number
   pricingMode?: 'usd' | 'cny_ratio'
@@ -58,6 +59,7 @@ export interface ChannelInput {
   allowPublicProxy: boolean
   models: string[]
   modelMapping: Record<string, string>
+  forwardMode: 'passthrough' | 'convert'
   priority: number
   priceMultiplier?: number
   pricingMode?: 'usd' | 'cny_ratio'

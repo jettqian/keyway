@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -177,8 +178,13 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		lastCrossProto bool // 最后一次失败尝试是否跨协议（决定错误体是否需要转换）
 	)
 	for _, a := range attempts {
+		a.protocol = inbound
+		if a.rc.Channel.ForwardMode == "convert" {
+			a.protocol = a.rc.Channel.Type
+		}
+		a.request = c.Request
 		upstreamModel := mapModel(a.rc.Channel, model)
-		sendBody, targetURL, dropped, cross, err := s.buildUpstreamRequest(inbound, a.rc.Channel.Type, rawBody, a, upstreamModel)
+		sendBody, targetURL, dropped, cross, err := s.buildUpstreamRequest(inbound, a.protocol, rawBody, a, upstreamModel)
 		if err != nil {
 			respondProtocolError(c, inbound, http.StatusBadRequest, err.Error())
 			return
@@ -297,15 +303,32 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 	if err != nil {
 		return nil, "", err
 	}
-	req, err := http.NewRequest(method, url, bytes.NewReader(sendBody))
+	ctx := context.Background()
+	if a.request != nil {
+		ctx = a.request.Context()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(sendBody))
 	if err != nil {
 		return nil, "", err
 	}
+	if a.request != nil {
+		copyForwardHeaders(req.Header, a.request.Header)
+	}
 	req.Header.Set("Content-Type", "application/json")
-	if a.rc.Channel.Type == "anthropic" {
+	req.Header.Del("Authorization")
+	req.Header.Del("x-api-key")
+	protocol := a.protocol
+	if protocol == "" {
+		protocol = a.rc.Channel.Type
+	}
+	if protocol == "anthropic" {
 		req.Header.Set("x-api-key", keyPlain)
-		req.Header.Set("anthropic-version", "2023-06-01")
+		if req.Header.Get("anthropic-version") == "" {
+			req.Header.Set("anthropic-version", "2023-06-01")
+		}
 	} else {
+		req.Header.Del("anthropic-version")
+		req.Header.Del("anthropic-beta")
 		req.Header.Set("Authorization", "Bearer "+keyPlain)
 	}
 	if stream {
@@ -322,10 +345,27 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 	return resp, keyPlain, nil
 }
 
+// copyForwardHeaders 保留透明转发所需的普通请求头，认证头由网关重新写入。
+func copyForwardHeaders(dst, src http.Header) {
+	for name, values := range src {
+		lower := strings.ToLower(name)
+		if lower == "authorization" || lower == "x-api-key" || lower == "host" ||
+			lower == "content-length" || lower == "connection" || lower == "accept-encoding" {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(name, value)
+		}
+	}
+}
+
 // streamResponse 流式回写：跨协议走转换器，同协议逐行透传（flush）；公共代理统计出站字节。
 // 返回 usage、首字节耗时（自请求开始到首个写出块）、总耗时
 func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time) (convert.Usage, int64, int64) {
-	channelType := a.rc.Channel.Type
+	channelType := a.protocol
+	if channelType == "" {
+		channelType = inbound
+	}
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -418,7 +458,10 @@ func (s *Server) writeStreamLine(c *gin.Context, w io.Writer, conv interface {
 // bodyResponse 非流式回写：跨协议转换响应体；公共代理统计出站字节。
 // 返回 usage、首字节耗时（自请求开始到开始写出）、总耗时
 func (s *Server) bodyResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time) (convert.Usage, int64, int64) {
-	channelType := a.rc.Channel.Type
+	channelType := a.protocol
+	if channelType == "" {
+		channelType = inbound
+	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
 	resp.Body.Close()
 	if a.proxyID != 0 {

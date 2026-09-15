@@ -224,6 +224,8 @@ func TestE2EOpenAI透传与模型映射(t *testing.T) {
 func TestE2EAnthropic入站转OpenAI(t *testing.T) {
 	c, upstream := setupApp(t)
 	c.bootstrap(t, upstream.URL)
+	// 跨协议转换必须显式开启高级模式。
+	c.store.DB().Model(&store.Channel{}).Where("id = ?", c.channelID).Update("forward_mode", "convert")
 
 	req := httptest.NewRequest("POST", "/v1/messages",
 		bytes.NewBufferString(`{"model":"test-model","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
@@ -265,6 +267,32 @@ func TestE2E流式透传(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "你好，世界") || !strings.Contains(body, "[DONE]") {
 		t.Fatalf("流式内容异常:\n%s", body)
+	}
+}
+
+func TestModelBindingsAndTokenReveal(t *testing.T) {
+	c, upstream := setupApp(t)
+	defer upstream.Close()
+	c.bootstrap(t, upstream.URL)
+
+	if w := c.do("PUT", "/api/models/bindings", map[string]any{
+		"name": "shared-model", "channelIds": []int64{c.channelID},
+	}, true); w.Code != 200 {
+		t.Fatalf("模型绑定失败: %d %s", w.Code, w.Body.String())
+	}
+	if w := c.do("GET", "/api/channels", nil, true); w.Code != 200 || !strings.Contains(w.Body.String(), "shared-model") {
+		t.Fatalf("渠道未保存模型绑定: %d %s", w.Code, w.Body.String())
+	}
+	var tokens struct {
+		Tokens []struct {
+			ID int64 `json:"id"`
+		} `json:"tokens"`
+	}
+	if w := c.do("GET", "/api/tokens", nil, true); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &tokens) != nil || len(tokens.Tokens) != 1 {
+		t.Fatalf("读取令牌失败: %d %s", w.Code, w.Body.String())
+	}
+	if w := c.do("POST", fmt.Sprintf("/api/tokens/%d/reveal", tokens.Tokens[0].ID), nil, true); w.Code != 200 || !strings.Contains(w.Body.String(), "sk-keyway-") {
+		t.Fatalf("回看令牌失败: %d %s", w.Code, w.Body.String())
 	}
 }
 

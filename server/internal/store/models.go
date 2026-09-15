@@ -79,6 +79,7 @@ type Channel struct {
 	AllowPublicProxy     int     `gorm:"column:allow_public_proxy;not null;default:0"`
 	ModelsJSON           string  `gorm:"column:models_json;not null"`
 	ModelMappingJSON     string  `gorm:"column:model_mapping_json;default:'{}'"`
+	ForwardMode          string  `gorm:"column:forward_mode;not null;default:'passthrough'"` // passthrough|convert
 	Priority             int     `gorm:"column:priority;not null;default:0"`
 	PriceMultiplier      float64 `gorm:"column:price_multiplier;not null;default:1"` // 价格倍率：相对官方价的折扣（如 0.8 = 8 折）
 	// 币种语义：usd = 直接乘官方 USD 价目（默认）；
