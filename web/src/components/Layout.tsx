@@ -44,25 +44,21 @@ export const ConsoleLayout: React.FC = () => {
 
   return (
     <AntLayout style={{ minHeight: '100vh' }}>
-      <Sider theme="light" breakpoint="lg">
-        <div style={{ padding: 16, fontWeight: 700, fontSize: 18 }}>Keyway</div>
+      <Sider theme="light" breakpoint="lg" className="console-sider">
+        <div className="brand">
+          <div className="brand-mark">K</div>
+          <div><div className="brand-name">Keyway</div><div className="brand-subtitle">模型网关控制台</div></div>
+        </div>
         <Menu
+          className="console-menu"
           mode="inline"
-          selectedKeys={[location.pathname]}
+          selectedKeys={[items.find((item) => location.pathname === item.key || location.pathname.startsWith(`${item.key}/`))?.key ?? '/channels']}
           items={items}
           onClick={({ key }) => nav(key)}
         />
       </Sider>
       <AntLayout>
-        <Header
-          style={{
-            background: '#fff',
-            display: 'flex',
-            justifyContent: 'flex-end',
-            alignItems: 'center',
-            paddingInline: 24,
-          }}
-        >
+        <Header className="console-header" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingInline: 24 }}>
           <Dropdown
             menu={{
               items: [
@@ -82,7 +78,7 @@ export const ConsoleLayout: React.FC = () => {
             </span>
           </Dropdown>
         </Header>
-        <Content style={{ padding: 24 }}>
+        <Content className="console-content">
           <Outlet context={{ user, setUser }} />
         </Content>
       </AntLayout>

@@ -44,9 +44,9 @@ const TokensPage: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>网关令牌</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setModalOpen(true) }}>
+      <div className="page-heading">
+        <div><h2>网关令牌</h2><p>为客户端创建访问凭证，可限制渠道与模型范围。</p></div>
+        <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ name: '', channelIds: [], modelScope: '', expiresAt: undefined }); setModalOpen(true) }}>
           新建令牌
         </Button>
       </div>
@@ -99,7 +99,7 @@ const TokensPage: React.FC = () => {
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="如 claude-code" />
           </Form.Item>
-          <Form.Item name="channelIds" label="限定渠道（可多选，按需开关渠道）">
+          <Form.Item name="channelIds" label="限定渠道" extra={<span className="form-hint">留空则允许访问所有启用渠道。</span>}>
             <Select
               mode="multiple"
               allowClear
@@ -107,7 +107,7 @@ const TokensPage: React.FC = () => {
               placeholder="不限定则路由到所有启用渠道"
             />
           </Form.Item>
-          <Form.Item name="modelScope" label="模型范围（前缀通配，可选）">
+          <Form.Item name="modelScope" label="模型范围（可选）" extra={<span className="form-hint">支持前缀通配，例如 claude-*。</span>}>
             <Input placeholder="如 claude-*" />
           </Form.Item>
           <Form.Item name="expiresAt" label="过期时间（可选）">

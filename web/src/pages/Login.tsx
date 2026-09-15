@@ -41,9 +41,10 @@ const LoginPage: React.FC = () => {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <Card style={{ width: 360 }}>
-        <Typography.Title level={3} style={{ textAlign: 'center' }}>Keyway 登录</Typography.Title>
+    <div className="auth-shell">
+      <Card className="auth-card">
+        <div className="auth-mark">K</div>
+        <Typography.Title level={3} style={{ textAlign: 'center', marginTop: 0 }}>Keyway 登录</Typography.Title>
         <Form onFinish={onFinish} layout="vertical">
           <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
             <Input autoFocus />

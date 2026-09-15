@@ -3,10 +3,29 @@ import ReactDOM from 'react-dom/client'
 import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import App from './App'
+import './styles.css'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        token: {
+          colorPrimary: '#176b87',
+          colorInfo: '#176b87',
+          colorLink: '#176b87',
+          borderRadius: 8,
+          colorBgLayout: '#f4f7f8',
+          colorText: '#173042',
+          fontFamily: 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif',
+        },
+        components: {
+          Layout: { headerBg: '#ffffff', siderBg: '#ffffff' },
+          Table: { headerBg: '#edf3f5', rowHoverBg: '#f2f8f9' },
+          Card: { headerFontSize: 16 },
+        },
+      }}
+    >
       <App />
     </ConfigProvider>
   </React.StrictMode>,

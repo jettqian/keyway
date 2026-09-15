@@ -13,6 +13,7 @@ import {
   Popconfirm,
   Space,
   Alert,
+  Collapse,
 } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
@@ -140,9 +141,9 @@ const ChannelsPage: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>渠道</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建渠道</Button>
+      <div className="page-heading">
+        <div><h2>渠道</h2><p>管理上游线路、密钥和模型路由。保存后下一个请求即可生效。</p></div>
+        <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建渠道</Button></div>
       </div>
       <Table<Channel>
         rowKey="id"
@@ -207,10 +208,10 @@ const ChannelsPage: React.FC = () => {
         destroyOnClose
       >
         <Form form={form} layout="vertical" initialValues={emptyInput}>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+          <Form.Item name="name" label="名称" tooltip="给自己看的标识，建议包含供应商或用途" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="如 openai-官方" />
           </Form.Item>
-          <Form.Item name="type" label="协议类型" rules={[{ required: true }]}>
+          <Form.Item name="type" label="协议类型" tooltip="上游接口遵循的协议格式" rules={[{ required: true }]}>
             <Select
               options={[
                 { value: 'openai', label: 'openai（OpenAI 兼容：DeepSeek/GLM/Kimi/Groq/中转站）' },
@@ -218,7 +219,7 @@ const ChannelsPage: React.FC = () => {
               ]}
             />
           </Form.Item>
-          <Form.Item label="线路（base_url，按优先顺序，≤5 条）" required>
+          <Form.Item label="线路地址" extra={<span className="form-hint">按优先顺序填写，最多 5 条；系统会自动选择可用线路。</span>} required>
             <Form.List name="baseUrls">
               {(fields, { add, remove }) => (
                 <>
@@ -239,7 +240,7 @@ const ChannelsPage: React.FC = () => {
               )}
             </Form.List>
           </Form.Item>
-          <Form.Item name="keyIds" label="绑定密钥（≤5 个，按顺序轮换）">
+          <Form.Item name="keyIds" label="绑定密钥" extra={<span className="form-hint">留空表示暂不绑定密钥；最多 5 个，按所选策略使用。</span>}>
             <Select
               mode="multiple"
               options={keys.map((k) => ({ value: k.id, label: k.name }))}
@@ -266,7 +267,9 @@ const ChannelsPage: React.FC = () => {
               />
             </Form.Item>
           </Space>
-          <Form.Item name="proxyUrl" label="个人出站代理（http/socks5，留空不修改）">
+          <Collapse ghost defaultActiveKey={[]} style={{ marginTop: 4, marginBottom: 8 }}>
+            <Collapse.Panel header="高级选项" key="advanced">
+          <Form.Item name="proxyUrl" label="个人出站代理" extra={<span className="form-hint">支持 http 或 socks5；不需要代理时留空。</span>}>
             <Input placeholder="socks5://127.0.0.1:7890" />
           </Form.Item>
           <Form.Item name="allowPublicProxy" label="允许使用公共代理参与优选" valuePropName="checked">
@@ -343,6 +346,8 @@ const ChannelsPage: React.FC = () => {
               <Switch />
             </Form.Item>
           </Space>
+            </Collapse.Panel>
+          </Collapse>
         </Form>
       </Modal>
 

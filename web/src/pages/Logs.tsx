@@ -32,7 +32,7 @@ const LogsPage: React.FC = () => {
 
   return (
     <div>
-      <h2>请求日志</h2>
+      <div className="page-heading"><div><h2>请求日志</h2><p>按渠道、模型或状态码定位请求，回看路由与耗时。</p></div></div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <Select
           allowClear

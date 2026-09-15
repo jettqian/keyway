@@ -39,8 +39,8 @@ const StatsPage: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>用量统计</h2>
+      <div className="page-heading">
+        <div><h2>用量统计</h2><p>查看请求量、Token 消耗与费用估算。</p></div>
         <Segmented
           options={[
             { label: '今天', value: 1 },

@@ -24,6 +24,7 @@ const KeysPage: React.FC = () => {
   const openCreate = () => {
     setEditing(null)
     form.resetFields()
+    form.setFieldsValue({ name: '', value: '', note: '' })
     setModalOpen(true)
   }
 
@@ -52,9 +53,9 @@ const KeysPage: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>上游密钥池</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建密钥</Button>
+      <div className="page-heading">
+        <div><h2>上游密钥池</h2><p>集中保存并复用上游 API 密钥，密钥值只在这里管理。</p></div>
+        <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建密钥</Button></div>
       </div>
       <Table<ApiKey>
         rowKey="id"
@@ -115,7 +116,7 @@ const KeysPage: React.FC = () => {
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="如 openai-主号" />
           </Form.Item>
-          <Form.Item name="value" label={editing ? '密钥值（留空则不修改）' : '密钥值'}>
+          <Form.Item name="value" label={editing ? '密钥值（留空则不修改）' : '密钥值'} extra={<span className="form-hint">仅用于连接上游服务，保存后不会再次完整展示。</span>}>
             <Input.Password placeholder="sk-..." />
           </Form.Item>
           <Form.Item name="note" label="备注">

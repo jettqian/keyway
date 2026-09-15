@@ -28,8 +28,7 @@ const TemplatesPage: React.FC = () => {
 
   return (
     <div>
-      <h2>预制模板</h2>
-      <p style={{ color: '#888' }}>管理员维护的渠道模板（线路/代理/模型清单）。复制后完全独立，可自由修改。</p>
+      <div className="page-heading"><div><h2>预制模板</h2><p>复制管理员维护的线路配置，绑定密钥后即可快速接入。</p></div></div>
       <Table<ChannelTemplate>
         rowKey="id"
         loading={loading}
