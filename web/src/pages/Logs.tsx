@@ -1,5 +1,5 @@
 import React from 'react'
-import { Table, Select, Input, InputNumber, message } from 'antd'
+import { Table, Select, Input, InputNumber, Tooltip, message } from 'antd'
 import { listLogs, listChannels } from '../api'
 import type { LogEntry, Channel } from '../api/types'
 import { formatDateTime, fmtCost, fmtInt, fmtMs } from '../format'
@@ -96,7 +96,19 @@ const LogsPage: React.FC = () => {
             render: (_, l) =>
               l.inputCost == null ? <span className="text-tertiary">未定价</span> : fmtCost(l.inputCost + (l.outputCost ?? 0)),
           },
-          { title: '错误', dataIndex: 'error', ellipsis: true },
+          {
+            title: '错误',
+            dataIndex: 'error',
+            ellipsis: { showTitle: false },
+            render: (v?: string) =>
+              v ? (
+                <Tooltip title={<span className="log-error-detail">{v}</span>} overlayStyle={{ maxWidth: 480 }}>
+                  <span className="status-error">{v}</span>
+                </Tooltip>
+              ) : (
+                <span className="text-tertiary">-</span>
+              ),
+          },
         ]}
       />
     </div>
