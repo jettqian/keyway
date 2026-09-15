@@ -50,6 +50,7 @@ const TokensPage: React.FC = () => {
           新建令牌
         </Button>
       </div>
+      </div>
       <Table<GatewayToken>
         rowKey="id"
         loading={loading}
