@@ -1,8 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.22（与 PRD v1.5.24 对应；限定渠道面板交互逻辑修正——胶囊入口固定
-  宽度（弹层锚点恒定）、至少保留一个启用渠道（堵住"全部关闭=不限"语义陷阱）、
-  主开关重开恢复上次启用集合（会话级记忆）、拖拽热区收敛到行首手柄（纯前端）；
+- 版本：v1.23（与 PRD v1.5.25 对应；探测覆盖 /v1/responses 端点形态——gpt 系模型
+  形态序列补 responses（Codex 客户端端点，覆盖 responses-only team 网关），失败
+  摘要按端点路径汇报（见 §6）；
+  前版 v1.22：限定渠道面板交互逻辑修正——胶囊入口固定宽度、至少保留一个启用渠道、
+  主开关重开恢复上次启用集合（会话级记忆）、拖拽热区收敛到行首手柄；
   前版 v1.21：探测模型回退与错误摘要；v1.20：探测协议判定对齐真实转发、探测矩阵
   并发化；v1.19：限定渠道面板体验修正；v1.18：模型目录价目点选；v1.17：流式保活
   与止损、usage 兜底估算；v1.16：撤销目录价目导入与价格展示优化；
@@ -401,21 +403,25 @@ graph LR
   最小请求：openai 型 `POST /v1/chat/completions {model, max_tokens:8,
   messages:[{role:user,content:"ping"}]}`；anthropic 型 `POST /v1/messages` 同理
   （max_tokens:8）；2xx 却返回 text/html 视为线路无该端点（SPA 回退）而非健康
-- **探测协议判定与真实转发一致**（v1.5.22 修正，消除透明转发渠道假失败）：
+- **探测端点形态判定与真实转发一致**（v1.5.22/24/25 修正，消除透明转发渠道假失败）：
   - 请求模型名先经渠道 model_mapping 映射为上游模型名（`routing.ApplyModelMapping`，
     relay 与 probe 共用）；
-  - convert 渠道用其显式目标协议 `type`，失败不回退（配错就应报失败）；
-  - passthrough 渠道 `type` 恒为空且不参与转发，按模型名族推断首选协议
-    （`claude*` → anthropic，其余 → openai），**失败时回退另一协议**再试一次
-    （兼容 claude 模型走 openai 兼容中转 / gpt 模型走 anthropic 站），任一成功即
-    通过，全部失败时汇报各协议错误摘要
+  - 形态 = 端点 + 鉴权 + 最小请求体，共三种：anthropic（`/v1/messages` + x-api-key）、
+    openai（`/v1/chat/completions` + Bearer）、openai-responses（`/v1/responses` +
+    Bearer，`{model, input, max_output_tokens:16}`，Codex 客户端端点）；
+  - passthrough 渠道 `type` 恒为空且不参与转发，按模型名族推断首选形态
+    （`claude*` → messages，其余 → chat/completions），失败依序回退其余形态
+    （gpt 系 `chat → responses → messages`；claude 系 `messages → chat → responses`）
+    ——兼容 claude 模型走 openai 兼容中转、gpt 模型走 responses-only team 网关等场景；
+  - convert 渠道在显式协议族内回退（anthropic → 仅 messages；openai →
+    chat → responses），配错族就应报失败
 - **模型回退与错误摘要**（v1.5.23，oct-micu-vip2/oct-yescode 案例修正）：
   - 探测模型不固定第一个，取渠道模型列表前 3 个非空项依序回退（中转站常见
     "部分模型分组无渠道/provider 路由不命中"，如 new_api `model_not_found`、
     team 网关 "no enabled provider"，固定首模型会把可用渠道整体误判为不健康）；
   - 失败信息解析上游错误响应体 `error.message`（openai/anthropic/new_api 通用
-    结构，截断 120 rune）拼入摘要，按"模型（协议: 错误；协议: 错误）；…"逐条汇报；
-  - 单组合的模型 × 协议全部回退请求共享 `probeWait`（15s）总超时，探测上限
+    结构，截断 120 rune）拼入摘要，按"模型（/端点: 错误；…）；…"逐条汇报；
+  - 单组合的模型 × 形态全部回退请求共享 `probeWait`（15s）总超时，探测上限
     不因回退放大
 - 探测使用该渠道当前首选可用密钥（会消耗极少量上游额度，文档明示；矩阵上限×频率
   约束见 PRD 非功能需求）

@@ -239,23 +239,46 @@ func (e *Engine) ProbeKeys(ch *store.Channel) ([]KeyResult, error) {
 	return out, nil
 }
 
-// probeProtocols 探测协议尝试序列：
-//   - convert 模式上游协议由渠道显式指定，只测该协议（配错就应报失败）；
+// probeShapes 探测端点形态尝试序列（形态 = 端点 + 鉴权 + 最小请求体）：
+//   - anthropic：POST /v1/messages + x-api-key；
+//   - openai：POST /v1/chat/completions + Bearer；
+//   - openai-responses：POST /v1/responses + Bearer（Responses API，Codex 客户端使用；
+//     仅提供 responses 形态 provider 的 team 网关上 chat/completions 恒 403，
+//     v1.5.24 前探测从不覆盖该端点，导致"用户实测可用但测试不过"）
+//
+// 序列规则：
+//   - convert 模式上游协议由渠道显式指定，只测该协议族（配错就应报失败）；
 //   - passthrough 沿用入站协议、无法预知，按模型名族推断首选（claude* → anthropic，
-//     其余 → openai），失败时回退另一协议——兼容 claude 模型走 openai 兼容中转站等场景。
-//     渠道上的 type 字段在 passthrough 下不参与转发（relay 忽略），探测同样不依赖它
-func probeProtocols(ch *store.Channel, model string) []string {
+//     其余 → openai），失败时依序回退其余形态——兼容 claude 模型走 openai 兼容中转、
+//     gpt 模型走 responses-only 网关等场景。渠道上的 type 字段在 passthrough 下
+//     不参与转发（relay 忽略），探测同样不依赖它
+func probeShapes(ch *store.Channel, model string) []string {
 	if ch.ForwardMode == "convert" && ch.Type != "" {
-		return []string{ch.Type}
+		if ch.Type == "anthropic" {
+			return []string{"anthropic"}
+		}
+		return []string{"openai", "openai-responses"}
 	}
 	if strings.HasPrefix(model, "claude") {
-		return []string{"anthropic", "openai"}
+		return []string{"anthropic", "openai", "openai-responses"}
 	}
-	return []string{"openai", "anthropic"}
+	return []string{"openai", "openai-responses", "anthropic"}
 }
 
-// probeOnce 发送最小请求并计时；模型 × 协议两级回退（v1.5.23）：
-// 候选模型依序尝试，每个模型按其协议判定序列（见 probeProtocols）继续回退，
+// shapeLabel 形态的展示名（错误信息与结果摘要用端点路径更直观）
+func shapeLabel(shape string) string {
+	switch shape {
+	case "anthropic":
+		return "/v1/messages"
+	case "openai-responses":
+		return "/v1/responses"
+	default:
+		return "/v1/chat/completions"
+	}
+}
+
+// probeOnce 发送最小请求并计时；模型 × 端点形态两级回退（v1.5.23/24）：
+// 候选模型依序尝试，每个模型按其形态判定序列（见 probeShapes）继续回退，
 // 任一成功即该组合健康；全部失败时汇报各模型末次错误摘要（含上游响应体 message）。
 // 整个组合共享 probeWait 总超时（所有回退请求用同一 deadline，上限确定）
 func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, proxyURL, via string) Result {
@@ -266,19 +289,19 @@ func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, p
 	start := time.Now()
 	for _, m := range models {
 		upstreamModel := routing.ApplyModelMapping(ch, m)
-		var protoErrs []string
+		var shapeErrs []string
 		var last Result
-		for _, proto := range probeProtocols(ch, m) {
-			last = e.probeOne(ctx, ch, upstreamModel, keyPlain, line, proxyURL, via, proto)
+		for _, shape := range probeShapes(ch, m) {
+			last = e.probeOne(ctx, ch, upstreamModel, keyPlain, line, proxyURL, via, shape)
 			if last.OK {
 				return last
 			}
-			protoErrs = append(protoErrs, fmt.Sprintf("%s 协议: %s", proto, last.Error))
+			shapeErrs = append(shapeErrs, fmt.Sprintf("%s：%s", shapeLabel(shape), last.Error))
 			if ctx.Err() != nil {
 				break
 			}
 		}
-		modelErrs = append(modelErrs, fmt.Sprintf("%s（%s）", m, strings.Join(protoErrs, "；")))
+		modelErrs = append(modelErrs, fmt.Sprintf("%s（%s）", m, strings.Join(shapeErrs, "；")))
 		if ctx.Err() != nil {
 			break
 		}
@@ -288,21 +311,35 @@ func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, p
 	return result
 }
 
-// probeOne 按指定协议发送最小请求并计时；错误信息附带上游响应体摘要
-func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlain, line, proxyURL, via, protocol string) Result {
+// probeOne 按指定形态发送最小请求并计时；错误信息附带上游响应体摘要
+func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlain, line, proxyURL, via, shape string) Result {
 	result := Result{LineURL: line, Via: via}
 
-	body, _ := json.Marshal(map[string]any{
-		"model":      model,
-		"max_tokens": 8,
-		"messages":   []map[string]any{{"role": "user", "content": "ping"}},
-	})
-	var target string
-	if protocol == "anthropic" {
-		target = httpx.UpstreamEndpoint(line, "/messages")
+	var body []byte
+	var path string
+	if shape == "anthropic" {
+		path = "/messages"
+		body, _ = json.Marshal(map[string]any{
+			"model":      model,
+			"max_tokens": 8,
+			"messages":   []map[string]any{{"role": "user", "content": "ping"}},
+		})
+	} else if shape == "openai-responses" {
+		path = "/responses"
+		body, _ = json.Marshal(map[string]any{
+			"model":             model,
+			"input":             "ping",
+			"max_output_tokens": 16,
+		})
 	} else {
-		target = httpx.UpstreamEndpoint(line, "/chat/completions")
+		path = "/chat/completions"
+		body, _ = json.Marshal(map[string]any{
+			"model":      model,
+			"max_tokens": 8,
+			"messages":   []map[string]any{{"role": "user", "content": "ping"}},
+		})
 	}
+	target := httpx.UpstreamEndpoint(line, path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
@@ -310,7 +347,7 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 		return result
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if protocol == "anthropic" {
+	if shape == "anthropic" {
 		req.Header.Set("x-api-key", keyPlain)
 		req.Header.Set("anthropic-version", "2023-06-01")
 	} else {

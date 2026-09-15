@@ -159,22 +159,24 @@ func TestProbeChannel转换模式不回退(t *testing.T) {
 	}
 }
 
-// 探测协议序列：convert 用显式类型；passthrough 按模型名族推断并附回退协议
-func TestProbeProtocols(t *testing.T) {
+// 探测形态序列：convert 用显式协议族；passthrough 按模型名族推断并附回退形态
+// （含 /v1/responses——Codex 端点，仅提供 responses 形态 provider 的网关靠它覆盖）
+func TestProbeShapes(t *testing.T) {
 	cases := []struct {
 		name  string
 		ch    *store.Channel
 		model string
 		want  []string
 	}{
-		{"convert显式类型", &store.Channel{ForwardMode: "convert", Type: "anthropic"}, "gpt-4o", []string{"anthropic"}},
-		{"passthrough推断anthropic", &store.Channel{ForwardMode: "passthrough"}, "claude-3-5-sonnet", []string{"anthropic", "openai"}},
-		{"passthrough推断openai", &store.Channel{ForwardMode: "passthrough"}, "gpt-4o", []string{"openai", "anthropic"}},
-		{"passthrough忽略stale类型", &store.Channel{ForwardMode: "passthrough", Type: "openai"}, "claude-sonnet-4", []string{"anthropic", "openai"}},
+		{"convert显式anthropic", &store.Channel{ForwardMode: "convert", Type: "anthropic"}, "gpt-4o", []string{"anthropic"}},
+		{"convert显式openai", &store.Channel{ForwardMode: "convert", Type: "openai"}, "gpt-4o", []string{"openai", "openai-responses"}},
+		{"passthrough推断anthropic", &store.Channel{ForwardMode: "passthrough"}, "claude-3-5-sonnet", []string{"anthropic", "openai", "openai-responses"}},
+		{"passthrough推断openai", &store.Channel{ForwardMode: "passthrough"}, "gpt-4o", []string{"openai", "openai-responses", "anthropic"}},
+		{"passthrough忽略stale类型", &store.Channel{ForwardMode: "passthrough", Type: "openai"}, "claude-sonnet-4", []string{"anthropic", "openai", "openai-responses"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := probeProtocols(c.ch, c.model)
+			got := probeShapes(c.ch, c.model)
 			if len(got) != len(c.want) {
 				t.Fatalf("期望 %v，实际 %v", c.want, got)
 			}
@@ -184,6 +186,34 @@ func TestProbeProtocols(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// responses-only 网关（oct-yescode 场景）：/chat/completions 与 /messages 均 403/503，
+// 仅 /v1/responses 可用（Codex 客户端端点）——形态回退后组合应判健康
+func TestProbeChannelResponsesOnly网关(t *testing.T) {
+	st, e := newEngine(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/responses":
+			w.Write([]byte(`{"id":"resp_1","object":"response","status":"completed","output":[]}`))
+		default:
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":{"message":"This team does not have an enabled provider configured for this request."}}`))
+		}
+	}))
+	defer srv.Close()
+	ch := seedChannel(t, st, &store.Channel{
+		Name: "responses-only", ForwardMode: "passthrough", Enabled: 1,
+		BaseURLsJSON: fmt.Sprintf(`["%s"]`, srv.URL), ModelsJSON: `["gpt-6-astra"]`,
+	})
+	results, err := e.ProbeChannel(ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("responses-only 网关应经 /v1/responses 回退探测成功，实际 %+v", results)
 	}
 }
 
