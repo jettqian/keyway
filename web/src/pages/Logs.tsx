@@ -3,6 +3,7 @@ import { Table, Select, Input, InputNumber, Popover, Typography, message } from 
 import { listLogs, listChannels } from '../api'
 import type { LogEntry, Channel } from '../api/types'
 import Money from '../components/Money'
+import LineUrl from '../components/LineUrl'
 import { formatDateTime, fmtInt, fmtMs } from '../format'
 
 const LogsPage: React.FC = () => {
@@ -67,7 +68,7 @@ const LogsPage: React.FC = () => {
             title: '渠道',
             dataIndex: 'channelName',
           },
-          { title: '线路', dataIndex: 'lineUrl', ellipsis: true, width: 160 },
+          { title: '线路', dataIndex: 'lineUrl', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <LineUrl url={v} /> },
           { title: '路径', dataIndex: 'via', width: 110 },
           { title: '协议', dataIndex: 'protocol', width: 90 },
           { title: '模型', dataIndex: 'model', ellipsis: true },

@@ -1,6 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.32（与 PRD v1.5.34 对应；tokens 汇总**紧凑单位显示**——统计汇总条
+- 版本：v1.33（与 PRD v1.5.35 对应；线路 URL **分层短显**——新增 `LineUrl`
+  组件（统计页最近生效流量 + 日志页线路列共用）：域名主体 + 路径弱色展示、
+  悬停 Tooltip 显示完整地址（含 via），列定宽 + ellipsis 超长省略
+  （`showTitle:false` 避免原生 title 与 Tooltip 双浮层）；
+  前版 v1.32：与 PRD v1.5.34 对应；tokens 汇总**紧凑单位显示**——统计汇总条
   「tokens（入/出）」改用 `fmtTokens`（3 位有效数字 K/M/B 紧凑单位，先取整再
   定档：999,999 直接进位 1M），悬停 Tooltip 显示入/出千分位精确值；分组表
   维持 `fmtInt` 精确等宽数字，列内逐位可比口径不变；

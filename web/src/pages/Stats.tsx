@@ -6,6 +6,7 @@ import dayjs from 'dayjs'
 import { myStats } from '../api'
 import type { LatestUsage, StatsResponse, StatsGroup } from '../api/types'
 import Money from '../components/Money'
+import LineUrl from '../components/LineUrl'
 import { formatDateTime, fmtInt, fmtTokens } from '../format'
 
 // 快捷时间项（自然日口径）
@@ -121,16 +122,9 @@ const StatsPage: React.FC = () => {
               {
                 title: '线路',
                 dataIndex: 'lineUrl',
-                ellipsis: true,
-                render: (v: string, r: LatestUsage) =>
-                  v ? (
-                    <span>
-                      {v}
-                      {r.via ? <span className="text-tertiary"> · {r.via}</span> : null}
-                    </span>
-                  ) : (
-                    <span className="text-tertiary">—</span>
-                  ),
+                width: 240,
+                ellipsis: { showTitle: false },
+                render: (v: string, r: LatestUsage) => <LineUrl url={v} via={r.via} />,
               },
               {
                 title: '模型',
