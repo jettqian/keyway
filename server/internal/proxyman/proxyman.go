@@ -2,6 +2,7 @@ package proxyman
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,7 +70,14 @@ func (m *Manager) Paths(personalProxyURL string, allowPublic bool) []Path {
 		paths = append(paths, Path{ProxyURL: personalProxyURL, Via: "personal"})
 	}
 	if allowPublic {
-		for id, u := range m.list() {
+		urls := m.list()
+		ids := make([]int64, 0, len(urls))
+		for id := range urls {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		for _, id := range ids {
+			u := urls[id]
 			if len(paths) >= 4 {
 				break
 			}

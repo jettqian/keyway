@@ -241,7 +241,10 @@ func (s *Server) handleAdminUpdatePricing(c *gin.Context) {
 	}
 	p.Model = model // URL 参数为权威
 	p.UpdatedAt = time.Now().Unix()
-	s.Store.DB().Save(&p)
+	if err := s.Store.DB().Save(&p).Error; err != nil {
+		s.fail(c, http.StatusInternalServerError, "保存价目失败")
+		return
+	}
 	usage.InvalidatePricingCache(s.Store.DB())
 	s.ok(c, gin.H{"pricing": p})
 }
@@ -339,14 +342,25 @@ func (s *Server) handleAdminUpdateProxy(c *gin.Context) {
 	if req.Enabled != nil {
 		updates["enabled"] = boolToInt(*req.Enabled)
 	}
-	s.Store.DB().Model(&p).Updates(updates)
+	if err := s.Store.DB().Model(&p).Updates(updates).Error; err != nil {
+		s.fail(c, http.StatusInternalServerError, "更新代理失败")
+		return
+	}
 	s.PM.Reload()
 	s.ok(c, gin.H{})
 }
 
 func (s *Server) handleAdminDeleteProxy(c *gin.Context) {
 	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	s.Store.DB().Delete(&store.Proxy{}, id)
+	res := s.Store.DB().Delete(&store.Proxy{}, id)
+	if res.Error != nil {
+		s.fail(c, http.StatusInternalServerError, "删除代理失败")
+		return
+	}
+	if res.RowsAffected == 0 {
+		s.fail(c, http.StatusNotFound, "代理不存在")
+		return
+	}
 	s.PM.Reload()
 	s.ok(c, gin.H{})
 }
@@ -467,14 +481,25 @@ func (s *Server) handleAdminUpdateTemplate(c *gin.Context) {
 	tpl.Note = in.Note
 	tpl.Enabled = boolToInt(in.Enabled)
 	tpl.UpdatedAt = time.Now().Unix()
-	s.Store.DB().Save(&tpl)
+	if err := s.Store.DB().Save(&tpl).Error; err != nil {
+		s.fail(c, http.StatusInternalServerError, "更新模板失败")
+		return
+	}
 	s.ok(c, gin.H{"template": templateDTO(&tpl)})
 }
 
 func (s *Server) handleAdminDeleteTemplate(c *gin.Context) {
 	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	// 已复制渠道不受影响（copied_from_template_id 悬挂标记）
-	s.Store.DB().Delete(&store.ChannelTemplate{}, id)
+	res := s.Store.DB().Delete(&store.ChannelTemplate{}, id)
+	if res.Error != nil {
+		s.fail(c, http.StatusInternalServerError, "删除模板失败")
+		return
+	}
+	if res.RowsAffected == 0 {
+		s.fail(c, http.StatusNotFound, "模板不存在")
+		return
+	}
 	s.ok(c, gin.H{})
 }
 
@@ -557,17 +582,34 @@ func (s *Server) handleAdminUpdateSettings(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, "registerMode 须为 open/invite/closed")
 		return
 	}
-	s.Store.SetSetting("register_mode", dto.RegisterMode)
+	set := func(key, value string) bool {
+		if err := s.Store.SetSetting(key, value); err != nil {
+			s.fail(c, http.StatusInternalServerError, "保存设置失败")
+			return false
+		}
+		return true
+	}
+	if !set("register_mode", dto.RegisterMode) {
+		return
+	}
 	if dto.FeishuEnabled {
-		s.Store.SetSetting("feishu_enabled", "1")
+		if !set("feishu_enabled", "1") {
+			return
+		}
 	} else {
-		s.Store.SetSetting("feishu_enabled", "0")
+		if !set("feishu_enabled", "0") {
+			return
+		}
 	}
 	if dto.FeishuAppID != "" {
-		s.Store.SetSetting("feishu_app_id", dto.FeishuAppID)
+		if !set("feishu_app_id", dto.FeishuAppID) {
+			return
+		}
 	}
 	if dto.FeishuBaseURL != "" {
-		s.Store.SetSetting("feishu_base_url", dto.FeishuBaseURL)
+		if !set("feishu_base_url", dto.FeishuBaseURL) {
+			return
+		}
 	}
 	if dto.FeishuAppSecret != "" {
 		if err := s.Auth.SaveFeishuSecret(dto.FeishuAppSecret); err != nil {
@@ -584,17 +626,23 @@ func (s *Server) handleAdminUpdateSettings(c *gin.Context) {
 			return
 		}
 		mode = dto.ExchangeRateMode
-		s.Store.SetSetting(fxrate.KeyMode, mode)
+		if !set(fxrate.KeyMode, mode) {
+			return
+		}
 	}
 	if mode == fxrate.ModeManual && dto.ExchangeRate >= 0.5 && dto.ExchangeRate <= 20 {
-		s.Fx.SaveManualRate(dto.ExchangeRate)
+		if err := s.Fx.SaveManualRate(dto.ExchangeRate); err != nil {
+			s.fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	// 回显不含密钥，汇率相关字段按库内实际生效值回显
 	resp := s.settingsDTO()
 	resp.RegisterMode = dto.RegisterMode
 	resp.FeishuEnabled = dto.FeishuEnabled
 	resp.FeishuAppID = dto.FeishuAppID
-	resp.FeishuHasSecret = true
+	secretEnc, _ := s.Store.GetSetting("feishu_app_secret")
+	resp.FeishuHasSecret = secretEnc != ""
 	resp.FeishuBaseURL = dto.FeishuBaseURL
 	s.ok(c, gin.H{"settings": resp})
 }

@@ -27,6 +27,9 @@ import (
 // HandleOpenAIChat POST /v1/chat/completions
 func (s *Server) HandleOpenAIChat(c *gin.Context) {
 	body := readBody(c, s.Cfg.BodyLimitMB)
+	if body == nil {
+		return
+	}
 	var req convert.OpenAIChatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		respondOpenAIError(c, http.StatusBadRequest, "请求体不是合法的 OpenAI JSON："+err.Error())
@@ -39,6 +42,9 @@ func (s *Server) HandleOpenAIChat(c *gin.Context) {
 func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		body := readBody(c, s.Cfg.BodyLimitMB)
+		if body == nil {
+			return
+		}
 		var probe struct {
 			Model string `json:"model"`
 		}
@@ -54,6 +60,10 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			return
 		}
 		candidates := append(matched, defaults...)
+		reqStart := time.Now()
+		var lastAttempt *attempt
+		lastStatus := 0
+		lastErr := ""
 		for _, rc := range candidates {
 			if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
 				continue
@@ -64,19 +74,24 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			m["model"] = upstreamModel
 			sendBody, _ := json.Marshal(m)
 			for _, a := range s.planFor(rc) {
+				lastAttempt = &a
 				a.protocol = "openai"
 				a.request = c.Request
 				resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, path), sendBody, false)
 				if err != nil {
+					lastErr = err.Error()
 					continue
 				}
 				if isHTMLResponse(resp) {
 					// 上游 2xx 却返回 HTML（SPA 回退）：端点不存在，换组合
 					io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
+					lastErr = "上游返回 HTML（端点不存在）"
 					continue
 				}
 				if resp.StatusCode >= 500 {
+					lastStatus = resp.StatusCode
+					lastErr = fmt.Sprintf("上游返回 %d", resp.StatusCode)
 					io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
 					continue
@@ -85,6 +100,15 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 				s.submitLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, convert.Usage{}, 0, 0)
 				return
 			}
+		}
+		if lastAttempt != nil {
+			if lastStatus == 0 {
+				lastStatus = http.StatusBadGateway
+			}
+			if lastErr == "" {
+				lastErr = fmt.Sprintf("上游返回 %d", lastStatus)
+			}
+			s.submitFailureLog(c, *lastAttempt, "openai", probe.Model, mapModel(lastAttempt.rc.Channel, probe.Model), lastStatus, lastErr, reqStart)
 		}
 		respondOpenAIError(c, http.StatusBadGateway, "无可用上游（completions/embeddings 仅支持 openai 型渠道）")
 	}
@@ -95,6 +119,9 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 // 失败切换与 chat 管线同策略：网络错误/5xx 换线路组合，401/403/429 换 key（429 冷却）。
 func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 	body := readBody(c, s.Cfg.BodyLimitMB)
+	if body == nil {
+		return
+	}
 	var probe struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
@@ -120,9 +147,10 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 	}
 	reqStart := time.Now()
 	var (
-		lastStatus int
-		lastBody   []byte
-		lastErr    string
+		lastStatus  int
+		lastBody    []byte
+		lastErr     string
+		lastAttempt *attempt
 	)
 	for _, rc := range append(matched, defaults...) {
 		// 跨协议转换渠道（目标非 openai）无法承接 Responses 协议
@@ -138,6 +166,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 		m["model"] = upstreamModel
 		sendBody, _ := json.Marshal(m)
 		for _, a := range s.planFor(rc) {
+			lastAttempt = &a
 			a.protocol = "openai"
 			a.request = c.Request
 			resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, "/responses"), sendBody, probe.Stream)
@@ -184,6 +213,16 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			return
 		}
 	}
+	if lastAttempt != nil {
+		status := lastStatus
+		if status == 0 {
+			status = http.StatusBadGateway
+		}
+		if lastErr == "" {
+			lastErr = fmt.Sprintf("上游返回 %d", status)
+		}
+		s.submitFailureLog(c, *lastAttempt, "openai", probe.Model, mapModel(lastAttempt.rc.Channel, probe.Model), status, lastErr, reqStart)
+	}
 	if lastStatus > 0 {
 		respondRawOrConverted(c, "openai", lastStatus, lastBody, false)
 		return
@@ -216,6 +255,9 @@ func isHTMLResponse(resp *http.Response) bool {
 // HandleAnthropicMessages POST /v1/messages
 func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 	body := readBody(c, s.Cfg.BodyLimitMB)
+	if body == nil {
+		return
+	}
 	var req convert.AnthropicMessagesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		respondAnthropicError(c, http.StatusBadRequest, "请求体不是合法的 Anthropic JSON："+err.Error())
@@ -230,6 +272,9 @@ func (s *Server) HandleAnthropicCountTokens(c *gin.Context) {
 		return
 	}
 	body := readBody(c, s.Cfg.BodyLimitMB)
+	if body == nil {
+		return
+	}
 	var req convert.AnthropicMessagesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		respondAnthropicError(c, http.StatusBadRequest, "非法 JSON："+err.Error())
@@ -301,8 +346,10 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		lastBody       []byte
 		lastErr        string
 		lastCrossProto bool // 最后一次失败尝试是否跨协议（决定错误体是否需要转换）
+		lastAttempt    *attempt
 	)
 	for _, a := range attempts {
+		lastAttempt = &a
 		a.protocol = inbound
 		if a.rc.Channel.ForwardMode == "convert" {
 			a.protocol = a.rc.Channel.Type
@@ -375,6 +422,16 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 	}
 
 	// 全部组合耗尽
+	if lastAttempt != nil {
+		status := lastStatus
+		if status == 0 {
+			status = http.StatusBadGateway
+		}
+		if lastErr == "" {
+			lastErr = fmt.Sprintf("上游返回 %d", status)
+		}
+		s.submitFailureLog(c, *lastAttempt, inbound, model, mapModel(lastAttempt.rc.Channel, model), status, lastErr, reqStart)
+	}
 	if lastStatus > 0 {
 		respondRawOrConverted(c, inbound, lastStatus, lastBody, lastCrossProto)
 		return
@@ -491,6 +548,10 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 	client, err := s.getClient(a.proxyURL)
 	if err != nil {
 		return nil, "", err
+	}
+	if a.proxyID != 0 && a.rc != nil && a.rc.Channel != nil {
+		// 公共代理流量按请求体与响应体累计；请求失败时也计入已发出的请求体。
+		s.PM.Record(a.rc.Channel.UserID, a.proxyID, int64(len(sendBody)))
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -759,6 +820,14 @@ func (s *Server) planFor(rc *routing.ResolvedChannel) []attempt {
 
 // submitLog 异步记录日志（含费用快照与耗时）
 func (s *Server) submitLog(c *gin.Context, a attempt, inbound, model, upstreamModel string, statusCode int, u convert.Usage, ttftMs, totalMs int64) {
+	s.submitLogWithError(c, a, inbound, model, upstreamModel, statusCode, u, ttftMs, totalMs, "")
+}
+
+func (s *Server) submitFailureLog(c *gin.Context, a attempt, inbound, model, upstreamModel string, statusCode int, message string, reqStart time.Time) {
+	s.submitLogWithError(c, a, inbound, model, upstreamModel, statusCode, convert.Usage{}, 0, time.Since(reqStart).Milliseconds(), message)
+}
+
+func (s *Server) submitLogWithError(c *gin.Context, a attempt, inbound, model, upstreamModel string, statusCode int, u convert.Usage, ttftMs, totalMs int64, message string) {
 	token, user := ctxTokenUser(c)
 	if a.rc.Channel == nil {
 		return
@@ -792,6 +861,15 @@ func (s *Server) submitLog(c *gin.Context, a attempt, inbound, model, upstreamMo
 		InputCost:        ic,
 		OutputCost:       oc,
 	}
+	if message == "" && statusCode >= 400 {
+		message = fmt.Sprintf("上游返回 %d", statusCode)
+	}
+	if message != "" {
+		if len(message) > 512 {
+			message = message[:512]
+		}
+		l.Error = &message
+	}
 	s.Logs.Submit(l)
 }
 
@@ -807,21 +885,21 @@ func readBody(c *gin.Context, limitMB int) []byte {
 	if limitMB <= 0 {
 		limitMB = 50
 	}
-	body, err := io.ReadAll(io.LimitReader(c.Request.Body, int64(limitMB)<<20))
+	limit := int64(limitMB) << 20
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, limit+1))
 	if err != nil {
 		respondOpenAIError(c, http.StatusBadRequest, "读取请求体失败")
+		return nil
+	}
+	if int64(len(body)) > limit {
+		respondOpenAIError(c, http.StatusRequestEntityTooLarge, "请求体超过大小限制")
 		return nil
 	}
 	return body
 }
 
 func mapModel(ch *store.Channel, model string) string {
-	var mapping map[string]string
-	json.Unmarshal([]byte(ch.ModelMappingJSON), &mapping)
-	if to, ok := mapping[model]; ok && to != "" {
-		return to
-	}
-	return model
+	return routing.ApplyModelMapping(ch, model)
 }
 
 func parseRetryAfter(v string) int {

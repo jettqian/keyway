@@ -144,11 +144,11 @@ func (c *ctx) do(method, path string, body any, useSession bool) *httptest.Respo
 	}
 	req := httptest.NewRequest(method, path, buf)
 	req.Header.Set("Content-Type", "application/json")
+	for _, ck := range c.jar.list() {
+		req.AddCookie(ck)
+	}
 	if useSession {
 		req.Header.Set("X-Keyway-CSRF", "1")
-		for _, ck := range c.jar.list() {
-			req.AddCookie(ck)
-		}
 	} else if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}

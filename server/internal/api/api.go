@@ -1,7 +1,9 @@
 package api
 
 import (
+	"crypto/subtle"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -29,6 +31,7 @@ func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *p
 }
 
 const sessionCookie = "keyway_session"
+const feishuStateCookie = "keyway_feishu_state"
 
 func (s *Server) fail(c *gin.Context, status int, msg string) {
 	c.JSON(status, gin.H{"message": msg})
@@ -49,8 +52,8 @@ func (s *Server) SessionAuth() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		if c.Request.Method != http.MethodGet && c.GetHeader("X-Keyway-CSRF") == "" {
-			s.fail(c, http.StatusForbidden, "缺少 CSRF 头")
+		if c.Request.Method != http.MethodGet && c.GetHeader("X-Keyway-CSRF") != "1" {
+			s.fail(c, http.StatusForbidden, "CSRF 校验失败")
 			c.Abort()
 			return
 		}
@@ -99,10 +102,14 @@ func (s *Server) RegisterAuthRoutes(r *gin.RouterGroup) {
 func (s *Server) HandleFeishuCallback(c *gin.Context) {
 	base := s.requestBase(c)
 	state := c.Query("state")
-	if !s.validState(state) {
+	storedState, cookieErr := c.Cookie(feishuStateCookie)
+	// state 必须同时通过签名校验和浏览器绑定校验，防止登录 CSRF。
+	if cookieErr != nil || subtle.ConstantTimeCompare([]byte(storedState), []byte(state)) != 1 || !s.validState(state) {
+		s.clearCookie(c, feishuStateCookie)
 		c.Redirect(http.StatusFound, base+"/login?feishu=state_error")
 		return
 	}
+	s.clearCookie(c, feishuStateCookie)
 	code := c.Query("code")
 	if code == "" {
 		c.Redirect(http.StatusFound, base+"/login?feishu=missing_code")
@@ -216,7 +223,26 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 }
 
 func (s *Server) setSessionCookie(c *gin.Context, token string) {
-	c.SetCookie(sessionCookie, token, 7*24*3600, "/", "", false, true)
+	s.setCookie(c, sessionCookie, token, 7*24*3600)
+}
+
+func (s *Server) setCookie(c *gin.Context, name, value string, maxAge int) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name: name, Value: value, Path: "/", MaxAge: maxAge,
+		HttpOnly: true, Secure: requestIsHTTPS(c), SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func requestIsHTTPS(c *gin.Context) bool {
+	if c.Request.TLS != nil {
+		return true
+	}
+	proto := strings.TrimSpace(strings.Split(c.GetHeader("X-Forwarded-Proto"), ",")[0])
+	return strings.EqualFold(proto, "https")
+}
+
+func (s *Server) clearCookie(c *gin.Context, name string) {
+	s.setCookie(c, name, "", -1)
 }
 
 func (s *Server) handleRegister(c *gin.Context) {
@@ -260,7 +286,7 @@ func (s *Server) handleLogout(c *gin.Context) {
 	if token, err := c.Cookie(sessionCookie); err == nil {
 		s.Auth.Logout(token)
 	}
-	c.SetCookie(sessionCookie, "", -1, "/", "", false, true)
+	s.clearCookie(c, sessionCookie)
 	s.ok(c, gin.H{})
 }
 
@@ -285,7 +311,7 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 	if token, err := c.Cookie(sessionCookie); err == nil {
 		s.Auth.Logout(token)
 	}
-	c.SetCookie(sessionCookie, "", -1, "/", "", false, true)
+	s.clearCookie(c, sessionCookie)
 	s.ok(c, gin.H{})
 }
 
@@ -294,6 +320,11 @@ func (s *Server) handleFeishuURL(c *gin.Context) {
 	if err != nil {
 		s.ok(c, gin.H{"url": ""})
 		return
+	}
+	if parsed, parseErr := url.Parse(u); parseErr == nil {
+		if state := parsed.Query().Get("state"); state != "" {
+			s.setCookie(c, feishuStateCookie, state, 5*60)
+		}
 	}
 	s.ok(c, gin.H{"url": u})
 }

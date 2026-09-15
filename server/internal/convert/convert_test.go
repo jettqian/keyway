@@ -438,6 +438,9 @@ func Test流式截断Finish补全(t *testing.T) {
 	if !strings.Contains(s, "[DONE]") {
 		t.Fatalf("Finish 未补 [DONE]: %s", s)
 	}
+	if !strings.Contains(s, `"finish_reason":"stop"`) {
+		t.Fatalf("Finish 未补终结 chunk: %s", s)
+	}
 
 	conv2 := NewOpenAIToAnthropicStream()
 	_, _, _ = conv2.Feed([]byte(`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`))

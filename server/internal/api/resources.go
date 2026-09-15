@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/crypto"
+	"keyway/internal/httpx"
 	"keyway/internal/store"
 )
 
@@ -261,6 +262,10 @@ func (s *Server) handleCreateChannel(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, msg)
 		return
 	}
+	if msg := validatePersonalProxy(in.ProxyURL); msg != "" {
+		s.fail(c, http.StatusBadRequest, msg)
+		return
+	}
 	// 校验密钥归属
 	if len(in.KeyIDs) > 0 && !s.ownsKeys(currentUser(c).ID, in.KeyIDs) {
 		s.fail(c, http.StatusBadRequest, "包含不属于你的密钥")
@@ -297,6 +302,10 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, msg)
 		return
 	}
+	if msg := validatePersonalProxy(in.ProxyURL); msg != "" {
+		s.fail(c, http.StatusBadRequest, msg)
+		return
+	}
 	if len(in.KeyIDs) > 0 && !s.ownsKeys(currentUser(c).ID, in.KeyIDs) {
 		s.fail(c, http.StatusBadRequest, "包含不属于你的密钥")
 		return
@@ -305,18 +314,23 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 		s.fail(c, http.StatusInternalServerError, "保存失败")
 		return
 	}
+	var saveErr error
 	if trimOrEmpty(in.ProxyURL) == "" {
 		// 留空表示不变更
-		s.Store.DB().Model(&ch).Omit("proxy_url_enc").Updates(map[string]any{
+		saveErr = s.Store.DB().Model(&ch).Omit("proxy_url_enc").Updates(map[string]any{
 			"name": ch.Name, "type": ch.Type, "base_urls_json": ch.BaseURLsJSON,
 			"key_ids_json": ch.KeyIDsJSON, "key_strategy": ch.KeyStrategy, "line_strategy": ch.LineStrategy,
 			"allow_public_proxy": ch.AllowPublicProxy, "models_json": ch.ModelsJSON,
 			"model_mapping_json": ch.ModelMappingJSON, "forward_mode": ch.ForwardMode, "priority": ch.Priority,
 			"price_multiplier": ch.PriceMultiplier, "pricing_mode": ch.PricingMode, "cny_ratio": ch.CNYRatio,
 			"is_default": ch.IsDefault, "enabled": ch.Enabled,
-		})
+		}).Error
 	} else {
-		s.Store.DB().Save(&ch)
+		saveErr = s.Store.DB().Save(&ch).Error
+	}
+	if saveErr != nil {
+		s.fail(c, http.StatusInternalServerError, "保存失败")
+		return
 	}
 	if ch.IsDefault == 1 {
 		s.clearOtherDefaults(ch.UserID, ch.ID)
@@ -654,8 +668,14 @@ func (s *Server) handleUpdateToken(c *gin.Context) {
 		updates["channel_order_json"] = string(mustJSONStr(uniq))
 	}
 	if len(updates) > 0 {
-		s.Store.DB().Model(&t).Updates(updates)
-		s.Store.DB().Where("id = ?", t.ID).First(&t)
+		if err := s.Store.DB().Model(&t).Updates(updates).Error; err != nil {
+			s.fail(c, http.StatusInternalServerError, "更新失败")
+			return
+		}
+		if err := s.Store.DB().Where("id = ?", t.ID).First(&t).Error; err != nil {
+			s.fail(c, http.StatusInternalServerError, "读取更新结果失败")
+			return
+		}
 	}
 	s.ok(c, gin.H{"token": tokenDTO(&t)})
 }
@@ -685,6 +705,17 @@ func (s *Server) ownsKeys(userID int64, keyIDs []int64) bool {
 	var count int64
 	s.Store.DB().Model(&store.Key{}).Where("user_id = ? AND id IN ?", userID, keyIDs).Count(&count)
 	return count == int64(len(keyIDs))
+}
+
+func validatePersonalProxy(raw string) string {
+	raw = trimOrEmpty(raw)
+	if raw == "" {
+		return ""
+	}
+	if _, err := httpx.ParseProxyURL(raw); err != nil {
+		return "个人代理地址无效: " + err.Error()
+	}
+	return ""
 }
 
 func (s *Server) clearOtherDefaults(userID, keepID int64) {

@@ -39,13 +39,14 @@ func parseSSEData(line []byte) []byte {
 
 // AnthropicToOpenAIStream 消费 Anthropic SSE，产出 OpenAI chunk 流
 type AnthropicToOpenAIStream struct {
-	id      string
-	model   string
-	blocks  map[int]string // 块序号 → 类型
-	usage   Usage
-	finish  string
-	started bool
-	done    bool
+	id               string
+	model            string
+	blocks           map[int]string // 块序号 → 类型
+	usage            Usage
+	finish           string
+	started          bool
+	done             bool
+	messageDeltaSent bool
 }
 
 func NewAnthropicToOpenAIStream() *AnthropicToOpenAIStream {
@@ -124,6 +125,7 @@ func (c *AnthropicToOpenAIStream) Feed(line []byte) ([]byte, bool, error) {
 		}
 		chunk := c.chunk(OpenAIMessageDelta{}, firstNonEmpty(c.finish, "stop"))
 		chunk.Usage = c.openAIUsage()
+		c.messageDeltaSent = true
 		return sseDataLine(marshalCompact(chunk)), false, nil
 	case "message_stop":
 		c.done = true
@@ -140,9 +142,15 @@ func (c *AnthropicToOpenAIStream) Finish() ([]byte, error) {
 		return nil, nil
 	}
 	c.done = true
-	chunk := c.chunk(OpenAIMessageDelta{}, firstNonEmpty(c.finish, "stop"))
-	chunk.Usage = c.openAIUsage()
-	return sseDataLine([]byte("[DONE]")), nil
+	var out bytes.Buffer
+	if !c.messageDeltaSent {
+		chunk := c.chunk(OpenAIMessageDelta{}, firstNonEmpty(c.finish, "stop"))
+		chunk.Usage = c.openAIUsage()
+		out.Write(sseDataLine(marshalCompact(chunk)))
+		c.messageDeltaSent = true
+	}
+	out.Write(sseDataLine([]byte("[DONE]")))
+	return out.Bytes(), nil
 }
 
 func (c *AnthropicToOpenAIStream) Usage() Usage { return c.usage }

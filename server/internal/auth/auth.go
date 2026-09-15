@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -28,8 +29,9 @@ var (
 var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,32}$`)
 
 type Service struct {
-	store  *store.Store
-	secret string
+	store      *store.Store
+	secret     string
+	registerMu sync.Mutex
 }
 
 func New(st *store.Store, secret string) *Service {
@@ -93,6 +95,9 @@ func (s *Service) DeleteUserSessions(userID int64) {
 // ---------- 注册与登录 ----------
 
 func (s *Service) Register(username, password, inviteCode string) (*store.User, string, error) {
+	// 注册涉及邀请码消费和首个管理员引导，必须在单进程内串行化。
+	s.registerMu.Lock()
+	defer s.registerMu.Unlock()
 	if !usernameRe.MatchString(username) {
 		return nil, "", fmt.Errorf("用户名需为 3-32 位字母/数字/下划线/横线")
 	}
@@ -129,21 +134,36 @@ func (s *Service) Register(username, password, inviteCode string) (*store.User, 
 		Status:       1,
 		CreatedAt:    time.Now().Unix(),
 	}
-	// 首个用户自动成为管理员（引导）
-	var count int64
-	s.store.DB().Model(&store.User{}).Count(&count)
-	if count == 0 {
-		u.Role = 100
-	}
-	if err := s.store.DB().Create(&u).Error; err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
-			return nil, "", fmt.Errorf("用户名已存在")
+	if err := s.store.DB().Transaction(func(tx *gorm.DB) error {
+		// 首个用户自动成为管理员（引导）；注册锁与事务共同避免并发重复提升。
+		var count int64
+		if err := tx.Model(&store.User{}).Count(&count).Error; err != nil {
+			return fmt.Errorf("查询用户数量失败: %w", err)
 		}
-		return nil, "", fmt.Errorf("创建用户失败: %w", err)
-	}
-	if invite != nil {
-		now := time.Now().Unix()
-		s.store.DB().Model(invite).Updates(map[string]any{"used_by": u.ID, "used_at": now})
+		if count == 0 {
+			u.Role = 100
+		}
+		if err := tx.Create(&u).Error; err != nil {
+			if strings.Contains(err.Error(), "UNIQUE") {
+				return fmt.Errorf("用户名已存在")
+			}
+			return fmt.Errorf("创建用户失败: %w", err)
+		}
+		if invite != nil {
+			now := time.Now().Unix()
+			res := tx.Model(&store.InviteCode{}).
+				Where("code = ? AND used_by IS NULL", invite.Code).
+				Updates(map[string]any{"used_by": u.ID, "used_at": now})
+			if res.Error != nil {
+				return fmt.Errorf("消费邀请码失败: %w", res.Error)
+			}
+			if res.RowsAffected != 1 {
+				return ErrInvalidInvite
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, "", err
 	}
 	token, err := s.CreateSession(u.ID)
 	if err != nil {
