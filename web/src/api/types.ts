@@ -177,6 +177,14 @@ export interface ModelPricing {
   outputPerM: number
 }
 
+export interface CatalogModel {
+  id: number
+  name: string
+  note: string
+  enabled: boolean
+  updatedAt: number
+}
+
 export interface Proxy {
   id: number
   name: string

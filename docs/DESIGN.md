@@ -1,7 +1,7 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.6（与 PRD v1.4 对应；密钥启停、协议类型仅 convert 必填、模型页模型为中心、
-  令牌渠道开关/拖拽顺序、统计最近生效流量）
+- 版本：v1.7（与 PRD v1.5 对应；新增全局模型目录 catalog_models、渠道表单模型点选、
+  模型页拆分为「我的模型 / 模型目录」）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
 - 本文档解决：架构、技术选型、数据模型落地、核心机制设计、协议转换决策表（PRD 开放
@@ -134,6 +134,12 @@ CREATE TABLE channels (
   last_ok_at INTEGER, last_error TEXT, created_at INTEGER
 );
 CREATE INDEX idx_channels_user ON channels(user_id, enabled);
+
+CREATE TABLE catalog_models (              -- 全局模型目录（管理员预置；点选数据源，不参与路由）
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+  note TEXT DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER, updated_at INTEGER
+);
 
 CREATE TABLE line_stats (                  -- 探测结果（渠道×线路×路径）
   channel_id INTEGER NOT NULL, line_url TEXT NOT NULL, via TEXT NOT NULL,
@@ -534,13 +540,17 @@ new-api 的已知语义（仅参考行为，代码自研）。
 - CSV：服务端流式生成 `text/csv` 下载
 - 若 v1.1 出现慢查询 → 增加 daily rollup 表（计划内，不在 MVP）
 
-### 8.4 渠道模型列表批量写入
+### 8.4 模型目录与渠道模型列表维护
 
-- 模型管理页读取各渠道的 `models_json` 并集，以模型为中心展示；新建/重命名/删除/改绑定
-  均走 `PUT /api/models/bindings`，事务内同时更新所选渠道的 `models_json` 和
+- 全局模型目录 `catalog_models`（管理员维护，可从价目表一键导入）：仅作为渠道/模板表单的
+  点选数据源与用户模型页的目录视图，**不参与路由**；删除目录项不影响已引用它的渠道配置。
+- 渠道表单的模型候选 = 目录（启用项）∪ 用户已有模型（各渠道 models_json 并集，去重），
+  目录外名称仍可自由输入（自定义中转模型名）。
+- 用户模型页「我的模型」= 各渠道 `models_json` 并集；重命名/删除走
+  `PUT /api/models/bindings`，事务内同时更新所选渠道的 `models_json` 和
   `model_mapping_json`（重命名顺带迁移映射）。
-- 模型页不创建独立模型实体；空绑定模型不会出现在列表中。渠道详情页和模型管理页共享同一
-  数据来源，避免两套配置产生分歧。
+- 不创建用户级模型实体；空绑定模型不会出现在路由与 `/v1/models` 中。渠道表单和模型管理页
+  共享同一数据来源，避免两套配置产生分歧。
 
 ## 9. 预制渠道复制（FR-X2/X3）
 
@@ -583,6 +593,7 @@ GET /oauth/feishu/callback?code&state
 | PUT /api/keys/:id/status | 密钥启用/停用（停用后不参与渠道轮换） |
 | GET/POST/PUT/DELETE /api/channels[/:id] | 渠道 CRUD |
 | GET /api/channels | 读取渠道及其模型列表（模型管理页数据源） |
+| GET /api/models/catalog | 全局模型目录（启用项，用户点选数据源，只读） |
 | PUT /api/models/bindings | 原子批量加入、移出或重命名渠道模型 |
 | POST /api/channels/from_template/:tid | 从模板复制（草稿） |
 | POST /api/channels/:id/test；POST /api/channels/:id/test_keys | 矩阵测试 / 逐密钥测试 |
@@ -592,7 +603,8 @@ GET /oauth/feishu/callback?code&state
 | POST /api/tokens/:id/reveal | 所属用户回看完整令牌（复制密钥按钮数据源） |
 | GET /api/logs | 自己的日志（分页/过滤） |
 | GET /api/stats | 自己的统计（含最近生效流量 latest） |
-| 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/templates、
+| 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
+  （模型目录 CRUD + import_pricing 一键导入）、/api/admin/templates、
   /api/admin/proxies、/api/admin/pricing(+import)、/api/admin/stats、/api/admin/invites | 见 PRD §5.9 |
 
 ### 11.2 中转 `/v1`（令牌鉴权）

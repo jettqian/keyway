@@ -74,7 +74,7 @@ func allModels() []any {
 	return []any{
 		&User{}, &Session{}, &Key{}, &ChannelTemplate{}, &Channel{},
 		&LineStat{}, &Proxy{}, &ProxyUsage{}, &Token{}, &ModelPricing{},
-		&Log{}, &InviteCode{}, &Setting{},
+		&CatalogModel{}, &Log{}, &InviteCode{}, &Setting{},
 	}
 }
 

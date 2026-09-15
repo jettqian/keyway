@@ -13,6 +13,7 @@ import type {
   LogQuery,
   StatsResponse,
   ModelPricing,
+  CatalogModel,
   Proxy,
   ProxyInput,
   AdminSettings,
@@ -116,3 +117,13 @@ function qs(q: Record<string, unknown>): string {
 // ---------- 模型列表 ----------
 export const updateModelBindings = (input: { name: string; previousName: string; channelIds: number[] }) =>
   put<void>('/api/models/bindings', input)
+
+// ---------- 全局模型目录（管理员预置） ----------
+export const listCatalogModels = () => get<{ models: CatalogModel[] }>('/api/models/catalog')
+export const adminCatalogModels = () => get<{ models: CatalogModel[] }>('/api/admin/models')
+export const adminCreateCatalogModel = (input: { name: string; note?: string }) =>
+  post<{ model: CatalogModel }>('/api/admin/models', input)
+export const adminUpdateCatalogModel = (id: number, input: { name?: string; note?: string; enabled?: boolean }) =>
+  put<{ model: CatalogModel }>(`/api/admin/models/${id}`, input)
+export const adminDeleteCatalogModel = (id: number) => del<void>(`/api/admin/models/${id}`)
+export const adminImportCatalogFromPricing = () => post<{ imported: number }>('/api/admin/models/import_pricing')

@@ -166,6 +166,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 
 	r.GET("/templates", s.handleListTemplates)
 	r.PUT("/models/bindings", s.handleUpdateModelBindings)
+	r.GET("/models/catalog", s.handleListCatalogModels)
 
 	r.GET("/tokens", s.handleListTokens)
 	r.POST("/tokens", s.handleCreateToken)
@@ -187,6 +188,11 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 		admin.GET("/pricing", s.handleAdminPricing)
 		admin.PUT("/pricing/:model", s.handleAdminUpdatePricing)
 		admin.DELETE("/pricing/:model", s.handleAdminDeletePricing)
+		admin.GET("/models", s.handleAdminListCatalogModels)
+		admin.POST("/models", s.handleAdminCreateCatalogModel)
+		admin.PUT("/models/:id", s.handleAdminUpdateCatalogModel)
+		admin.DELETE("/models/:id", s.handleAdminDeleteCatalogModel)
+		admin.POST("/models/import_pricing", s.handleAdminImportCatalogFromPricing)
 		admin.GET("/proxies", s.handleAdminProxies)
 		admin.POST("/proxies", s.handleAdminCreateProxy)
 		admin.PUT("/proxies/:id", s.handleAdminUpdateProxy)

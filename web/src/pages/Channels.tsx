@@ -17,9 +17,9 @@ import {
 } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { listChannels, createChannel, updateChannel, deleteChannel, listKeys, testChannel } from '../api'
+import { listChannels, createChannel, updateChannel, deleteChannel, listKeys, testChannel, listCatalogModels } from '../api'
 import type { ChannelTestResult } from '../api'
-import type { Channel, ChannelInput, ApiKey } from '../api/types'
+import type { Channel, ChannelInput, ApiKey, CatalogModel } from '../api/types'
 
 const emptyInput: ChannelInput = {
   name: '',
@@ -44,6 +44,7 @@ const ChannelsPage: React.FC = () => {
   const nav = useNavigate()
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [keys, setKeys] = React.useState<ApiKey[]>([])
+  const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
   const [loading, setLoading] = React.useState(true)
   const [modalOpen, setModalOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<Channel | null>(null)
@@ -52,16 +53,38 @@ const ChannelsPage: React.FC = () => {
 
   const refresh = React.useCallback(() => {
     setLoading(true)
-    Promise.all([listChannels(), listKeys()])
-      .then(([c, k]) => {
+    Promise.all([listChannels(), listKeys(), listCatalogModels()])
+      .then(([c, k, m]) => {
         setChannels(c.channels)
         setKeys(k.keys)
+        setCatalog(m.models)
       })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
   }, [])
 
   React.useEffect(refresh, [refresh])
+
+  // 点选数据源：管理员预置目录 ∪ 已有模型（去重）
+  const modelOptions = React.useMemo(() => {
+    const seen = new Set<string>()
+    const out: { value: string; label: string }[] = []
+    for (const m of catalog) {
+      if (!seen.has(m.name)) {
+        seen.add(m.name)
+        out.push({ value: m.name, label: m.name })
+      }
+    }
+    for (const c of channels) {
+      for (const m of Array.isArray(c.models) ? c.models : []) {
+        if (m && !seen.has(m)) {
+          seen.add(m)
+          out.push({ value: m, label: m })
+        }
+      }
+    }
+    return out
+  }, [catalog, channels])
 
   const openCreate = () => {
     setEditing(null)
@@ -268,8 +291,8 @@ const ChannelsPage: React.FC = () => {
               />
             </Form.Item>
           </Space>
-          <Form.Item name="models" label="模型列表" extra="基础配置：一个渠道可以绑定多个模型；也可在模型管理页批量维护。">
-            <Select mode="tags" placeholder="该渠道服务的模型名，回车添加" />
+          <Form.Item name="models" label="模型列表" extra="从模型目录或已有模型中点选；目录外的名称可直接输入回车添加。">
+            <Select mode="tags" tokenSeparators={[',']} options={modelOptions} placeholder="点选或输入模型名" />
           </Form.Item>
           <Collapse ghost defaultActiveKey={[]} style={{ marginTop: 4, marginBottom: 8 }}>
             <Collapse.Panel header="高级选项" key="advanced">

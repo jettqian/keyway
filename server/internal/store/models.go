@@ -64,6 +64,18 @@ type ChannelTemplate struct {
 
 func (ChannelTemplate) TableName() string { return "channel_templates" }
 
+// CatalogModel 全局模型目录（管理员预置，供渠道/模板表单点选）
+type CatalogModel struct {
+	ID        int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	Name      string `gorm:"column:name;not null;uniqueIndex"`
+	Note      string `gorm:"column:note;default:''"`
+	Enabled   int    `gorm:"column:enabled;not null;default:1"`
+	CreatedAt int64  `gorm:"column:created_at"`
+	UpdatedAt int64  `gorm:"column:updated_at"`
+}
+
+func (CatalogModel) TableName() string { return "catalog_models" }
+
 // Channel 用户渠道
 type Channel struct {
 	ID                   int64   `gorm:"column:id;primaryKey;autoIncrement"`

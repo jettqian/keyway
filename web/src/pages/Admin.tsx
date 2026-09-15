@@ -15,11 +15,16 @@ import {
   adminCreateTemplate,
   adminUpdateTemplate,
   adminDeleteTemplate,
+  adminCatalogModels,
+  adminCreateCatalogModel,
+  adminUpdateCatalogModel,
+  adminDeleteCatalogModel,
+  adminImportCatalogFromPricing,
   adminSettings,
   adminUpdateSettings,
   adminStats,
 } from '../api'
-import type { User, ModelPricing, Proxy, ChannelTemplate, StatsResponse, StatsGroup } from '../api/types'
+import type { User, ModelPricing, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup } from '../api/types'
 import { formatDateTime } from '../format'
 
 const UsersTab: React.FC = () => {
@@ -330,16 +335,135 @@ const ProxiesTab: React.FC = () => {
   )
 }
 
+const CatalogModelsTab: React.FC = () => {
+  const [models, setModels] = React.useState<CatalogModel[]>([])
+  const [loading, setLoading] = React.useState(true)
+  const [modalOpen, setModalOpen] = React.useState(false)
+  const [editing, setEditing] = React.useState<CatalogModel | null>(null)
+  const [form] = Form.useForm()
+  const refresh = React.useCallback(() => {
+    setLoading(true)
+    adminCatalogModels()
+      .then((r) => setModels(r.models))
+      .catch((e) => message.error((e as Error).message))
+      .finally(() => setLoading(false))
+  }, [])
+  React.useEffect(refresh, [refresh])
+  const openCreate = () => {
+    setEditing(null)
+    form.resetFields()
+    form.setFieldsValue({ name: '', note: '', enabled: true })
+    setModalOpen(true)
+  }
+  const openEdit = (m: CatalogModel) => {
+    setEditing(m)
+    form.setFieldsValue({ name: m.name, note: m.note, enabled: m.enabled })
+    setModalOpen(true)
+  }
+  const submit = async () => {
+    const v = await form.validateFields()
+    try {
+      if (editing) {
+        await adminUpdateCatalogModel(editing.id, { name: v.name, note: v.note, enabled: v.enabled })
+        message.success('已更新')
+      } else {
+        await adminCreateCatalogModel({ name: v.name, note: v.note })
+        message.success('已添加')
+      }
+      setModalOpen(false)
+      refresh()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+  const importFromPricing = async () => {
+    try {
+      const r = await adminImportCatalogFromPricing()
+      message.success(r.imported > 0 ? `已从价目表导入 ${r.imported} 个模型` : '价目表中的模型均已存在')
+      refresh()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+  return (
+    <div>
+      <div style={{ marginBottom: 12, textAlign: 'right' }}>
+        <Space>
+          <Button onClick={importFromPricing}>从价目表导入</Button>
+          <Button type="primary" onClick={openCreate}>新增模型</Button>
+        </Space>
+      </div>
+      <div style={{ color: '#777', fontSize: 13, marginBottom: 12 }}>
+        模型目录是全局点选数据源：用户在渠道表单与模板表单中从这里点选模型；删除目录项不影响已引用它的渠道配置。
+      </div>
+      <Table<CatalogModel>
+        rowKey="id"
+        loading={loading}
+        dataSource={models}
+        pagination={{ pageSize: 20 }}
+        columns={[
+          { title: '模型', dataIndex: 'name' },
+          { title: '备注', dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
+          {
+            title: '状态',
+            dataIndex: 'enabled',
+            width: 90,
+            render: (v: boolean) => (v ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>),
+          },
+          {
+            title: '操作',
+            width: 130,
+            render: (_, m) => (
+              <Space>
+                <a onClick={() => openEdit(m)}>编辑</a>
+                <a
+                  style={{ color: 'red' }}
+                  onClick={async () => {
+                    await adminDeleteCatalogModel(m.id)
+                    message.success('已删除')
+                    refresh()
+                  }}
+                >
+                  删除
+                </a>
+              </Space>
+            ),
+          },
+        ]}
+      />
+      <Modal title={editing ? `编辑目录模型：${editing.name}` : '新增目录模型'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
+        <Form form={form} layout="vertical">
+          <Form.Item name="name" label="模型名" rules={[{ required: true, message: '请输入模型名' }]}>
+            <Input placeholder="如 claude-sonnet-4.5" />
+          </Form.Item>
+          <Form.Item name="note" label="备注">
+            <Input.TextArea rows={2} placeholder="如 2026-09 在售，适合 Agent 主力" />
+          </Form.Item>
+          {editing ? (
+            <Form.Item name="enabled" label="启用（停用后不再出现在用户点选项中）" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+          ) : null}
+        </Form>
+      </Modal>
+    </div>
+  )
+}
+
 const TemplatesTab: React.FC = () => {
   const [templates, setTemplates] = React.useState<ChannelTemplate[]>([])
+  const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
   const [loading, setLoading] = React.useState(true)
   const [modalOpen, setModalOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<ChannelTemplate | null>(null)
   const [form] = Form.useForm()
   const refresh = React.useCallback(() => {
     setLoading(true)
-    adminTemplates()
-      .then((r) => setTemplates(r.templates))
+    Promise.all([adminTemplates(), adminCatalogModels()])
+      .then(([t, m]) => {
+        setTemplates(t.templates)
+        setCatalog(m.models)
+      })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
   }, [])
@@ -451,8 +575,8 @@ const TemplatesTab: React.FC = () => {
               )}
             </Form.List>
           </Form.Item>
-          <Form.Item name="models" label="模型列表" rules={[{ required: true, message: '至少一个模型' }]}>
-            <Select mode="tags" placeholder="回车添加" />
+          <Form.Item name="models" label="模型列表" rules={[{ required: true, message: '至少一个模型' }]} extra="从模型目录点选；目录外的名称可直接输入回车添加。">
+            <Select mode="tags" tokenSeparators={[',']} options={catalog.map((m) => ({ value: m.name }))} placeholder="点选或输入模型名" />
           </Form.Item>
           <Space size="large">
             <Form.Item name="lineStrategy" label="线路策略">
@@ -602,6 +726,7 @@ const AdminPage: React.FC = () => (
       items={[
         { key: 'stats', label: '用量/花费（30 天）', children: <StatsTab /> },
         { key: 'users', label: '用户', children: <UsersTab /> },
+        { key: 'models', label: '模型目录', children: <CatalogModelsTab /> },
         { key: 'pricing', label: '模型价目表', children: <PricingTab /> },
         { key: 'proxies', label: '公共代理池', children: <ProxiesTab /> },
         { key: 'templates', label: '预制模板', children: <TemplatesTab /> },
