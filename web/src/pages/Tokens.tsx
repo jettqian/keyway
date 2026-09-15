@@ -7,24 +7,29 @@ import type { GatewayToken, Channel } from '../api/types'
 import { formatDateTime } from '../format'
 import { copyText } from '../copy'
 
-// 会话级顺序记忆：令牌 → 最近一次非空绑定顺序（仅存内存，刷新后回到服务端状态）。
-// 用于：① 移出的渠道重新加入时按原位置恢复，开关不改变优先级；
-// ② 主开关关闭后重开时恢复上次集合与顺序，而不是重置为全选。
-const orderMemory = new Map<number, number[]>()
-
-// 令牌的渠道面板：主开关控制是否限定范围；限定时逐渠道开关 + 拖动/上下移排序（顺序即优先级）
+// 令牌的渠道面板：顺序（channelOrder，含已关闭渠道）与启用集合（channelIds，路由范围）
+// 分离——关闭渠道只改启用集合，渠道保持原位、顺序不变
 const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChanged: () => void }> = ({ token, channels, onChanged }) => {
-  const bound = token.channelIds ?? []
-  const [order, setOrder] = React.useState<number[]>(bound)
+  const boundIds = token.channelIds ?? []
+  const boundOrder = token.channelOrder ?? []
+  // 服务端 order 为空（旧数据）时用启用集合兜底，保证顺序信息自愈
+  const mergeBound = (o: number[], ids: number[]) => {
+    const seen = new Set(o)
+    return [...o, ...ids.filter((id) => !seen.has(id))]
+  }
+  const [order, setOrder] = React.useState<number[]>(() => mergeBound(boundOrder, boundIds))
+  const [ids, setIds] = React.useState<number[]>(boundIds)
   React.useEffect(() => {
-    setOrder(bound)
-    if (bound.length > 0) orderMemory.set(token.id, bound)
-  }, [token.id, bound.join(',')])
+    setIds(boundIds)
+    setOrder(mergeBound(boundOrder, boundIds))
+  }, [token.id, boundIds.join(','), boundOrder.join(',')])
 
   const byId = React.useMemo(() => new Map(channels.map((c) => [c.id, c])), [channels])
-  const restricted = order.length > 0
-  const enabled = order.filter((id) => byId.has(id))
-  const rest = channels.filter((c) => !order.includes(c.id)).map((c) => c.id)
+  const idSet = React.useMemo(() => new Set(ids), [ids])
+  // 渲染与排序都基于存活渠道（渠道被删除后从顺序中自然剔除）
+  const rows = React.useMemo(() => order.filter((id) => byId.has(id)), [order, byId])
+  const rest = channels.filter((c) => !rows.includes(c.id)).map((c) => c.id)
+  const restricted = ids.length > 0
   const dragFrom = React.useRef<number | null>(null)
   const [dragging, setDragging] = React.useState<number | null>(null)
   const [overIndex, setOverIndexState] = React.useState<number | null>(null)
@@ -34,34 +39,44 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
     setOverIndexState(v)
   }
 
-  const save = async (next: number[]) => {
-    setOrder(next)
-    if (next.length > 0) orderMemory.set(token.id, next)
+  const save = async (nextIds: number[], nextOrder: number[]) => {
+    setIds(nextIds)
+    setOrder(nextOrder)
     try {
-      await updateToken(token.id, { channelIds: next })
+      await updateToken(token.id, { channelIds: nextIds, channelOrder: nextOrder })
       onChanged()
     } catch (e) {
       message.error((e as Error).message)
     }
   }
 
-  // 打开限定：恢复上次使用的集合与顺序；从未配置过才默认全选（按渠道优先级排序）
+  // 打开限定：恢复已配置的顺序（含曾关闭的渠道）；从未配置过才默认全选（按渠道优先级排序）
   const enableRestrict = () => {
     if (channels.length === 0) {
       message.info('暂无渠道，请先在渠道页创建')
       return
     }
-    const mem = (orderMemory.get(token.id) ?? []).filter((id) => byId.has(id))
-    save(mem.length > 0 ? mem : [...channels].sort((a, b) => b.priority - a.priority).map((c) => c.id))
+    if (rows.length > 0) {
+      save(rows, rows)
+      return
+    }
+    const all = [...channels].sort((a, b) => b.priority - a.priority).map((c) => c.id)
+    save(all, all)
   }
 
-  // 重新加入的渠道按记忆位置插回，避免开关导致优先级漂移
-  const addChannel = (id: number) => {
-    const mem = orderMemory.get(token.id)
-    const idx = mem ? mem.indexOf(id) : -1
-    const pos = idx >= 0 ? Math.min(idx, enabled.length) : enabled.length
-    save([...enabled.slice(0, pos), id, ...enabled.slice(pos)])
+  // 渠道开关：只增删启用集合，顺序保持不变（关闭的渠道原位保留）
+  const toggle = (id: number, on: boolean) => {
+    if (on) {
+      const set = new Set(ids)
+      set.add(id)
+      save(rows.filter((x) => set.has(x)), rows)
+    } else {
+      save(ids.filter((x) => x !== id), rows)
+    }
   }
+
+  // 未加入的渠道开启：追加到顺序末尾
+  const addNew = (id: number) => save([...ids, id], [...rows, id])
 
   const finishDrag = () => {
     dragFrom.current = null
@@ -83,24 +98,26 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
     if (from == null || to == null) return
     // to 为移除前的插入位（行上半区 = 该行之前，下半区 = 之后）；移除自身后向下拖需前移一位
     if (to > from) to -= 1
-    const next = [...enabled]
+    const next = [...rows]
     const [moved] = next.splice(from, 1)
     next.splice(to, 0, moved)
-    if (next.join(',') !== enabled.join(',')) save(next)
+    save(next.filter((x) => idSet.has(x)), next)
   }
 
   const move = (from: number, to: number) => {
-    if (to < 0 || to >= enabled.length || from === to) return
-    const next = [...enabled]
+    if (to < 0 || to >= rows.length || from === to) return
+    const next = [...rows]
     const [m] = next.splice(from, 1)
     next.splice(to, 0, m)
-    save(next)
+    save(next.filter((x) => idSet.has(x)), next)
   }
 
   const rowStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
     border: '1px solid #e3e9eb', borderRadius: 6, marginBottom: 6, background: '#fbfcfd',
   }
+  // 已关闭渠道：原位保留、置灰显示（顺序不变，只是不参与路由）
+  const closedStyle: React.CSSProperties = { color: '#8a979d', background: '#f6f8f9' }
 
   if (channels.length === 0) {
     return <span style={{ color: '#999' }}>暂无渠道，请先在渠道页创建后再回来配置。</span>
@@ -109,30 +126,33 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
   // 落点指示用 boxShadow 画在行边缘，不占布局空间、无抖动
   const insertShadow = (i: number): React.CSSProperties => {
     if (overIndex === i) return { boxShadow: 'inset 0 2px 0 #176b87' }
-    if (overIndex === i + 1 && i === enabled.length - 1) return { boxShadow: 'inset 0 -2px 0 #176b87' }
+    if (overIndex === i + 1 && i === rows.length - 1) return { boxShadow: 'inset 0 -2px 0 #176b87' }
     return {}
   }
 
   return (
     <div style={{ maxWidth: 560 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-        <Switch checked={restricted} onChange={(on) => (on ? enableRestrict() : save([]))} />
+        <Switch checked={restricted} onChange={(on) => (on ? enableRestrict() : save([], rows))} />
         <span style={{ fontWeight: 500 }}>限定渠道范围</span>
-        <span style={{ color: '#888', fontSize: 12 }}>关闭 = 路由到所有启用渠道；开启 = 只用下方渠道，顺序即优先级</span>
+        <span style={{ color: '#888', fontSize: 12 }}>关闭 = 路由到所有启用渠道；开启 = 只用下方开启的渠道，顺序即优先级</span>
       </div>
       {!restricted ? (
         <Alert
           type="info"
           showIcon
-          message="未限定渠道：令牌可路由到所有启用渠道，按渠道优先级路由。打开开关可限定为指定渠道。"
+          message={`未限定渠道：令牌可路由到所有启用渠道，按渠道优先级路由。${
+            rows.length > 0 ? '上次配置的渠道与顺序已保留，打开开关即恢复。' : '打开开关可限定为指定渠道。'
+          }`}
         />
       ) : (
         <>
           <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>
-            整行可拖动，或用 ↑↓ 按钮调整优先级（自上而下依次尝试）；移出的渠道重新加入时回到原位置。
+            整行可拖动，或用 ↑↓ 按钮调整优先级（自上而下依次尝试）；关闭的渠道保持原位，只是不参与路由。
           </div>
-          {enabled.map((id, i) => {
+          {rows.map((id, i) => {
             const c = byId.get(id)!
+            const on = idSet.has(id)
             return (
               <div
                 key={id}
@@ -148,23 +168,23 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
                   const v = overRef.current
                   if (v === i || v === i + 1) setOverIndex(null)
                 }}
-                style={{ ...rowStyle, ...insertShadow(i), cursor: 'grab', opacity: dragging === i ? 0.45 : undefined }}
+                style={{ ...rowStyle, ...(on ? {} : closedStyle), ...insertShadow(i), cursor: 'grab', opacity: dragging === i ? 0.45 : undefined }}
                 title="拖动整行调整顺序"
               >
-                <HolderOutlined style={{ color: '#176b87' }} />
+                <HolderOutlined style={{ color: on ? '#176b87' : '#b7c4c9' }} />
                 <span style={{ flex: 1 }}>{c.name}</span>
                 {c.enabled ? null : <Tag>渠道停用</Tag>}
                 <Space size={2}>
                   <Button type="text" size="small" icon={<CaretUpOutlined />} disabled={i === 0} onClick={() => move(i, i - 1)} title="上移" />
-                  <Button type="text" size="small" icon={<CaretDownOutlined />} disabled={i === enabled.length - 1} onClick={() => move(i, i + 1)} title="下移" />
+                  <Button type="text" size="small" icon={<CaretDownOutlined />} disabled={i === rows.length - 1} onClick={() => move(i, i + 1)} title="下移" />
                 </Space>
-                <Switch size="small" checked onChange={() => save(enabled.filter((x) => x !== id))} title="移出该令牌" />
+                <Switch size="small" checked={on} onChange={(v) => toggle(id, v)} title={on ? '关闭后保持原位' : '打开'} />
               </div>
             )
           })}
           {rest.length > 0 ? (
             <>
-              <div style={{ color: '#888', fontSize: 12, margin: '4px 0 6px' }}>未限定（打开开关加入，加入后按原位置恢复）</div>
+              <div style={{ color: '#888', fontSize: 12, margin: '4px 0 6px' }}>未加入（打开开关将追加到列表末尾）</div>
               {rest.map((id) => {
                 const c = byId.get(id)!
                 return (
@@ -172,7 +192,7 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
                     <PlusOutlined style={{ color: '#c5ced3' }} />
                     <span style={{ flex: 1 }}>{c.name}</span>
                     {c.enabled ? null : <Tag>渠道停用</Tag>}
-                    <Switch size="small" checked={false} onChange={() => addChannel(id)} />
+                    <Switch size="small" checked={false} onChange={() => addNew(id)} />
                   </div>
                 )
               })}

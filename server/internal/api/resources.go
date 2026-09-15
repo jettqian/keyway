@@ -450,8 +450,8 @@ func (s *Server) handleListTemplates(c *gin.Context) {
 func tokenDTO(t *store.Token) gin.H {
 	dto := gin.H{
 		"id": t.ID, "name": t.Name, "keyPrefix": t.KeyPrefix,
-		"channelIds": t.ChannelFilter(),
-		"revoked":    t.Revoked == 1, "createdAt": t.CreatedAt,
+		"channelIds": t.ChannelFilter(), "channelOrder": t.ChannelOrder(),
+		"revoked": t.Revoked == 1, "createdAt": t.CreatedAt,
 	}
 	if t.ChannelID != nil {
 		dto["channelId"] = *t.ChannelID
@@ -526,7 +526,7 @@ func (s *Server) handleCreateToken(c *gin.Context) {
 	t := store.Token{
 		UserID: currentUser(c).ID, Name: trimOrEmpty(req.Name),
 		KeyEnc: enc, KeyPrefix: plaintext[:16], KeyHash: crypto.HashToken(plaintext),
-		ChannelIDsJSON: string(mustJSONStr(filter)), CreatedAt: time.Now().Unix(),
+		ChannelIDsJSON: string(mustJSONStr(filter)), ChannelOrderJSON: string(mustJSONStr(filter)), CreatedAt: time.Now().Unix(),
 	}
 	if req.ModelScope != "" {
 		t.ModelScope = &req.ModelScope
@@ -571,7 +571,9 @@ func (s *Server) handleDeleteToken(c *gin.Context) {
 	s.ok(c, gin.H{})
 }
 
-// handleUpdateToken 更新令牌（名称 / 限定渠道集合，集合顺序即令牌级路由优先级）
+// handleUpdateToken 更新令牌（名称 / 限定渠道集合；channelIds 为启用集合（顺序即路由
+// 优先级），channelOrder 为面板配置顺序（含已关闭渠道，纯 UI）——二者分离，开关渠道
+// 不再改变顺序）
 func (s *Server) handleUpdateToken(c *gin.Context) {
 	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	var t store.Token
@@ -580,12 +582,33 @@ func (s *Server) handleUpdateToken(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Name       *string  `json:"name"`
-		ChannelIDs *[]int64 `json:"channelIds"`
+		Name         *string  `json:"name"`
+		ChannelIDs   *[]int64 `json:"channelIds"`
+		ChannelOrder *[]int64 `json:"channelOrder"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		s.fail(c, http.StatusBadRequest, "非法请求体")
 		return
+	}
+	uniqInt64 := func(filter []int64) []int64 {
+		seen := map[int64]bool{}
+		uniq := make([]int64, 0, len(filter))
+		for _, cid := range filter {
+			if cid > 0 && !seen[cid] {
+				seen[cid] = true
+				uniq = append(uniq, cid)
+			}
+		}
+		return uniq
+	}
+	ownsAll := func(uniq []int64) bool {
+		if len(uniq) == 0 {
+			return true
+		}
+		var count int64
+		s.Store.DB().Model(&store.Channel{}).
+			Where("user_id = ? AND id IN ?", currentUser(c).ID, uniq).Count(&count)
+		return count == int64(len(uniq))
 	}
 	updates := map[string]any{}
 	if req.Name != nil {
@@ -601,30 +624,34 @@ func (s *Server) handleUpdateToken(c *gin.Context) {
 		if filter == nil {
 			filter = []int64{}
 		}
-		seen := map[int64]bool{}
-		uniq := make([]int64, 0, len(filter))
-		for _, cid := range filter {
-			if cid > 0 && !seen[cid] {
-				seen[cid] = true
-				uniq = append(uniq, cid)
-			}
-		}
+		uniq := uniqInt64(filter)
 		if len(uniq) > 20 {
 			s.fail(c, http.StatusBadRequest, "限定渠道数量过多（≤20）")
 			return
 		}
-		if len(uniq) > 0 {
-			var count int64
-			s.Store.DB().Model(&store.Channel{}).
-				Where("user_id = ? AND id IN ?", currentUser(c).ID, uniq).Count(&count)
-			if count != int64(len(uniq)) {
-				s.fail(c, http.StatusBadRequest, "包含不存在或不属于你的渠道")
-				return
-			}
+		if !ownsAll(uniq) {
+			s.fail(c, http.StatusBadRequest, "包含不存在或不属于你的渠道")
+			return
 		}
 		updates["channel_ids_json"] = string(mustJSONStr(uniq))
 		// 更新集合时清除旧单渠道字段，避免两者合并产生歧义
 		updates["channel_id"] = nil
+	}
+	if req.ChannelOrder != nil {
+		order := *req.ChannelOrder
+		if order == nil {
+			order = []int64{}
+		}
+		uniq := uniqInt64(order)
+		if len(uniq) > 20 {
+			s.fail(c, http.StatusBadRequest, "限定渠道数量过多（≤20）")
+			return
+		}
+		if !ownsAll(uniq) {
+			s.fail(c, http.StatusBadRequest, "包含不存在或不属于你的渠道")
+			return
+		}
+		updates["channel_order_json"] = string(mustJSONStr(uniq))
 	}
 	if len(updates) > 0 {
 		s.Store.DB().Model(&t).Updates(updates)

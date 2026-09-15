@@ -67,7 +67,7 @@ export const listTemplates = () => get<{ templates: ChannelTemplate[] }>('/api/t
 export const listTokens = () => get<{ tokens: GatewayToken[] }>('/api/tokens')
 export const createToken = (input: { name: string; channelIds?: number[]; modelScope?: string; expiresAt?: string }) =>
   post<GatewayTokenCreated>('/api/tokens', input)
-export const updateToken = (id: number, input: { name?: string; channelIds?: number[] }) =>
+export const updateToken = (id: number, input: { name?: string; channelIds?: number[]; channelOrder?: number[] }) =>
   put<{ token: GatewayToken }>(`/api/tokens/${id}`, input)
 export const revokeToken = (id: number) => post<void>(`/api/tokens/${id}/revoke`)
 export const deleteToken = (id: number) => del<void>(`/api/tokens/${id}`)

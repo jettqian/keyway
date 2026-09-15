@@ -1,8 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.14（与 PRD v1.5.16 对应；统计页：分组维度名称化（渠道/密钥 id→名称）、
-  未定价费用按当前价目查询时补算、自定义时间窗（start/end）、最近生效流量 5 条；
-  前版 v1.13：令牌「限定渠道」面板交互优化；
+- 版本：v1.15（与 PRD v1.5.17 对应；令牌渠道**顺序与启用集合分离**：新增
+  `channel_order_json` 持久化面板全量顺序（含已关闭渠道，纯 UI，路由不读），
+  `channel_ids_json` 继续作为路由范围——关闭渠道保持原位、优先级不变，
+  取代 v1.5.15 的会话级记忆方案；
+  前版 v1.14：统计页分组名称化等；v1.13：限定渠道面板交互优化；
   历史变更见文档各节与 PRD 变更记录）
 - 日期：2026-09-15
 - 关联文档：docs/PRD.md
@@ -169,7 +171,8 @@ CREATE TABLE tokens (                      -- 网关令牌
   key_prefix TEXT NOT NULL,                -- 展示与日志用
   key_hash TEXT NOT NULL UNIQUE,           -- sha256，认证 O(1) 查找
   channel_id INTEGER,                      -- 旧单渠道限定（兼容保留）
-  channel_ids_json TEXT DEFAULT '',        -- 多渠道限定集合（空 = 不限，≤20）
+  channel_ids_json TEXT DEFAULT '',        -- 启用的限定渠道集合（空 = 不限，≤20；顺序即路由优先级）
+  channel_order_json TEXT DEFAULT '',      -- 面板配置顺序（含已关闭渠道，纯 UI，路由不读）
   model_scope TEXT,                        -- 模型前缀通配（可空）
   expires_at INTEGER, revoked INTEGER NOT NULL DEFAULT 0, created_at INTEGER
 );
@@ -252,6 +255,8 @@ resolve(model, user, token) → []RouteCandidate
   2. 查绑定该模型的启用渠道，并过滤 channel.enabled=1 与 token.channel_ids
   3. 排序：token 限定渠道集合非空 → 按令牌绑定顺序（令牌级优先级，令牌页拖拽控制）；
      否则按 channel.priority 降序，稳定顺序作为平局规则
+     （注：绑定顺序取自 channel_ids_json；channel_order_json 仅是控制台展示顺序，
+     含已关闭渠道，不参与路由）
   4. 每个候选携带 channel.type（仅 convert 使用）、channel_id、channel.forward_mode 和上游模型名
   5. 为空且存在 is_default 渠道 → [default_channel]（模型名透传）
   6. 仍为空 → 404（错误契约见 PRD 7.3）
@@ -650,7 +655,7 @@ GET /oauth/feishu/callback?code&state
 | POST /api/channels/:id/test；POST /api/channels/:id/test_keys | 矩阵测试 / 逐密钥测试 |
 | GET /api/templates | 模板列表（用户侧，含复制数） |
 | GET/POST/PUT/DELETE /api/tokens[/:id] | 令牌 CRUD（列表仅返回前缀；DELETE 为删除记录） |
-| PUT /api/tokens/:id | 更新令牌（名称 / 限定渠道集合，集合顺序即令牌级路由优先级） |
+| PUT /api/tokens/:id | 更新令牌（名称 / 限定渠道集合；`channelIds` 启用集合（顺序即路由优先级）与 `channelOrder` 面板顺序（含已关闭渠道，纯 UI）分离，开关渠道不改变顺序） |
 | POST /api/tokens/:id/reveal | 所属用户回看完整令牌（复制密钥按钮数据源） |
 | POST /api/tokens/:id/revoke | 吊销令牌（立即失效，保留记录） |
 | GET /api/logs | 自己的日志（分页/过滤） |

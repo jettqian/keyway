@@ -90,6 +90,7 @@ export interface GatewayToken {
   keyPrefix: string
   channelId?: number
   channelIds?: number[]
+  channelOrder?: number[] | null
   modelScope?: string
   expiresAt?: string
   revoked: boolean

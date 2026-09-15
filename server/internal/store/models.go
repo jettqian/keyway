@@ -145,18 +145,19 @@ func (ProxyUsage) TableName() string { return "proxy_usage" }
 
 // Token 网关令牌
 type Token struct {
-	ID             int64   `gorm:"column:id;primaryKey;autoIncrement"`
-	UserID         int64   `gorm:"column:user_id;not null"`
-	Name           string  `gorm:"column:name;not null"`
-	KeyEnc         []byte  `gorm:"column:key_enc;not null"`              // 全文加密（支持界面回看）
-	KeyPrefix      string  `gorm:"column:key_prefix;not null"`           // 展示与日志用
-	KeyHash        string  `gorm:"column:key_hash;not null;uniqueIndex"` // sha256，认证 O(1) 查找
-	ChannelID      *int64  `gorm:"column:channel_id"`                    // 限定单渠道（旧字段，兼容保留）
-	ChannelIDsJSON string  `gorm:"column:channel_ids_json;default:''"`   // 限定多渠道（空 = 不限）
-	ModelScope     *string `gorm:"column:model_scope"`                   // 模型前缀通配（可空）
-	ExpiresAt      *int64  `gorm:"column:expires_at"`
-	Revoked        int     `gorm:"column:revoked;not null;default:0"`
-	CreatedAt      int64   `gorm:"column:created_at"`
+	ID               int64   `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID           int64   `gorm:"column:user_id;not null"`
+	Name             string  `gorm:"column:name;not null"`
+	KeyEnc           []byte  `gorm:"column:key_enc;not null"`              // 全文加密（支持界面回看）
+	KeyPrefix        string  `gorm:"column:key_prefix;not null"`           // 展示与日志用
+	KeyHash          string  `gorm:"column:key_hash;not null;uniqueIndex"` // sha256，认证 O(1) 查找
+	ChannelID        *int64  `gorm:"column:channel_id"`                    // 限定单渠道（旧字段，兼容保留）
+	ChannelIDsJSON   string  `gorm:"column:channel_ids_json;default:''"`   // 启用的限定渠道（空 = 不限，路由用；顺序无关）
+	ChannelOrderJSON string  `gorm:"column:channel_order_json;default:''"` // 面板配置顺序（含已关闭渠道，纯 UI，路由不读）
+	ModelScope       *string `gorm:"column:model_scope"`                   // 模型前缀通配（可空）
+	ExpiresAt        *int64  `gorm:"column:expires_at"`
+	Revoked          int     `gorm:"column:revoked;not null;default:0"`
+	CreatedAt        int64   `gorm:"column:created_at"`
 }
 
 func (Token) TableName() string { return "tokens" }
@@ -218,6 +219,13 @@ func (t *Token) ChannelFilter() []int64 {
 			ids = append(ids, *t.ChannelID)
 		}
 	}
+	return ids
+}
+
+// ChannelOrder 面板配置顺序（含已关闭渠道；空 = 未配置，前端回退 ChannelFilter）
+func (t *Token) ChannelOrder() []int64 {
+	var ids []int64
+	json.Unmarshal([]byte(t.ChannelOrderJSON), &ids)
 	return ids
 }
 
