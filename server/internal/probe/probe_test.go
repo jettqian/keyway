@@ -186,3 +186,86 @@ func TestProbeProtocols(t *testing.T) {
 		})
 	}
 }
+
+// 模型回退：第一个模型上游 503（new_api "分组无渠道"场景），第二个模型可用 →
+// 组合仍判健康；全失败场景（无可回退模型）汇报含第一个模型名的错误
+func TestProbeChannel模型回退(t *testing.T) {
+	st, e := newEngine(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["model"] == "gpt-5.6-sol" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":"cmpl_1","choices":[{"message":{"content":"pong"}}]}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"error":{"code":"model_not_found","message":"No available channel for the current group"}}`))
+	}))
+	defer srv.Close()
+
+	// 前两个模型不可用、第三个可用（超出 probeModelCap 的第 4 个不应被探测）
+	ch := seedChannel(t, st, &store.Channel{
+		Name: "fallback", ForwardMode: "passthrough", Enabled: 1,
+		BaseURLsJSON: fmt.Sprintf(`["%s"]`, srv.URL),
+		ModelsJSON:   `["gpt-5.6-luna","gpt-5.6-terra","gpt-5.6-sol","never-probed"]`,
+	})
+	results, err := e.ProbeChannel(ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("第三个模型可用时组合应判健康，实际 %+v", results)
+	}
+}
+
+// 探测全失败时错误信息须携带上游响应体 message 摘要（定位"为什么不过"）
+func TestProbeChannel错误含上游摘要(t *testing.T) {
+	st, e := newEngine(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"message":"This team does not have an enabled provider configured for this request."}}`))
+	}))
+	defer srv.Close()
+	ch := seedChannel(t, st, &store.Channel{
+		Name: "team", ForwardMode: "passthrough", Enabled: 1,
+		BaseURLsJSON: fmt.Sprintf(`["%s"]`, srv.URL), ModelsJSON: `["gpt-6-astra"]`,
+	})
+	results, err := e.ProbeChannel(ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].OK {
+		t.Fatalf("应探测失败，实际 %+v", results)
+	}
+	for _, kw := range []string{"403", "enabled provider"} {
+		if !strings.Contains(results[0].Error, kw) {
+			t.Errorf("错误摘要应含 %q，实际：%s", kw, results[0].Error)
+		}
+	}
+	if !strings.Contains(results[0].Error, "gpt-6-astra") {
+		t.Errorf("错误摘要应含模型名，实际：%s", results[0].Error)
+	}
+}
+
+// 错误摘要解析：优先 error.message，截断超长文本，无法解析时回退原文
+func TestUpstreamErrorSummary(t *testing.T) {
+	if got := upstreamErrorSummary([]byte(`{"error":{"message":"分组无渠道"}}`)); got != "分组无渠道" {
+		t.Errorf("嵌套 message 解析失败：%q", got)
+	}
+	if got := upstreamErrorSummary([]byte(`{"message":"顶层消息"}`)); got != "顶层消息" {
+		t.Errorf("顶层 message 解析失败：%q", got)
+	}
+	if got := upstreamErrorSummary([]byte(`{}`)); got != "" {
+		t.Errorf("空结构应返回空，实际 %q", got)
+	}
+	if got := upstreamErrorSummary([]byte("非 JSON 原文")); got != "非 JSON 原文" {
+		t.Errorf("非 JSON 应回退原文，实际 %q", got)
+	}
+	long := strings.Repeat("长", 200)
+	if got := upstreamErrorSummary([]byte(`{"error":{"message":"` + long + `"}}`)); len([]rune(got)) != 121 {
+		t.Errorf("超长摘要应截断到 120 rune + 省略号，实际 %d rune", len([]rune(got)))
+	}
+}

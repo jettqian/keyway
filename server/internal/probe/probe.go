@@ -27,6 +27,8 @@ const (
 	maxBackoff = 60 * time.Minute
 	matrixCap  = 20
 	probeWait  = 15 * time.Second // 单次探测整体超时
+	// 单组合探测最多尝试的模型数（回退控制上游请求成本，DESIGN §6）
+	probeModelCap = 3
 )
 
 // Result 线路×路径探测结果
@@ -164,12 +166,10 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 	if len(rc.Keys) == 0 {
 		return nil, fmt.Errorf("渠道无可用密钥")
 	}
-	model := firstModel(ch)
-	if model == "" {
+	models := probeModels(ch)
+	if len(models) == 0 {
 		return nil, fmt.Errorf("渠道未配置模型列表，无法探测")
 	}
-	upstreamModel := routing.ApplyModelMapping(ch, model)
-	protocols := probeProtocols(ch, model)
 	key := pickKey(rc.Keys)
 	keyPlain, err := routing.DecodeKeyValue(e.secret, key)
 	if err != nil {
@@ -196,7 +196,7 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = e.probeOnce(ch, upstreamModel, keyPlain, t.line, t.proxyURL, t.via, protocols)
+			results[i] = e.probeOnce(ch, models, keyPlain, t.line, t.proxyURL, t.via)
 		}()
 	}
 	wg.Wait()
@@ -210,15 +210,13 @@ func (e *Engine) ProbeKeys(ch *store.Channel) ([]KeyResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	model := firstModel(ch)
-	if model == "" {
+	models := probeModels(ch)
+	if len(models) == 0 {
 		return nil, fmt.Errorf("渠道未配置模型列表")
 	}
 	if len(rc.BaseURLs) == 0 {
 		return nil, fmt.Errorf("渠道无线路")
 	}
-	upstreamModel := routing.ApplyModelMapping(ch, model)
-	protocols := probeProtocols(ch, model)
 	line := rc.BaseURLs[0]
 	out := make([]KeyResult, len(rc.Keys))
 	var wg sync.WaitGroup
@@ -231,7 +229,7 @@ func (e *Engine) ProbeKeys(ch *store.Channel) ([]KeyResult, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res := e.probeOnce(ch, upstreamModel, plain, line, "", "direct", protocols)
+			res := e.probeOnce(ch, models, plain, line, "", "direct")
 			out[i] = KeyResult{
 				KeyID: k.ID, Name: k.Name, OK: res.OK, LatencyMs: res.LatencyMs, Error: res.Error,
 			}
@@ -256,26 +254,42 @@ func probeProtocols(ch *store.Channel, model string) []string {
 	return []string{"openai", "anthropic"}
 }
 
-// probeOnce 发送最小请求并计时；protocols 依序尝试，任一成功即通过，
-// 全部失败时汇报各协议错误摘要（协议判定回退，见 probeProtocols）
-func (e *Engine) probeOnce(ch *store.Channel, model, keyPlain, line, proxyURL, via string, protocols []string) Result {
+// probeOnce 发送最小请求并计时；模型 × 协议两级回退（v1.5.23）：
+// 候选模型依序尝试，每个模型按其协议判定序列（见 probeProtocols）继续回退，
+// 任一成功即该组合健康；全部失败时汇报各模型末次错误摘要（含上游响应体 message）。
+// 整个组合共享 probeWait 总超时（所有回退请求用同一 deadline，上限确定）
+func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, proxyURL, via string) Result {
 	result := Result{LineURL: line, Via: via}
-	var errs []string
+	var modelErrs []string
+	ctx, cancel := context.WithTimeout(context.Background(), probeWait)
+	defer cancel()
 	start := time.Now()
-	for _, proto := range protocols {
-		r := e.probeOne(ch, model, keyPlain, line, proxyURL, via, proto)
-		if r.OK {
-			return r
+	for _, m := range models {
+		upstreamModel := routing.ApplyModelMapping(ch, m)
+		var protoErrs []string
+		var last Result
+		for _, proto := range probeProtocols(ch, m) {
+			last = e.probeOne(ctx, ch, upstreamModel, keyPlain, line, proxyURL, via, proto)
+			if last.OK {
+				return last
+			}
+			protoErrs = append(protoErrs, fmt.Sprintf("%s 协议: %s", proto, last.Error))
+			if ctx.Err() != nil {
+				break
+			}
 		}
-		errs = append(errs, fmt.Sprintf("%s 协议: %s", proto, r.Error))
+		modelErrs = append(modelErrs, fmt.Sprintf("%s（%s）", m, strings.Join(protoErrs, "；")))
+		if ctx.Err() != nil {
+			break
+		}
 	}
 	result.LatencyMs = time.Since(start).Milliseconds()
-	result.Error = strings.Join(errs, "；")
+	result.Error = strings.Join(modelErrs, "；")
 	return result
 }
 
-// probeOne 按指定协议发送最小请求并计时
-func (e *Engine) probeOne(ch *store.Channel, model, keyPlain, line, proxyURL, via, protocol string) Result {
+// probeOne 按指定协议发送最小请求并计时；错误信息附带上游响应体摘要
+func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlain, line, proxyURL, via, protocol string) Result {
 	result := Result{LineURL: line, Via: via}
 
 	body, _ := json.Marshal(map[string]any{
@@ -290,8 +304,6 @@ func (e *Engine) probeOne(ch *store.Channel, model, keyPlain, line, proxyURL, vi
 		target = httpx.UpstreamEndpoint(line, "/chat/completions")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), probeWait)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		result.Error = err.Error()
@@ -317,7 +329,7 @@ func (e *Engine) probeOne(ch *store.Channel, model, keyPlain, line, proxyURL, vi
 		result.Error = fmt.Sprintf("%s %s: %v", via, shortURL(line), err)
 		return result
 	}
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	resp.Body.Close()
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		// 2xx 却返回 HTML：SPA 回退，端点在该线路不存在
@@ -326,10 +338,46 @@ func (e *Engine) probeOne(ch *store.Channel, model, keyPlain, line, proxyURL, vi
 			return result
 		}
 		result.OK = true
+	} else if summary := upstreamErrorSummary(respBody); summary != "" {
+		result.Error = fmt.Sprintf("上游返回 %d：%s", resp.StatusCode, summary)
 	} else {
 		result.Error = fmt.Sprintf("上游返回 %d", resp.StatusCode)
 	}
 	return result
+}
+
+// upstreamErrorSummary 提取上游错误响应体的 message 字段
+// （openai/anthropic/new_api 等通用 {"error":{"message":...}} 结构），
+// 解析不出时回退原文前段；截断到 120 rune 防止撑爆 UI 与 last_error 列
+func upstreamErrorSummary(body []byte) string {
+	var e struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &e) == nil {
+		if e.Error.Message != "" {
+			return truncateRunes(e.Error.Message, 120)
+		}
+		if e.Message != "" {
+			return truncateRunes(e.Message, 120)
+		}
+		return ""
+	}
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return ""
+	}
+	return truncateRunes(s, 120)
+}
+
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // saveResults 结果落 line_stats + 更新渠道健康状态
@@ -383,15 +431,24 @@ func statKey(line, via string) string { return line + "\x00" + via }
 
 func StatKey(line, via string) string { return statKey(line, via) }
 
-func firstModel(ch *store.Channel) string {
+// probeModels 探测候选模型：渠道模型列表前 probeModelCap 个非空项。
+// 上游常出现"部分模型分组无渠道/provider 未启用"（如 new_api 的
+// model_not_found、team 网关的 provider 路由），固定测第一个模型会把
+// 可用渠道误判为不健康，故按序回退尝试
+func probeModels(ch *store.Channel) []string {
 	var models []string
 	json.Unmarshal([]byte(ch.ModelsJSON), &models)
+	var out []string
 	for _, m := range models {
-		if m != "" {
-			return m
+		if m == "" {
+			continue
+		}
+		out = append(out, m)
+		if len(out) >= probeModelCap {
+			break
 		}
 	}
-	return ""
+	return out
 }
 
 func pickKey(keys []*store.Key) *store.Key {
