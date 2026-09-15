@@ -1,18 +1,24 @@
 import React from 'react'
 import { Alert, Button, DatePicker, Form, Input, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
-import { HolderOutlined, PlusOutlined, SwitcherOutlined } from '@ant-design/icons'
+import { CaretDownOutlined, CaretUpOutlined, DownOutlined, HolderOutlined, PlusOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { listTokens, createToken, updateToken, revokeToken, deleteToken, revealToken, listChannels } from '../api'
 import type { GatewayToken, Channel } from '../api/types'
 import { formatDateTime } from '../format'
 import { copyText } from '../copy'
 
-// 令牌的渠道面板：主开关控制是否限定范围；限定时逐渠道开关 + 拖动排序（顺序即优先级）
+// 会话级顺序记忆：令牌 → 最近一次非空绑定顺序（仅存内存，刷新后回到服务端状态）。
+// 用于：① 移出的渠道重新加入时按原位置恢复，开关不改变优先级；
+// ② 主开关关闭后重开时恢复上次集合与顺序，而不是重置为全选。
+const orderMemory = new Map<number, number[]>()
+
+// 令牌的渠道面板：主开关控制是否限定范围；限定时逐渠道开关 + 拖动/上下移排序（顺序即优先级）
 const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChanged: () => void }> = ({ token, channels, onChanged }) => {
   const bound = token.channelIds ?? []
   const [order, setOrder] = React.useState<number[]>(bound)
   React.useEffect(() => {
     setOrder(bound)
+    if (bound.length > 0) orderMemory.set(token.id, bound)
   }, [token.id, bound.join(',')])
 
   const byId = React.useMemo(() => new Map(channels.map((c) => [c.id, c])), [channels])
@@ -20,10 +26,17 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
   const enabled = order.filter((id) => byId.has(id))
   const rest = channels.filter((c) => !order.includes(c.id)).map((c) => c.id)
   const dragFrom = React.useRef<number | null>(null)
-  const [overIndex, setOverIndex] = React.useState<number | null>(null)
+  const [dragging, setDragging] = React.useState<number | null>(null)
+  const [overIndex, setOverIndexState] = React.useState<number | null>(null)
+  const overRef = React.useRef<number | null>(null)
+  const setOverIndex = (v: number | null) => {
+    overRef.current = v
+    setOverIndexState(v)
+  }
 
   const save = async (next: number[]) => {
     setOrder(next)
+    if (next.length > 0) orderMemory.set(token.id, next)
     try {
       await updateToken(token.id, { channelIds: next })
       onChanged()
@@ -32,28 +45,55 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
     }
   }
 
-  // 打开限定：默认选中全部渠道（按渠道优先级排序），再由用户移出不需要的
+  // 打开限定：恢复上次使用的集合与顺序；从未配置过才默认全选（按渠道优先级排序）
   const enableRestrict = () => {
-    const all = [...channels].sort((a, b) => b.priority - a.priority).map((c) => c.id)
-    if (all.length === 0) {
+    if (channels.length === 0) {
       message.info('暂无渠道，请先在渠道页创建')
       return
     }
-    save(all)
+    const mem = (orderMemory.get(token.id) ?? []).filter((id) => byId.has(id))
+    save(mem.length > 0 ? mem : [...channels].sort((a, b) => b.priority - a.priority).map((c) => c.id))
+  }
+
+  // 重新加入的渠道按记忆位置插回，避免开关导致优先级漂移
+  const addChannel = (id: number) => {
+    const mem = orderMemory.get(token.id)
+    const idx = mem ? mem.indexOf(id) : -1
+    const pos = idx >= 0 ? Math.min(idx, enabled.length) : enabled.length
+    save([...enabled.slice(0, pos), id, ...enabled.slice(pos)])
   }
 
   const finishDrag = () => {
     dragFrom.current = null
+    setDragging(null)
     setOverIndex(null)
   }
 
-  const onDrop = (to: number) => {
+  // 拖到行上半区 = 插到该行之前，下半区 = 插到之后（末行下半区即落到末尾）
+  const onRowDragOver = (e: React.DragEvent<HTMLDivElement>, i: number) => {
+    e.preventDefault()
+    const rect = e.currentTarget.getBoundingClientRect()
+    setOverIndex(e.clientY < rect.top + rect.height / 2 ? i : i + 1)
+  }
+
+  const onDrop = () => {
     const from = dragFrom.current
+    let to = overRef.current
     finishDrag()
-    if (from == null || from === to) return
+    if (from == null || to == null) return
+    // to 为移除前的插入位（行上半区 = 该行之前，下半区 = 之后）；移除自身后向下拖需前移一位
+    if (to > from) to -= 1
     const next = [...enabled]
     const [moved] = next.splice(from, 1)
     next.splice(to, 0, moved)
+    if (next.join(',') !== enabled.join(',')) save(next)
+  }
+
+  const move = (from: number, to: number) => {
+    if (to < 0 || to >= enabled.length || from === to) return
+    const next = [...enabled]
+    const [m] = next.splice(from, 1)
+    next.splice(to, 0, m)
     save(next)
   }
 
@@ -61,11 +101,18 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
     display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
     border: '1px solid #e3e9eb', borderRadius: 6, marginBottom: 6, background: '#fbfcfd',
   }
-  const handleStyle: React.CSSProperties = { cursor: 'grab', display: 'inline-flex', padding: '0 2px' }
 
   if (channels.length === 0) {
     return <span style={{ color: '#999' }}>暂无渠道，请先在渠道页创建后再回来配置。</span>
   }
+
+  // 落点指示用 boxShadow 画在行边缘，不占布局空间、无抖动
+  const insertShadow = (i: number): React.CSSProperties => {
+    if (overIndex === i) return { boxShadow: 'inset 0 2px 0 #176b87' }
+    if (overIndex === i + 1 && i === enabled.length - 1) return { boxShadow: 'inset 0 -2px 0 #176b87' }
+    return {}
+  }
+
   return (
     <div style={{ maxWidth: 560 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
@@ -82,61 +129,50 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
       ) : (
         <>
           <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>
-            拖动左侧图标调整该令牌的路由优先级（自上而下依次尝试）；关闭开关将渠道移出该令牌（全部移出后等同不限定）。
+            整行可拖动，或用 ↑↓ 按钮调整优先级（自上而下依次尝试）；移出的渠道重新加入时回到原位置。
           </div>
           {enabled.map((id, i) => {
             const c = byId.get(id)!
             return (
               <div
                 key={id}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  setOverIndex(i)
+                draggable
+                onDragStart={() => {
+                  dragFrom.current = i
+                  setDragging(i)
                 }}
-                onDrop={() => onDrop(i)}
-                onDragLeave={() => setOverIndex((v) => (v === i ? null : v))}
-                style={{ ...rowStyle, borderTop: overIndex === i ? '2px solid #176b87' : undefined }}
+                onDragEnd={finishDrag}
+                onDragOver={(e) => onRowDragOver(e, i)}
+                onDrop={onDrop}
+                onDragLeave={() => {
+                  const v = overRef.current
+                  if (v === i || v === i + 1) setOverIndex(null)
+                }}
+                style={{ ...rowStyle, ...insertShadow(i), cursor: 'grab', opacity: dragging === i ? 0.45 : undefined }}
+                title="拖动整行调整顺序"
               >
-                <span
-                  draggable
-                  onDragStart={() => (dragFrom.current = i)}
-                  onDragEnd={finishDrag}
-                  style={handleStyle}
-                  title="拖动排序"
-                >
-                  <HolderOutlined style={{ color: '#176b87' }} />
-                </span>
+                <HolderOutlined style={{ color: '#176b87' }} />
                 <span style={{ flex: 1 }}>{c.name}</span>
                 {c.enabled ? null : <Tag>渠道停用</Tag>}
-                <Switch size="small" checked onChange={() => save(enabled.filter((x) => x !== id))} />
+                <Space size={2}>
+                  <Button type="text" size="small" icon={<CaretUpOutlined />} disabled={i === 0} onClick={() => move(i, i - 1)} title="上移" />
+                  <Button type="text" size="small" icon={<CaretDownOutlined />} disabled={i === enabled.length - 1} onClick={() => move(i, i + 1)} title="下移" />
+                </Space>
+                <Switch size="small" checked onChange={() => save(enabled.filter((x) => x !== id))} title="移出该令牌" />
               </div>
             )
           })}
-          <div
-            onDragOver={(e) => {
-              e.preventDefault()
-              setOverIndex(enabled.length)
-            }}
-            onDrop={() => onDrop(enabled.length)}
-            onDragLeave={() => setOverIndex((v) => (v === enabled.length ? null : v))}
-            style={{
-              height: 10,
-              marginBottom: 6,
-              borderRadius: 4,
-              background: overIndex === enabled.length ? 'rgba(23,107,135,.15)' : 'transparent',
-            }}
-          />
           {rest.length > 0 ? (
             <>
-              <div style={{ color: '#888', fontSize: 12, margin: '4px 0 6px' }}>未限定（打开开关加入）</div>
+              <div style={{ color: '#888', fontSize: 12, margin: '4px 0 6px' }}>未限定（打开开关加入，加入后按原位置恢复）</div>
               {rest.map((id) => {
                 const c = byId.get(id)!
                 return (
                   <div key={id} style={{ ...rowStyle, borderStyle: 'dashed', color: '#888' }}>
-                    <HolderOutlined style={{ color: '#c5ced3' }} />
+                    <PlusOutlined style={{ color: '#c5ced3' }} />
                     <span style={{ flex: 1 }}>{c.name}</span>
                     {c.enabled ? null : <Tag>渠道停用</Tag>}
-                    <Switch size="small" checked={false} onChange={() => save([...enabled, id])} />
+                    <Switch size="small" checked={false} onChange={() => addChannel(id)} />
                   </div>
                 )
               })}
@@ -219,7 +255,7 @@ const TokensPage: React.FC = () => {
   return (
     <div>
       <div className="page-heading">
-        <div><h2>网关令牌</h2><p>为客户端创建访问凭证；「限定渠道」列可点选开关、拖动控制优先级。</p></div>
+        <div><h2>网关令牌</h2><p>为客户端创建访问凭证；「限定渠道」列点开即可配置范围与优先级。</p></div>
         <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ name: '', channelIds: [], modelScope: '', expiresAt: undefined }); setModalOpen(true) }}>
           新建令牌
         </Button>
@@ -250,8 +286,9 @@ const TokensPage: React.FC = () => {
                   title={`渠道范围与顺序：${t.name}`}
                   content={<TokenChannels token={t} channels={channels} onChanged={refresh} />}
                 >
-                  <a>
-                    {summary} <SwitcherOutlined style={{ color: '#176b87', marginLeft: 4 }} />
+                  <a className="channel-pill" title="点击配置渠道范围与优先级">
+                    <span className="channel-pill-text">{summary}</span>
+                    <DownOutlined />
                   </a>
                 </Popover>
               )
@@ -303,7 +340,7 @@ const TokensPage: React.FC = () => {
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="如 claude-code" />
           </Form.Item>
-          <Form.Item name="channelIds" label="限定渠道" extra={<span className="form-hint">留空则允许访问所有启用渠道；创建后也可在列表「限定渠道」中配置开关与顺序。</span>}>
+          <Form.Item name="channelIds" label="限定渠道" extra={<span className="form-hint">留空则允许访问所有启用渠道；创建后可在列表「限定渠道」中调整范围与优先级。</span>}>
             <Select
               mode="multiple"
               allowClear
