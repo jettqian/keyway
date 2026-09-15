@@ -12,7 +12,7 @@ const CatalogPrice: React.FC<{ m: CatalogModel }> = ({ m }) => {
   if (m.inputPerM == null) {
     return (
       <Tooltip title="价目表中无同名条目，使用该模型的请求费用将记为未定价">
-        <span style={{ color: '#999' }}>未定价</span>
+        <span className="text-tertiary">未定价</span>
       </Tooltip>
     )
   }

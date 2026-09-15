@@ -16,7 +16,7 @@ import {
   Collapse,
 } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
-import { useNavigate } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { listChannels, createChannel, updateChannel, deleteChannel, listKeys, testChannel, listCatalogModels } from '../api'
 import type { ChannelTestResult } from '../api'
 import type { Channel, ChannelInput, ApiKey, CatalogModel } from '../api/types'
@@ -41,7 +41,7 @@ const emptyInput: ChannelInput = {
 }
 
 const ChannelsPage: React.FC = () => {
-  const nav = useNavigate()
+  const params = useParams()
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [keys, setKeys] = React.useState<ApiKey[]>([])
   const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
@@ -197,16 +197,31 @@ const ChannelsPage: React.FC = () => {
     }
   }
 
+  // 从模板复制等入口带 /channels/:id 跳转过来时，加载完成后自动打开该渠道编辑
+  const openedRouteId = React.useRef<string | undefined>(undefined)
+  React.useEffect(() => {
+    const id = params.id
+    if (!id || id === openedRouteId.current || loading || !channels.length) return
+    const target = channels.find((c) => String(c.id) === id)
+    if (!target) return
+    openedRouteId.current = id
+    openEdit(target)
+  }, [params.id, channels, loading])
+
   return (
     <div>
       <div className="page-heading">
-        <div><h2>渠道</h2><p>管理上游线路、密钥和模型路由。保存后下一个请求即可生效。</p></div>
+        <div>
+          <h2>渠道</h2>
+          <p>管理上游线路、密钥和模型路由，保存后下一个请求即可生效；没有头绪可先从<Link to="/templates">预制模板</Link>复制。</p>
+        </div>
         <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建渠道</Button></div>
       </div>
       <Table<Channel>
         rowKey="id"
         loading={loading}
         dataSource={channels}
+        locale={{ emptyText: '暂无渠道，点击右上角「新建渠道」或从预制模板复制' }}
         columns={[
           {
             title: '名称',
@@ -262,7 +277,7 @@ const ChannelsPage: React.FC = () => {
                     refresh()
                   }}
                 >
-                  <a style={{ color: 'red' }}>删除</a>
+                  <a className="danger-link">删除</a>
                 </Popconfirm>
               </Space>
             ),
@@ -452,14 +467,16 @@ const ChannelsPage: React.FC = () => {
             key={i}
             style={{ marginBottom: 8 }}
             type={r.ok ? 'success' : 'error'}
-            message={`${r.lineUrl} · ${r.via} · ${r.latencyMs}ms`}
-            description={r.error || undefined}
+            message={r.lineUrl}
+            description={
+              <>
+                <div>路径 {r.via}，延迟 {r.latencyMs}ms</div>
+                {r.error ? <div className="text-secondary">{r.error}</div> : null}
+              </>
+            }
           />
         ))}
       </Modal>
-      <Button type="link" onClick={() => nav('/templates')} style={{ paddingLeft: 0 }}>
-        查看预制模板，一键复制接入 →
-      </Button>
     </div>
   )
 }

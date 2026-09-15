@@ -120,7 +120,7 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
   const closedStyle: React.CSSProperties = { color: '#8a979d', background: '#f6f8f9' }
 
   if (channels.length === 0) {
-    return <span style={{ color: '#999' }}>暂无渠道，请先在渠道页创建后再回来配置。</span>
+    return <span className="text-tertiary">暂无渠道，请先在渠道页创建后再回来配置。</span>
   }
 
   // 落点指示用 boxShadow 画在行边缘，不占布局空间、无抖动
@@ -135,7 +135,7 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <Switch checked={restricted} onChange={(on) => (on ? enableRestrict() : save([], rows))} />
         <span style={{ fontWeight: 500 }}>限定渠道范围</span>
-        <span style={{ color: '#888', fontSize: 12 }}>关闭 = 路由到所有启用渠道；开启 = 只用下方开启的渠道，顺序即优先级</span>
+        <span className="text-secondary" style={{ fontSize: 12 }}>关闭 = 路由到所有启用渠道；开启 = 只用下方开启的渠道，顺序即优先级</span>
       </div>
       {!restricted ? (
         <Alert
@@ -147,7 +147,7 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
         />
       ) : (
         <>
-          <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>
+          <div className="text-secondary" style={{ fontSize: 12, marginBottom: 6 }}>
             整行可拖动，或用 ↑↓ 按钮调整优先级（自上而下依次尝试）；关闭的渠道保持原位，只是不参与路由。
           </div>
           {rows.map((id, i) => {
@@ -184,11 +184,11 @@ const TokenChannels: React.FC<{ token: GatewayToken; channels: Channel[]; onChan
           })}
           {rest.length > 0 ? (
             <>
-              <div style={{ color: '#888', fontSize: 12, margin: '4px 0 6px' }}>未加入（打开开关将追加到列表末尾）</div>
+              <div className="text-secondary" style={{ fontSize: 12, margin: '4px 0 6px' }}>未加入（打开开关将追加到列表末尾）</div>
               {rest.map((id) => {
                 const c = byId.get(id)!
                 return (
-                  <div key={id} style={{ ...rowStyle, borderStyle: 'dashed', color: '#888' }}>
+                  <div key={id} className="text-secondary" style={{ ...rowStyle, borderStyle: 'dashed' }}>
                     <PlusOutlined style={{ color: '#c5ced3' }} />
                     <span style={{ flex: 1 }}>{c.name}</span>
                     {c.enabled ? null : <Tag>渠道停用</Tag>}
@@ -285,6 +285,7 @@ const TokensPage: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={tokens}
+        locale={{ emptyText: '暂无令牌，点击右上角「新建令牌」创建' }}
         columns={[
           { title: '名称', dataIndex: 'name' },
           { title: '前缀', dataIndex: 'keyPrefix' },
@@ -297,7 +298,7 @@ const TokensPage: React.FC = () => {
               const names = ids.map((id) => channels.find((c) => c.id === id)?.name ?? `#${id}`)
               const head = names.slice(0, 2).join('、')
               const summary = ids.length === 0 ? '不限（全部渠道）' : names.length > 2 ? `${head} 等 ${names.length} 个` : head
-              if (t.revoked) return <span style={{ color: '#999' }}>{summary}</span>
+              if (t.revoked) return <span className="text-tertiary">{summary}</span>
               return (
                 <Popover
                   trigger="click"
@@ -337,7 +338,7 @@ const TokensPage: React.FC = () => {
                       refresh()
                     }}
                   >
-                    <a style={{ color: 'red' }}>删除</a>
+                    <a className="danger-link">删除</a>
                   </Popconfirm>
                 ) : (
                   <Popconfirm
@@ -348,7 +349,7 @@ const TokensPage: React.FC = () => {
                       refresh()
                     }}
                   >
-                    <a style={{ color: 'red' }}>吊销</a>
+                    <a className="danger-link">吊销</a>
                   </Popconfirm>
                 )}
               </Space>,
@@ -379,6 +380,7 @@ const TokensPage: React.FC = () => {
       <Modal
         open={created !== null}
         title="令牌已创建"
+        okText="我已保存，关闭"
         onCancel={() => setCreated(null)}
         onOk={() => setCreated(null)}
       >

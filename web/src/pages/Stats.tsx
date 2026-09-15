@@ -1,5 +1,5 @@
 import React from 'react'
-import { Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tag, message } from 'antd'
+import { Button, Card, Col, DatePicker, Empty, Row, Space, Statistic, Table, Tag, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
@@ -32,21 +32,24 @@ const StatsPage: React.FC = () => {
 
   const groupColumns = (dimName: string) => [
     { title: dimName, dataIndex: 'dim' },
-    { title: '请求数', dataIndex: 'requests', sorter: (a: StatsGroup, b: StatsGroup) => a.requests - b.requests },
+    { title: '请求数', dataIndex: 'requests', align: 'right' as const, sorter: (a: StatsGroup, b: StatsGroup) => a.requests - b.requests },
     {
       title: '输入 tokens',
       dataIndex: 'promptTokens',
+      align: 'right' as const,
       sorter: (a: StatsGroup, b: StatsGroup) => a.promptTokens - b.promptTokens,
     },
     {
       title: '输出 tokens',
       dataIndex: 'completionTokens',
+      align: 'right' as const,
       sorter: (a: StatsGroup, b: StatsGroup) => a.completionTokens - b.completionTokens,
     },
     {
       title: '费用估算',
       dataIndex: 'cost',
       render: (v: number) => `$${v.toFixed(4)}`,
+      align: 'right' as const,
       sorter: (a: StatsGroup, b: StatsGroup) => a.cost - b.cost,
     },
   ]
@@ -68,6 +71,23 @@ const StatsPage: React.FC = () => {
           <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>刷新</Button>
         </Space>
       </div>
+      <Card loading={loading} style={{ marginBottom: 16 }}>
+        <div className="stat-strip">
+          <div className="stat-cell">
+            <Statistic title="请求数" value={data?.summary.requests ?? 0} />
+          </div>
+          <div className="stat-cell">
+            <Statistic title="错误率" value={data?.summary.errorRate ?? 0} suffix="%" precision={2} />
+          </div>
+          <div className="stat-cell">
+            <Statistic title="tokens（入/出）" value={`${data?.summary.promptTokens ?? 0} / ${data?.summary.completionTokens ?? 0}`} />
+          </div>
+          <div className="stat-cell">
+            <Statistic title="费用估算" value={data?.summary.cost ?? 0} prefix="$" precision={4} />
+            {data?.summary.unpriced ? <span className="stat-note">部分未定价</span> : null}
+          </div>
+        </div>
+      </Card>
       <Card title="最近生效流量" loading={loading} style={{ marginBottom: 16 }}>
         {data?.recent?.length ? (
           <Table<LatestUsage>
@@ -80,7 +100,7 @@ const StatsPage: React.FC = () => {
                 title: '时间',
                 dataIndex: 'createdAt',
                 width: 180,
-                render: (v: number) => <span style={{ color: '#999' }}>{formatDateTime(v)}</span>,
+                render: (v: number) => <span className="text-tertiary">{formatDateTime(v)}</span>,
               },
               {
                 title: '渠道',
@@ -94,7 +114,7 @@ const StatsPage: React.FC = () => {
                   <span>
                     <b>{r.model}</b>
                     {r.upstreamModel && r.upstreamModel !== r.model ? (
-                      <span style={{ color: '#999' }}>（上游 {r.upstreamModel}）</span>
+                      <span className="text-tertiary">（上游 {r.upstreamModel}）</span>
                     ) : null}
                   </span>
                 ),
@@ -108,37 +128,9 @@ const StatsPage: React.FC = () => {
             ]}
           />
         ) : (
-          <span style={{ color: '#999' }}>暂无流量</span>
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该时间范围内还没有请求" />
         )}
       </Card>
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}>
-          <Card loading={loading}>
-            <Statistic title="请求数" value={data?.summary.requests ?? 0} />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card loading={loading}>
-            <Statistic title="错误率" value={data?.summary.errorRate ?? 0} suffix="%" precision={2} />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card loading={loading}>
-            <Statistic title="tokens（入/出）" value={`${data?.summary.promptTokens ?? 0} / ${data?.summary.completionTokens ?? 0}`} />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card loading={loading}>
-            <Statistic
-              title="费用估算"
-              value={data?.summary.cost ?? 0}
-              prefix="$"
-              precision={4}
-              suffix={data?.summary.unpriced ? '（部分未定价）' : ''}
-            />
-          </Card>
-        </Col>
-      </Row>
       <Row gutter={16}>
         <Col span={12}>
           <Card title="按渠道" loading={loading}>

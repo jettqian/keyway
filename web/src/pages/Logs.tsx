@@ -74,27 +74,27 @@ const LogsPage: React.FC = () => {
             title: '状态',
             dataIndex: 'statusCode',
             width: 80,
-            render: (s: number) => (
-              <span style={{ color: s < 400 ? undefined : 'red' }}>{s}</span>
-            ),
+            render: (s: number) => (s >= 400 ? <span className="status-error">{s}</span> : s),
           },
-          { title: '首字节', dataIndex: 'ttftMs', width: 90, render: (v: number) => (v ? `${v}ms` : '-') },
-          { title: '总耗时', dataIndex: 'totalMs', width: 90, render: (v: number) => (v ? `${v}ms` : '-') },
+          { title: '首字节', dataIndex: 'ttftMs', width: 90, align: 'right', render: (v: number) => (v ? `${v}ms` : '-') },
+          { title: '总耗时', dataIndex: 'totalMs', width: 90, align: 'right', render: (v: number) => (v ? `${v}ms` : '-') },
           {
             title: 'Tokens',
             width: 140,
+            align: 'right',
             render: (_, l) => (
               <span>
                 {l.promptTokens}/{l.completionTokens}
-                {l.cachedTokens ? <span style={{ color: '#888' }}>（缓存 {l.cachedTokens}）</span> : null}
+                {l.cachedTokens ? <span className="text-tertiary">（缓存 {l.cachedTokens}）</span> : null}
               </span>
             ),
           },
           {
             title: '费用',
             width: 90,
+            align: 'right',
             render: (_, l) =>
-              l.inputCost == null ? <span style={{ color: '#aaa' }}>未定价</span> : `$${(l.inputCost + (l.outputCost ?? 0)).toFixed(4)}`,
+              l.inputCost == null ? <span className="text-tertiary">未定价</span> : `$${(l.inputCost + (l.outputCost ?? 0)).toFixed(4)}`,
           },
           { title: '错误', dataIndex: 'error', ellipsis: true },
         ]}

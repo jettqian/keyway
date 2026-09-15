@@ -27,7 +27,7 @@ const RegisterPage: React.FC = () => {
         <Typography.Title level={3} style={{ textAlign: 'center', marginTop: 0 }}>注册 Keyway</Typography.Title>
         <Form onFinish={onFinish} layout="vertical">
           <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input autoFocus />
+            <Input autoFocus autoComplete="username" />
           </Form.Item>
           <Form.Item
             name="password"
@@ -37,7 +37,7 @@ const RegisterPage: React.FC = () => {
               { min: 8, message: '至少 8 位' },
             ]}
           >
-            <Input.Password />
+            <Input.Password autoComplete="new-password" />
           </Form.Item>
           <Form.Item name="inviteCode" label="邀请码（若启用邀请制）">
             <Input placeholder="开放注册时可留空" />

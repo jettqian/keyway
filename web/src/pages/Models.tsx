@@ -59,7 +59,7 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
 
   return (
     <div>
-      <div style={{ color: '#777', fontSize: 13, marginBottom: 12 }}>
+      <div className="tab-note">
         模型与渠道的关联在渠道表单中点选维护：编辑渠道时可从模型目录或已有模型点选，也可直接输入新名称。此处仅管理模型名本身。
       </div>
       <Table<ModelRow>
@@ -82,7 +82,7 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
                   ))}
                 </Space>
               ) : (
-                <span style={{ color: '#999' }}>—</span>
+                <span className="text-tertiary">—</span>
               ),
           },
           {
@@ -92,7 +92,7 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
               <Space>
                 <a onClick={() => { setRenaming(row); form.setFieldsValue({ name: row.name }) }}>重命名</a>
                 <Popconfirm title={`删除模型 ${row.name}？将从所有渠道移除`} onConfirm={() => removeModel(row)}>
-                  <a style={{ color: 'red' }}>删除</a>
+                  <a className="danger-link">删除</a>
                 </Popconfirm>
               </Space>
             ),
@@ -142,7 +142,7 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
 
   return (
     <div>
-      <div style={{ color: '#777', fontSize: 13, marginBottom: 12 }}>
+      <div className="tab-note">
         管理员预置的模型目录，作为渠道表单中的点选数据源；未列出的模型仍可在渠道表单中手动输入。
         单价按模型名关联价目表（费用统计同口径）。
       </div>
@@ -164,7 +164,7 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
             width: 220,
             render: (_: unknown, m: CatalogModel) => {
               const chans = usage.get(m.name)
-              if (!chans || chans.length === 0) return <span style={{ color: '#999' }}>未使用</span>
+              if (!chans || chans.length === 0) return <span className="text-tertiary">未使用</span>
               return <span>已用于 {chans.length} 个渠道</span>
             },
           },

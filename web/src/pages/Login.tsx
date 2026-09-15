@@ -44,13 +44,13 @@ const LoginPage: React.FC = () => {
     <div className="auth-shell">
       <Card className="auth-card">
         <div className="auth-mark">K</div>
-        <Typography.Title level={3} style={{ textAlign: 'center', marginTop: 0 }}>Keyway 登录</Typography.Title>
+        <Typography.Title level={3} style={{ textAlign: 'center', marginTop: 0 }}>登录 Keyway</Typography.Title>
         <Form onFinish={onFinish} layout="vertical">
           <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input autoFocus />
+            <Input autoFocus autoComplete="username" />
           </Form.Item>
           <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password />
+            <Input.Password autoComplete="current-password" />
           </Form.Item>
           <Button type="primary" htmlType="submit" block loading={loading}>登录</Button>
         </Form>

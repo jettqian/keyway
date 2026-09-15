@@ -1,5 +1,5 @@
 import React from 'react'
-import { Layout as AntLayout, Menu, Dropdown, message } from 'antd'
+import { Layout as AntLayout, Menu, Dropdown, Avatar, Tag, message } from 'antd'
 import {
   KeyOutlined,
   ApiOutlined,
@@ -10,8 +10,8 @@ import {
   BookOutlined,
   SettingOutlined,
   UserOutlined,
-  AppstoreOutlined,
   DeploymentUnitOutlined,
+  LogoutOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { logout, me } from '../api'
@@ -66,7 +66,7 @@ export const ConsoleLayout: React.FC = () => {
           <Dropdown
             menu={{
               items: [
-                { key: 'logout', icon: <AppstoreOutlined />, label: '退出登录' },
+                { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
               ],
               onClick: async ({ key }) => {
                 if (key === 'logout') {
@@ -77,8 +77,12 @@ export const ConsoleLayout: React.FC = () => {
               },
             }}
           >
-            <span style={{ cursor: 'pointer' }}>
-              <UserOutlined /> {user?.username ?? '...'}
+            <span className="user-chip">
+              <Avatar size={26} icon={<UserOutlined />}>
+                {user?.username?.slice(0, 1).toUpperCase()}
+              </Avatar>
+              <span className="user-chip-name">{user?.username ?? '...'}</span>
+              {isAdmin ? <Tag style={{ marginInlineEnd: 0 }}>管理员</Tag> : null}
             </span>
           </Dropdown>
         </Header>

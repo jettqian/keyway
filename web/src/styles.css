@@ -1,10 +1,32 @@
 :root {
   color-scheme: light;
   background: #f4f7f8;
+  --kw-ink: #173042;
+  --kw-secondary: #5c7077;
+  --kw-tertiary: #8a979d;
+  --kw-border: #e3e9eb;
+  --kw-danger: #c1443c;
+  --kw-danger-hover: #a03530;
 }
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: #f4f7f8; }
+
+/* 数字是这个产品的核心扫读对象：表格单元格统一等宽数字 */
+.ant-table td { font-variant-numeric: tabular-nums; }
+.ant-statistic .ant-statistic-content { font-variant-numeric: tabular-nums; }
+
+/* 文字层级：次级说明 / 三级弱化（替代散落的 #777/#888/#999/#aaa） */
+.text-secondary { color: var(--kw-secondary); }
+.text-tertiary { color: var(--kw-tertiary); }
+.tab-note { color: var(--kw-secondary); font-size: 13px; line-height: 1.6; margin-bottom: 12px; }
+
+/* 危险操作链接（删除/吊销），语义色走变量 */
+.danger-link { color: var(--kw-danger); }
+.danger-link:hover { color: var(--kw-danger-hover); }
+
+/* 日志状态码：>=400 用语义红并加重 */
+.status-error { color: var(--kw-danger); font-weight: 600; }
 
 .console-sider { border-right: 1px solid #e6edef; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 20px 20px 18px; }
@@ -27,6 +49,20 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
 .auth-card { width: min(390px, 100%); box-shadow: 0 18px 48px rgba(27, 67, 80, .10); border: 1px solid #e0ebed; }
 .auth-card .ant-card-body { padding: 32px; }
 .auth-mark { width: 42px; height: 42px; display: grid; place-items: center; margin: 0 auto 14px; border-radius: 12px; color: #fff; background: #176b87; font-size: 22px; font-weight: 800; }
+
+/* 头部用户区：头像 + 用户名，明确可点开的账户入口 */
+.user-chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 8px; cursor: pointer; transition: background .15s; }
+.user-chip:hover { background: #f2f7f9; }
+.user-chip .ant-avatar { background: #176b87; font-weight: 600; }
+.user-chip-name { font-weight: 500; }
+
+/* 统计汇总带：一条卡片内用分隔线分段，替代等宽同款卡片阵列 */
+.stat-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 20px; }
+.stat-strip .ant-statistic-title { color: var(--kw-secondary); }
+.stat-strip > .stat-cell { padding: 2px 20px; }
+.stat-strip > .stat-cell:first-child { padding-left: 0; }
+.stat-strip > .stat-cell + .stat-cell { border-left: 1px solid var(--kw-border); }
+.stat-strip .stat-note { color: var(--kw-tertiary); font-size: 12px; margin-left: 6px; }
 
 /* 令牌列表「限定渠道」入口：胶囊按钮，明确可点击展开配置面板 */
 .channel-pill {
@@ -55,4 +91,7 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
   .page-actions { justify-content: flex-start; }
   .ant-table { font-size: 12px; }
   .auth-card .ant-card-body { padding: 24px; }
+  .stat-strip { grid-template-columns: 1fr 1fr; gap: 16px 12px; }
+  .stat-strip > .stat-cell + .stat-cell { border-left: 0; }
+  .stat-strip > .stat-cell { padding: 0; }
 }

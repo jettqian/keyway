@@ -62,6 +62,7 @@ const KeysPage: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={keys}
+        locale={{ emptyText: '暂无密钥，点击右上角「新建密钥」添加' }}
         columns={[
           { title: '名称', dataIndex: 'name' },
           { title: '备注', dataIndex: 'note', ellipsis: true },
@@ -112,7 +113,7 @@ const KeysPage: React.FC = () => {
                     refresh()
                   }}
                 >
-                  <a style={{ color: 'red' }}>删除</a>
+                  <a className="danger-link">删除</a>
                 </Popconfirm>
               </Space>
             ),

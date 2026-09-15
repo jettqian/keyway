@@ -211,7 +211,7 @@ const PricingTab: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: 8, display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
-        <Space size="middle" style={{ color: '#777', fontSize: 13 }}>
+        <Space size="middle" className="text-secondary" style={{ fontSize: 13 }}>
           <span>
             {syncedAt ? (
               <>上次官方价目同步：{formatDateTime(syncedAt)}</>
@@ -247,7 +247,7 @@ const PricingTab: React.FC = () => {
           style={{ width: 240 }}
           prefix={<SearchOutlined />}
         />
-        <span style={{ color: '#999', fontSize: 12, marginLeft: 12 }}>
+        <span className="text-tertiary" style={{ fontSize: 12, marginLeft: 12 }}>
           共 {pricing.length} 条{search.trim() ? `，匹配 ${rows.length} 条` : ''}；模型目录中的条目置前显示
         </span>
       </div>
@@ -284,7 +284,7 @@ const PricingTab: React.FC = () => {
                 <span className="price-cell">{fmtPrice(v)}</span>
               ) : (
                 <Tooltip title="未配置，按输入价回退">
-                  <span className="price-cell" style={{ color: '#999' }}>{fmtPrice(p.inputPerM)}</span>
+                  <span className="price-cell text-tertiary">{fmtPrice(p.inputPerM)}</span>
                 </Tooltip>
               ),
           },
@@ -298,7 +298,7 @@ const PricingTab: React.FC = () => {
                 <span className="price-cell">{fmtPrice(v)}</span>
               ) : (
                 <Tooltip title="未配置，按输入价回退">
-                  <span className="price-cell" style={{ color: '#999' }}>{fmtPrice(p.inputPerM)}</span>
+                  <span className="price-cell text-tertiary">{fmtPrice(p.inputPerM)}</span>
                 </Tooltip>
               ),
           },
@@ -315,16 +315,17 @@ const PricingTab: React.FC = () => {
             render: (_, p) => (
               <Space>
                 <a onClick={() => openEdit(p)}>编辑</a>
-                <a
-                  style={{ color: 'red' }}
-                  onClick={async () => {
+                <Popconfirm
+                  title={`删除 ${p.model} 的价目？`}
+                  description="删除后该模型的请求费用将记为未定价"
+                  onConfirm={async () => {
                     await adminDeletePricing(p.model)
                     message.success('已删除')
                     refresh()
                   }}
                 >
-                  删除
-                </a>
+                  <a className="danger-link">删除</a>
+                </Popconfirm>
               </Space>
             ),
           },
@@ -423,16 +424,17 @@ const ProxiesTab: React.FC = () => {
             render: (_, p) => (
               <Space>
                 <a onClick={() => openEdit(p)}>编辑</a>
-                <a
-                  style={{ color: 'red' }}
-                  onClick={async () => {
+                <Popconfirm
+                  title={`删除公共代理 ${p.name}？`}
+                  description="允许走公共代理的渠道将无法再使用它"
+                  onConfirm={async () => {
                     await adminDeleteProxy(p.id)
                     message.success('已删除')
                     refresh()
                   }}
                 >
-                  删除
-                </a>
+                  <a className="danger-link">删除</a>
+                </Popconfirm>
               </Space>
             ),
           },
@@ -487,7 +489,7 @@ const CatalogModelsTab: React.FC = () => {
         label: (
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.model}</span>
-            <span style={{ color: '#999', fontSize: 12, whiteSpace: 'nowrap' }}>
+            <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
               输入 ${fmtPrice(p.inputPerM)} / 输出 ${fmtPrice(p.outputPerM)}
             </span>
           </div>
@@ -528,7 +530,7 @@ const CatalogModelsTab: React.FC = () => {
       <div style={{ marginBottom: 12, textAlign: 'right' }}>
         <Button type="primary" onClick={openCreate}>新增模型</Button>
       </div>
-      <div style={{ color: '#777', fontSize: 13, marginBottom: 12 }}>
+      <div className="tab-note">
         模型目录是全局点选数据源：用户在渠道表单与模板表单中从这里点选模型；删除目录项不影响已引用它的渠道配置。
         只收录用户常用的模型即可，无需与价目表对齐；新增时可从价目表搜索点选，价格自动关联。
       </div>
@@ -557,16 +559,17 @@ const CatalogModelsTab: React.FC = () => {
             render: (_, m) => (
               <Space>
                 <a onClick={() => openEdit(m)}>编辑</a>
-                <a
-                  style={{ color: 'red' }}
-                  onClick={async () => {
+                <Popconfirm
+                  title={`从目录移除 ${m.name}？`}
+                  description="已引用它的渠道配置不受影响"
+                  onConfirm={async () => {
                     await adminDeleteCatalogModel(m.id)
                     message.success('已删除')
                     refresh()
                   }}
                 >
-                  删除
-                </a>
+                  <a className="danger-link">删除</a>
+                </Popconfirm>
               </Space>
             ),
           },
@@ -708,16 +711,17 @@ const TemplatesTab: React.FC = () => {
             render: (_, t) => (
               <Space>
                 <a onClick={() => openEdit(t)}>编辑</a>
-                <a
-                  style={{ color: 'red' }}
-                  onClick={async () => {
+                <Popconfirm
+                  title={`删除模板 ${t.name}？`}
+                  description="已复制的渠道不受影响"
+                  onConfirm={async () => {
                     await adminDeleteTemplate(t.id)
                     message.success('已删除（已复制渠道不受影响）')
                     refresh()
                   }}
                 >
-                  删除
-                </a>
+                  <a className="danger-link">删除</a>
+                </Popconfirm>
               </Space>
             ),
           },
@@ -816,10 +820,10 @@ const StatsTab: React.FC = () => {
       dataSource={data?.byModel ?? []}
       columns={[
         { title: '模型', dataIndex: 'dim' },
-        { title: '请求数', dataIndex: 'requests' },
-        { title: '输入 tokens', dataIndex: 'promptTokens' },
-        { title: '输出 tokens', dataIndex: 'completionTokens' },
-        { title: '费用估算', dataIndex: 'cost', render: (v: number) => `$${v.toFixed(4)}` },
+        { title: '请求数', dataIndex: 'requests', align: 'right' },
+        { title: '输入 tokens', dataIndex: 'promptTokens', align: 'right' },
+        { title: '输出 tokens', dataIndex: 'completionTokens', align: 'right' },
+        { title: '费用估算', dataIndex: 'cost', align: 'right', render: (v: number) => `$${v.toFixed(4)}` },
       ]}
     />
   )
@@ -971,7 +975,9 @@ const SettingsTab: React.FC = () => {
 
 const AdminPage: React.FC = () => (
   <div>
-    <h2>管理</h2>
+    <div className="page-heading">
+      <div><h2>管理</h2><p>系统级配置：用量、用户、模型目录、价目、代理与模板。</p></div>
+    </div>
     <Tabs
       items={[
         { key: 'stats', label: '用量/花费（30 天）', children: <StatsTab /> },

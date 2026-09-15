@@ -28,7 +28,7 @@ const CodeBlock: React.FC<{ text: string }> = ({ text }) => {
       <pre style={{ margin: 0, padding: '12px 64px 12px 16px', color: '#dce9f0', fontSize: 12.5, lineHeight: 1.7, overflowX: 'auto' }}>
         {text}
       </pre>
-      <Button size="small" icon={<CopyOutlined />} onClick={copy} style={{ position: 'absolute', top: 8, right: 8 }} />
+      <Button size="small" icon={<CopyOutlined />} onClick={copy} title="复制" style={{ position: 'absolute', top: 8, right: 8 }} />
     </div>
   )
 }
@@ -285,7 +285,7 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
       </div>
       <Row style={{ marginTop: 8 }}>
         <Col>
-          <span style={{ color: '#71858d', fontSize: 12, marginRight: 12 }}>配置哪些客户端：</span>
+          <span className="text-secondary" style={{ fontSize: 12, marginRight: 12 }}>配置哪些客户端：</span>
           {CLIENTS.map((c) => (
             <Checkbox
               key={c.key}
