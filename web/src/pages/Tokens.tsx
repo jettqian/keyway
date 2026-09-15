@@ -187,10 +187,26 @@ const TokensPage: React.FC = () => {
     }
   }
 
+  // 已揭示的令牌明文缓存（仅存本组件 ref，不渲染）：指针按下时预取，
+  // 点击复制若命中缓存即可在用户手势内同步执行剪贴板写入，
+  // 避免 await 网络请求后丢失手势（Firefox / 部分内嵌浏览器会判定剪贴板不可用）
+  const revealedRef = React.useRef(new Map<number, string>())
+
+  const prefetchKey = (id: number) => {
+    if (revealedRef.current.has(id)) return
+    revealToken(id)
+      .then((r) => revealedRef.current.set(id, r.plaintext))
+      .catch(() => {})
+  }
+
   const copyKey = async (t: GatewayToken) => {
     try {
-      const r = await revealToken(t.id)
-      if (await copyText(r.plaintext)) {
+      let plaintext = revealedRef.current.get(t.id)
+      if (!plaintext) {
+        plaintext = (await revealToken(t.id)).plaintext
+        revealedRef.current.set(t.id, plaintext)
+      }
+      if (await copyText(plaintext)) {
         message.success('已复制到剪贴板')
       } else {
         message.error('复制失败，请重试')
@@ -254,7 +270,7 @@ const TokensPage: React.FC = () => {
             width: 200,
             render: (_, t) =>
               <Space>
-                <a onClick={() => copyKey(t)}>复制密钥</a>
+                <a onClick={() => copyKey(t)} onPointerDown={() => prefetchKey(t.id)} onMouseEnter={() => prefetchKey(t.id)}>复制密钥</a>
                 {t.revoked ? (
                   <Popconfirm
                     title="删除该令牌记录？删除后不可恢复"

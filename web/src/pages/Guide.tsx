@@ -165,6 +165,10 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
   const [copyFailed, setCopyFailed] = React.useState(false)
   const [realPrompt, setRealPrompt] = React.useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = React.useState<string[]>([])
+  // 复制材料（真实令牌 + 可路由模型列表）：仅存 ref、不渲染。选中令牌时预取，
+  // 点击复制时若已就绪即可在用户手势的同步调用栈内执行剪贴板写入，
+  // 避免 await 网络请求后丢失手势（Firefox / 部分内嵌浏览器会判定剪贴板不可用）
+  const materialRef = React.useRef<{ plaintext: string; models: string[] } | null>(null)
 
   React.useEffect(() => {
     listTokens()
@@ -175,12 +179,6 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
       })
       .catch(() => {})
   }, [])
-
-  // 切换令牌/客户端后，清空剪贴板失败态与暂存的真实指令
-  React.useEffect(() => {
-    setCopyFailed(false)
-    setRealPrompt(null)
-  }, [tokenId, clients])
 
   const fetchModels = async (plaintext: string): Promise<string[]> => {
     try {
@@ -193,13 +191,43 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
     }
   }
 
+  // 选中令牌后预取复制材料（令牌切换即作废重取）
+  React.useEffect(() => {
+    materialRef.current = null
+    if (!tokenId) return
+    let stale = false
+    revealToken(tokenId)
+      .then(async (r) => {
+        const models = await fetchModels(r.plaintext)
+        if (!stale) materialRef.current = { plaintext: r.plaintext, models }
+      })
+      .catch(() => {})
+    return () => {
+      stale = true
+    }
+  }, [tokenId])
+
+  // 切换令牌/客户端后，清空剪贴板失败态与暂存的真实指令
+  React.useEffect(() => {
+    setCopyFailed(false)
+    setRealPrompt(null)
+  }, [tokenId, clients])
+
   const copyPrompt = async () => {
     if (!tokenId) return
     setCopying(true)
     try {
-      const r = await revealToken(tokenId)
-      const models = await fetchModels(r.plaintext)
-      const text = buildAIPrompt(origin, r.plaintext, models, clients)
+      let plaintext: string
+      let models: string[]
+      const material = materialRef.current
+      if (material) {
+        ;({ plaintext, models } = material)
+      } else {
+        const r = await revealToken(tokenId)
+        plaintext = r.plaintext
+        models = await fetchModels(plaintext)
+      }
+      const text = buildAIPrompt(origin, plaintext, models, clients)
       if (await copyText(text)) {
         message.success('已复制，粘贴给任意 AI 工具即可代为配置')
         setCopyFailed(false)
