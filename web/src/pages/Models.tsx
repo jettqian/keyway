@@ -1,19 +1,33 @@
 import React from 'react'
-import { Button, Checkbox, Form, Input, Modal, Space, Table, Tag, message } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
-import { listChannels, updateModelBindings } from '../api'
-import type { Channel } from '../api/types'
+import { Button, Form, Modal, Select, Space, Table, Tag, message } from 'antd'
+import { EditOutlined } from '@ant-design/icons'
+import { listChannels, updateChannel } from '../api'
+import type { Channel, ChannelInput } from '../api/types'
 
-interface ModelRow {
-  name: string
-  bindings: Channel[]
-}
+const toInput = (c: Channel, models: string[]): ChannelInput => ({
+  name: c.name,
+  type: c.type,
+  baseUrls: c.baseUrls,
+  keyIds: c.keyIds,
+  keyStrategy: c.keyStrategy,
+  lineStrategy: c.lineStrategy,
+  allowPublicProxy: c.allowPublicProxy,
+  models,
+  modelMapping: c.modelMapping,
+  priority: c.priority,
+  priceMultiplier: c.priceMultiplier ?? 1,
+  pricingMode: c.pricingMode ?? 'usd',
+  cnyRatio: c.cnyRatio ?? 0,
+  isDefault: c.isDefault,
+  enabled: c.enabled,
+  forwardMode: c.forwardMode ?? 'passthrough',
+})
 
 const ModelsPage: React.FC = () => {
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [editing, setEditing] = React.useState<Channel | null>(null)
   const [modalOpen, setModalOpen] = React.useState(false)
-  const [editing, setEditing] = React.useState<ModelRow | null>(null)
   const [form] = Form.useForm()
 
   const refresh = React.useCallback(() => {
@@ -26,38 +40,19 @@ const ModelsPage: React.FC = () => {
 
   React.useEffect(refresh, [refresh])
 
-  const rows = React.useMemo<ModelRow[]>(() => {
-    const map = new Map<string, Channel[]>()
-    for (const channel of channels) {
-      for (const model of Array.isArray(channel.models) ? channel.models : []) {
-        if (!model) continue
-        const list = map.get(model) ?? []
-        list.push(channel)
-        map.set(model, list)
-      }
-    }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, bindings]) => ({ name, bindings }))
-  }, [channels])
-
-  const openCreate = () => {
-    setEditing(null)
-    form.resetFields()
-    form.setFieldsValue({ name: '', channelIds: channels.filter((c) => c.enabled).map((c) => c.id) })
-    setModalOpen(true)
-  }
-
-  const openEdit = (row: ModelRow) => {
-    setEditing(row)
-    form.setFieldsValue({ name: row.name, channelIds: row.bindings.map((c) => c.id) })
+  const openEdit = (channel: Channel) => {
+    setEditing(channel)
+    form.setFieldsValue({ models: Array.isArray(channel.models) ? channel.models : [] })
     setModalOpen(true)
   }
 
   const submit = async () => {
+    if (!editing) return
     const values = await form.validateFields()
-    const name = String(values.name).trim()
+    const models = [...new Set(((values.models ?? []) as string[]).map((m) => m.trim()).filter(Boolean))]
     try {
-      await updateModelBindings({ name, previousName: editing?.name ?? '', channelIds: values.channelIds ?? [] })
-      message.success('模型绑定已保存，下一个请求生效')
+      await updateChannel(editing.id, toInput(editing, models))
+      message.success('渠道模型已保存，下一个请求生效')
       setModalOpen(false)
       refresh()
     } catch (e) {
@@ -68,35 +63,35 @@ const ModelsPage: React.FC = () => {
   return (
     <div>
       <div className="page-heading">
-        <div><h2>模型管理</h2><p>一个渠道可以绑定多个模型；此页用于批量加入或移出渠道。</p></div>
-        <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增模型绑定</Button></div>
+        <div><h2>渠道模型</h2><p>以渠道为主维护模型列表。一个渠道可以选择多个模型，同一模型也可以出现在多个渠道。</p></div>
       </div>
-      <Table<ModelRow>
-        rowKey="name"
+      <Table<Channel>
+        rowKey="id"
         loading={loading}
-        dataSource={rows}
+        dataSource={channels}
         columns={[
-          { title: '模型名', dataIndex: 'name' },
           {
-            title: '绑定渠道',
-            render: (_: unknown, row: ModelRow) => (
-              <Space wrap>{row.bindings.map((c) => <Tag key={c.id} color={c.enabled ? 'blue' : undefined}>{c.name} · 优先级 {c.priority}</Tag>)}</Space>
-            ),
+            title: '渠道',
+            render: (_: unknown, c: Channel) => <Space><span>{c.name}</span><Tag color={c.enabled ? 'green' : undefined}>{c.enabled ? '启用' : '停用'}</Tag></Space>,
           },
-          { title: '可用渠道数', render: (_: unknown, row: ModelRow) => row.bindings.filter((c) => c.enabled).length },
-          { title: '操作', render: (_: unknown, row: ModelRow) => <a onClick={() => openEdit(row)}>编辑绑定</a> },
+          { title: '协议', dataIndex: 'type', render: (type: string) => <Tag>{type}</Tag> },
+          { title: '优先级', dataIndex: 'priority' },
+          {
+            title: '已选模型',
+            render: (_: unknown, c: Channel) => {
+              const models = Array.isArray(c.models) ? c.models : []
+              return models.length ? <Space wrap>{models.map((m) => <Tag key={m}>{m}</Tag>)}</Space> : <span style={{ color: '#999' }}>未选择模型</span>
+            },
+          },
+          { title: '操作', width: 130, render: (_: unknown, c: Channel) => <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(c)}>选择模型</Button> },
         ]}
       />
-      <Modal title={editing ? `编辑模型：${editing.name}` : '新增模型绑定'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
+      <Modal title={editing ? `选择模型：${editing.name}` : '选择模型'} open={modalOpen} onOk={submit} onCancel={() => setModalOpen(false)} destroyOnClose>
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="模型名" rules={[{ required: true, message: '请输入模型名' }]}>
-            <Input placeholder="如 claude-sonnet-4" />
+          <Form.Item name="models" label="该渠道提供的模型" extra="模型列表属于渠道基础配置；回车即可添加多个模型。">
+            <Select mode="tags" tokenSeparators={[',']} placeholder="输入模型名并回车" open={false} />
           </Form.Item>
-          <Form.Item name="channelIds" label="绑定渠道" extra="渠道停用后仍保留绑定，重新启用即可恢复路由。">
-            <Checkbox.Group style={{ display: 'grid', gap: 8 }}>
-              {channels.map((c) => <Checkbox key={c.id} value={c.id}>{c.name}（{c.type}，优先级 {c.priority}）</Checkbox>)}
-            </Checkbox.Group>
-          </Form.Item>
+          <div style={{ color: '#777', fontSize: 13 }}>渠道优先级：{editing?.priority ?? 0}。同一模型出现在多个渠道时，网关按渠道优先级选择。</div>
         </Form>
       </Modal>
     </div>

@@ -34,7 +34,7 @@ export const ConsoleLayout: React.FC = () => {
   const items = [
     { key: '/keys', icon: <KeyOutlined />, label: '密钥池' },
     { key: '/channels', icon: <ApiOutlined />, label: '渠道' },
-    { key: '/models', icon: <DeploymentUnitOutlined />, label: '模型管理' },
+    { key: '/models', icon: <DeploymentUnitOutlined />, label: '渠道模型' },
     { key: '/templates', icon: <TagsOutlined />, label: '预制模板' },
     { key: '/tokens', icon: <LockOutlined />, label: '令牌' },
     { key: '/logs', icon: <FileTextOutlined />, label: '日志' },
