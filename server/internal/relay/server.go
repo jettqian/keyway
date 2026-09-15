@@ -115,7 +115,7 @@ func (s *Server) plan(matched, defaults []*routing.ResolvedChannel) []attempt {
 				ids[p.Via] = p.ProxyID
 			}
 		}
-		combos := orderCombos(s.Store.DB(), rc.Channel.ID, lines, rawPaths)
+		combos := orderCombos(s.Store.DB(), rc.Channel.ID, lines, rawPaths, probeIntervalMin(s.Cfg))
 		for _, cb := range combos {
 			for _, k := range keys {
 				out = append(out, attempt{
@@ -136,7 +136,7 @@ func (s *Server) plan(matched, defaults []*routing.ResolvedChannel) []attempt {
 }
 
 // orderCombos 按 line_stats 健康度与延迟排序组合（FR-S2）
-func orderCombos(db *gorm.DB, channelID int64, lines []string, paths []struct{ proxy, via string }) []linePath {
+func orderCombos(db *gorm.DB, channelID int64, lines []string, paths []struct{ proxy, via string }, intervalMin int) []linePath {
 	type raw struct {
 		lp    linePath
 		order int
@@ -148,10 +148,9 @@ func orderCombos(db *gorm.DB, channelID int64, lines []string, paths []struct{ p
 		}
 	}
 	stats := probe.LoadStats(db, channelID)
-	// 新鲜阈值 = 3 个探测周期（读取网关配置，默认 10 分钟）
-	intervalMin := 10
-	if iv := intervalMinutes(); iv > 0 {
-		intervalMin = iv
+	// 新鲜阈值 = 3 个探测周期（跟随 ProbeIntervalMin 缩放，与 probe.Engine 基准频率一致）
+	if intervalMin <= 0 {
+		intervalMin = 10
 	}
 	fresh := time.Now().Unix() - int64(3*intervalMin*60)
 
@@ -209,5 +208,11 @@ func (s *Server) orderKeys(rc *routing.ResolvedChannel) []*store.Key {
 	return cooling
 }
 
-// intervalMinutes 探测周期（分钟），供 orderCombos 新鲜度阈值计算
-func intervalMinutes() int { return 10 }
+// probeIntervalMin 探测周期（分钟），供 orderCombos 新鲜度阈值计算；
+// 与 probe.Engine.baseInterval 一致：<=0 时回落 10
+func probeIntervalMin(cfg config.Config) int {
+	if cfg.ProbeIntervalMin > 0 {
+		return cfg.ProbeIntervalMin
+	}
+	return 10
+}
