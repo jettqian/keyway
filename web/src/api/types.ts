@@ -156,6 +156,7 @@ export interface StatsGroup {
 
 export interface StatsResponse {
   summary: StatsSummary
+  byUser?: StatsGroup[]
   byChannel: StatsGroup[]
   byModel: StatsGroup[]
   byKey: StatsGroup[]

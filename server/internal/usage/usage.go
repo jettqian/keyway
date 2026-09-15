@@ -306,6 +306,7 @@ type LatestUsage struct {
 // Stats 完整统计响应
 type Stats struct {
 	Summary   StatsSummary  `json:"summary"`
+	ByUser    []StatsGroup  `json:"byUser,omitempty"` // 管理员全员统计：按用户分组（零用量用户也补齐展示）
 	ByChannel []StatsGroup  `json:"byChannel"`
 	ByModel   []StatsGroup  `json:"byModel"`
 	ByKey     []StatsGroup  `json:"byKey"`
@@ -377,6 +378,26 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 	st.ByModel = group("model")
 	st.ByKey = group("key_id")
 
+	// 管理员全员统计（FR-M3）：按用户分组，并补齐零用量用户
+	// （GROUP BY logs 不会为没产生过日志的成员产生行，从 users 表回填保证全员可见）
+	var userNames map[int64]string
+	if userID == nil {
+		st.ByUser = group("user_id")
+		var users []store.User
+		db.Select("id, username").Order("id").Find(&users)
+		userNames = make(map[int64]string, len(users))
+		seen := make(map[string]bool, len(st.ByUser))
+		for i := range st.ByUser {
+			seen[st.ByUser[i].Dim] = true
+		}
+		for i := range users {
+			userNames[users[i].ID] = users[i].Username
+			if id := strconv.FormatInt(users[i].ID, 10); !seen[id] {
+				st.ByUser = append(st.ByUser, StatsGroup{Dim: id}) // 零用量行
+			}
+		}
+	}
+
 	// 价目补算：写入时未定价（费用 NULL）的成功请求按当前价目补算并合入汇总与分组；
 	// 补算后仍未命中价目的行才计入"部分未定价"（快照语义仅覆盖已定价行）
 	chNames, keyNames, chParams := channelMaps(db, userID)
@@ -386,10 +407,12 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 	mergeCost(st.ByChannel, extra.byChannel)
 	mergeCost(st.ByModel, extra.byModel)
 	mergeCost(st.ByKey, extra.byKey)
+	mergeCost(st.ByUser, extra.byUser)
 
-	// 分组维度显示名称：渠道/密钥 id → 名称（已删除的回退 #id）
+	// 分组维度显示名称：渠道/密钥/用户 id → 名称（已删除的回退 #id）
 	applyIDNames(st.ByChannel, chNames)
 	applyIDNames(st.ByKey, keyNames)
+	applyIDNames(st.ByUser, userNames)
 
 	// 最近生效流量（不受统计窗口限制）：同渠道同模型只占一行——按（渠道, 模型）
 	// 分组取最新一条成功日志，展示最近 5 个组合
@@ -430,12 +453,13 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 	return st, nil
 }
 
-// recomputeCosts 价目补算结果（维度 key 与 SQL 分组口径一致：渠道/密钥为 id 文本，模型为名称）
+// recomputeCosts 价目补算结果（维度 key 与 SQL 分组口径一致：渠道/密钥/用户为 id 文本，模型为名称）
 type recomputeCosts struct {
 	total     float64
 	byChannel map[string]float64
 	byModel   map[string]float64
 	byKey     map[string]float64
+	byUser    map[string]float64
 }
 
 // recomputeUnpricedCost 用当前价目补算窗口内成功但未定价的行；返回补算费用与仍未定价行数。
@@ -445,10 +469,11 @@ func recomputeUnpricedCost(db *gorm.DB, base func() *gorm.DB, chParams map[int64
 		byChannel: map[string]float64{},
 		byModel:   map[string]float64{},
 		byKey:     map[string]float64{},
+		byUser:    map[string]float64{},
 	}
 	var rows []store.Log
 	if err := base().
-		Select("channel_id, key_id, model, upstream_model, prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens").
+		Select("user_id, channel_id, key_id, model, upstream_model, prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens").
 		Where("input_cost IS NULL AND status_code IS NOT NULL AND status_code < 400").
 		Find(&rows).Error; err != nil {
 		return res, 0
@@ -487,6 +512,7 @@ func recomputeUnpricedCost(db *gorm.DB, base func() *gorm.DB, chParams map[int64
 		res.byChannel[dimOfID(l.ChannelID)] += cost
 		res.byModel[dimOfStr(l.Model)] += cost
 		res.byKey[dimOfID(l.KeyID)] += cost
+		res.byUser[strconv.FormatInt(l.UserID, 10)] += cost
 	}
 	return res, unpriced
 }

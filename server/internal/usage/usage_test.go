@@ -212,3 +212,88 @@ func TestQueryStatsNamesBackfillRange(t *testing.T) {
 		t.Errorf("用户 1 分组不应包含其他用户的渠道，实际 %+v", st1.ByChannel)
 	}
 }
+
+// 管理员全员统计：按用户分组——维度显示用户名、零用量用户补齐展示、
+// 补算费用合入用户分组；用户视角不含 byUser
+func TestQueryStatsAdminByUser(t *testing.T) {
+	st, err := store.Open(store.Options{DataDir: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	db := st.DB()
+
+	// 三个用户：alice / bob 有日志，carol 从未用过（GROUP BY logs 不会为其产生行）
+	users := []store.User{
+		{Username: "alice", PasswordHash: strp("x")},
+		{Username: "bob", PasswordHash: strp("x")},
+		{Username: "carol", PasswordHash: strp("x")},
+	}
+	for i := range users {
+		if err := db.Create(&users[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 当前价目：m1 输入 $3/输出 $15 每百万
+	if err := db.Create(&store.ModelPricing{Model: "m1", InputPerM: 3, OutputPerM: 15, Currency: "USD"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	logs := []store.Log{
+		// alice：1 条已定价快照 $2 + 1 条写入时未定价（补算 1M×3 + 1M×15 = $18）
+		{CreatedAt: 100, UserID: users[0].ID, Model: strp("m1"), StatusCode: intp(200), InputCost: f64p(2)},
+		{CreatedAt: 200, UserID: users[0].ID, Model: strp("m1"), StatusCode: intp(200), PromptTokens: i64p(1_000_000), CompletionTokens: i64p(1_000_000)},
+		// bob：1 条失败（0 费用、1 错误）
+		{CreatedAt: 300, UserID: users[1].ID, Model: strp("m1"), StatusCode: intp(500)},
+	}
+	for i := range logs {
+		if err := db.Create(&logs[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stA, err := QueryStats(db, nil, 1, 1<<40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stA.Summary.Requests; got != 3 {
+		t.Errorf("全员汇总期望 3 条请求，实际 %d", got)
+	}
+	if got := stA.Summary.Cost; got != 20 {
+		t.Errorf("全员汇总期望费用 20（快照 2 + 补算 18），实际 %.4f", got)
+	}
+	find := func(dim string) *StatsGroup {
+		for i := range stA.ByUser {
+			if stA.ByUser[i].Dim == dim {
+				return &stA.ByUser[i]
+			}
+		}
+		return nil
+	}
+	if len(stA.ByUser) != 3 {
+		t.Fatalf("按用户分组期望 3 行（含零用量 carol），实际 %d 行：%+v", len(stA.ByUser), stA.ByUser)
+	}
+	if g := find("alice"); g == nil {
+		t.Errorf("期望维度显示用户名「alice」，实际 %+v", stA.ByUser)
+	} else if g.Requests != 2 || g.Cost != 20 {
+		t.Errorf("alice 期望 2 次 / $20（含补算 18），实际 %d 次 / $%.4f", g.Requests, g.Cost)
+	}
+	if g := find("bob"); g == nil {
+		t.Errorf("期望包含用户「bob」，实际 %+v", stA.ByUser)
+	} else if g.Requests != 1 || g.Errors != 1 || g.Cost != 0 {
+		t.Errorf("bob 期望 1 次 / 1 错误 / $0，实际 %d 次 / %d 错误 / $%.4f", g.Requests, g.Errors, g.Cost)
+	}
+	if g := find("carol"); g == nil {
+		t.Errorf("零用量用户 carol 期望补齐展示，实际 %+v", stA.ByUser)
+	} else if g.Requests != 0 {
+		t.Errorf("carol 期望 0 次请求，实际 %d", g.Requests)
+	}
+
+	// 用户视角不含 byUser（自己的统计里该维度无意义）
+	st1, err := QueryStats(db, &users[0].ID, 1, 1<<40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st1.ByUser) != 0 {
+		t.Errorf("用户视角不应返回 byUser，实际 %+v", st1.ByUser)
+	}
+}

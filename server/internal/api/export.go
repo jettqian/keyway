@@ -99,7 +99,9 @@ func exportStatsCSV(c *gin.Context, s *Server, userID int64) {
 		}
 		return rows
 	}
-	rows := append(group("渠道", st.ByChannel), group("模型", st.ByModel)...)
+	rows := group("用户", st.ByUser)
+	rows = append(rows, group("渠道", st.ByChannel)...)
+	rows = append(rows, group("模型", st.ByModel)...)
 	rows = append(rows, group("密钥", st.ByKey)...)
 	writeCSV(c, "keyway-stats.csv",
 		[]string{"维度", "分组", "请求数", "输入tokens", "输出tokens", "费用USD", "错误数"},

@@ -8,7 +8,7 @@ import type { LatestUsage, StatsResponse, StatsGroup } from '../api/types'
 import { formatDateTime, fmtCost, fmtInt } from '../format'
 
 // 快捷时间项（自然日口径）
-const rangePresets: { label: string; value: [Dayjs, Dayjs] }[] = [
+export const rangePresets: { label: string; value: [Dayjs, Dayjs] }[] = [
   { label: '今天', value: [dayjs(), dayjs()] },
   { label: '昨天', value: [dayjs().subtract(1, 'day'), dayjs().subtract(1, 'day')] },
   { label: '近 7 天', value: [dayjs().subtract(6, 'day'), dayjs()] },

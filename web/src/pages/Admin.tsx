@@ -1,6 +1,8 @@
 import React from 'react'
-import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography, Radio, Tooltip, AutoComplete } from 'antd'
-import { SearchOutlined } from '@ant-design/icons'
+import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography, Radio, Tooltip, AutoComplete, Card, DatePicker, Statistic } from 'antd'
+import { SearchOutlined, ReloadOutlined, DownloadOutlined } from '@ant-design/icons'
+import type { Dayjs } from 'dayjs'
+import dayjs from 'dayjs'
 import {
   adminUsers,
   adminSetUserStatus,
@@ -29,6 +31,7 @@ import {
 import type { User, ModelPricing, PricingSource, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings } from '../api/types'
 import { formatDateTime, fmtCost, fmtInt, fmtPrice } from '../format'
 import CatalogPrice from '../components/CatalogPrice'
+import { rangePresets } from './Stats'
 
 const UsersTab: React.FC = () => {
   const [users, setUsers] = React.useState<User[]>([])
@@ -807,27 +810,71 @@ const TemplatesTab: React.FC = () => {
 }
 
 const StatsTab: React.FC = () => {
+  const [range, setRange] = React.useState<[Dayjs, Dayjs]>([dayjs().subtract(6, 'day'), dayjs()])
   const [data, setData] = React.useState<StatsResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
-  React.useEffect(() => {
-    adminStats({ days: 30 })
+
+  const refresh = React.useCallback(() => {
+    setLoading(true)
+    adminStats({ start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') })
       .then(setData)
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
-  }, [])
+  }, [range])
+
+  React.useEffect(refresh, [refresh])
+
+  const groupColumns = (dimName: string) => [
+    { title: dimName, dataIndex: 'dim' },
+    { title: '请求数', dataIndex: 'requests', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.requests - b.requests },
+    { title: '输入 tokens', dataIndex: 'promptTokens', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.promptTokens - b.promptTokens },
+    { title: '输出 tokens', dataIndex: 'completionTokens', align: 'right' as const, render: (v: number) => fmtInt(v), sorter: (a: StatsGroup, b: StatsGroup) => a.completionTokens - b.completionTokens },
+    { title: '费用估算', dataIndex: 'cost', align: 'right' as const, render: (v: number) => fmtCost(v), sorter: (a: StatsGroup, b: StatsGroup) => a.cost - b.cost },
+  ]
+
+  const exportUrl = `/api/admin/stats/export?start=${range[0].format('YYYY-MM-DD')}&end=${range[1].format('YYYY-MM-DD')}`
+
   return (
-    <Table<StatsGroup>
-      rowKey="dim"
-      loading={loading}
-      dataSource={data?.byModel ?? []}
-      columns={[
-        { title: '模型', dataIndex: 'dim' },
-        { title: '请求数', dataIndex: 'requests', align: 'right', render: (v: number) => fmtInt(v) },
-        { title: '输入 tokens', dataIndex: 'promptTokens', align: 'right', render: (v: number) => fmtInt(v) },
-        { title: '输出 tokens', dataIndex: 'completionTokens', align: 'right', render: (v: number) => fmtInt(v) },
-        { title: '费用估算', dataIndex: 'cost', align: 'right', render: (v: number) => fmtCost(v) },
-      ]}
-    />
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <DatePicker.RangePicker
+          value={range}
+          onChange={(v) => {
+            if (v && v[0] && v[1]) setRange([v[0], v[1]])
+          }}
+          disabledDate={(d) => d.isAfter(dayjs(), 'day')}
+          presets={rangePresets}
+          allowClear={false}
+        />
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>刷新</Button>
+          <Button icon={<DownloadOutlined />} href={exportUrl}>导出 CSV</Button>
+        </Space>
+      </div>
+      <Card loading={loading} style={{ marginBottom: 16 }}>
+        <div className="stat-strip">
+          <div className="stat-cell">
+            <Statistic title="请求数" value={fmtInt(data?.summary.requests ?? 0)} />
+          </div>
+          <div className="stat-cell">
+            <Statistic title="错误率" value={data?.summary.errorRate ?? 0} suffix="%" precision={2} />
+          </div>
+          <div className="stat-cell">
+            <Statistic title="tokens（入/出）" value={`${fmtInt(data?.summary.promptTokens ?? 0)} / ${fmtInt(data?.summary.completionTokens ?? 0)}`} />
+          </div>
+          <div className="stat-cell">
+            <Statistic title="费用估算" value={fmtCost(data?.summary.cost ?? 0)} />
+            {data?.summary.unpriced ? <span className="stat-note">部分未定价</span> : null}
+          </div>
+        </div>
+      </Card>
+      <Card title="按用户" loading={loading} style={{ marginBottom: 16 }}>
+        <Table<StatsGroup> rowKey="dim" size="small" pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={data?.byUser ?? []} columns={groupColumns('用户')} />
+      </Card>
+      <Card title="按模型" loading={loading}>
+        <Table<StatsGroup> rowKey="dim" size="small" pagination={false} dataSource={data?.byModel ?? []} columns={groupColumns('模型')} />
+      </Card>
+    </div>
   )
 }
 
@@ -982,7 +1029,7 @@ const AdminPage: React.FC = () => (
     </div>
     <Tabs
       items={[
-        { key: 'stats', label: '用量/花费（30 天）', children: <StatsTab /> },
+        { key: 'stats', label: '用量/花费', children: <StatsTab /> },
         { key: 'users', label: '用户', children: <UsersTab /> },
         { key: 'models', label: '模型目录', children: <CatalogModelsTab /> },
         { key: 'pricing', label: '模型价目表', children: <PricingTab /> },
