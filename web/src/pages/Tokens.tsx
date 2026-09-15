@@ -1,6 +1,6 @@
 import React from 'react'
-import { Alert, Button, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
-import { HolderOutlined, PlusOutlined } from '@ant-design/icons'
+import { Alert, Button, DatePicker, Form, Input, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import { HolderOutlined, PlusOutlined, SwitcherOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { listTokens, createToken, updateToken, revokeToken, revealToken, listChannels } from '../api'
 import type { GatewayToken, Channel } from '../api/types'
@@ -205,7 +205,7 @@ const TokensPage: React.FC = () => {
   return (
     <div>
       <div className="page-heading">
-        <div><h2>网关令牌</h2><p>为客户端创建访问凭证；展开行可点选控制渠道开关、拖动控制优先级。</p></div>
+        <div><h2>网关令牌</h2><p>为客户端创建访问凭证；「限定渠道」列可点选开关、拖动控制优先级。</p></div>
         <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ name: '', channelIds: [], modelScope: '', expiresAt: undefined }); setModalOpen(true) }}>
           新建令牌
         </Button>
@@ -215,30 +215,31 @@ const TokensPage: React.FC = () => {
         rowKey="id"
         loading={loading}
         dataSource={tokens}
-        expandable={{
-          expandedRowRender: (t) =>
-            t.revoked ? (
-              <span style={{ color: '#999' }}>令牌已吊销，无需配置渠道。</span>
-            ) : (
-              <TokenChannels token={t} channels={channels} onChanged={refresh} />
-            ),
-        }}
         columns={[
           { title: '名称', dataIndex: 'name' },
           { title: '前缀', dataIndex: 'keyPrefix' },
           {
             title: '限定渠道',
             dataIndex: 'channelIds',
+            width: 230,
             render: (_: number[] | undefined, t: GatewayToken) => {
               const ids = t.channelIds ?? (t.channelId ? [t.channelId] : [])
-              if (ids.length === 0) return <span style={{ color: '#999' }}>不限（全部渠道）</span>
               const names = ids.map((id) => channels.find((c) => c.id === id)?.name ?? `#${id}`)
               const head = names.slice(0, 2).join('、')
-              const label = names.length > 2 ? `${head} 等 ${names.length} 个` : head
+              const summary = ids.length === 0 ? '不限（全部渠道）' : names.length > 2 ? `${head} 等 ${names.length} 个` : head
+              if (t.revoked) return <span style={{ color: '#999' }}>{summary}</span>
               return (
-                <Tooltip title={`按顺序路由：${names.join(' → ')}`}>
-                  <span>{label}</span>
-                </Tooltip>
+                <Popover
+                  trigger="click"
+                  placement="rightTop"
+                  overlayStyle={{ maxWidth: 600 }}
+                  title={`渠道范围与顺序：${t.name}`}
+                  content={<TokenChannels token={t} channels={channels} onChanged={refresh} />}
+                >
+                  <a>
+                    {summary} <SwitcherOutlined style={{ color: '#176b87', marginLeft: 4 }} />
+                  </a>
+                </Popover>
               )
             },
           },
@@ -277,7 +278,7 @@ const TokensPage: React.FC = () => {
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="如 claude-code" />
           </Form.Item>
-          <Form.Item name="channelIds" label="限定渠道" extra={<span className="form-hint">留空则允许访问所有启用渠道；创建后可在列表展开行中开关与排序。</span>}>
+          <Form.Item name="channelIds" label="限定渠道" extra={<span className="form-hint">留空则允许访问所有启用渠道；创建后也可在列表「限定渠道」中配置开关与顺序。</span>}>
             <Select
               mode="multiple"
               allowClear

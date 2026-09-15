@@ -1,5 +1,5 @@
 import React from 'react'
-import { Alert, Button, Card, Checkbox, Col, Collapse, Modal, Row, Select, Steps, Tabs, Typography, message } from 'antd'
+import { Alert, Button, Card, Checkbox, Col, Collapse, Row, Select, Steps, Tabs, Typography, message } from 'antd'
 import { CopyOutlined, RobotOutlined } from '@ant-design/icons'
 import { listTokens, revealToken } from '../api'
 import type { GatewayToken } from '../api/types'
@@ -162,7 +162,9 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
   const [tokenId, setTokenId] = React.useState<number | undefined>()
   const [clients, setClients] = React.useState<ClientKey[]>(['claude', 'codex', 'opencode'])
   const [copying, setCopying] = React.useState(false)
-  const [fallback, setFallback] = React.useState<string | null>(null)
+  const [copyFailed, setCopyFailed] = React.useState(false)
+  const [realPrompt, setRealPrompt] = React.useState<string | null>(null)
+  const [previewOpen, setPreviewOpen] = React.useState<string[]>([])
 
   React.useEffect(() => {
     listTokens()
@@ -173,6 +175,12 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
       })
       .catch(() => {})
   }, [])
+
+  // 切换令牌/客户端后，清空剪贴板失败态与暂存的真实指令
+  React.useEffect(() => {
+    setCopyFailed(false)
+    setRealPrompt(null)
+  }, [tokenId, clients])
 
   const fetchModels = async (plaintext: string): Promise<string[]> => {
     try {
@@ -185,6 +193,15 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
     }
   }
 
+  const copyText = async (text: string): Promise<boolean> => {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   const copyPrompt = async () => {
     if (!tokenId) return
     setCopying(true)
@@ -192,16 +209,31 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
       const r = await revealToken(tokenId)
       const models = await fetchModels(r.plaintext)
       const text = buildAIPrompt(origin, r.plaintext, models, clients)
-      try {
-        await navigator.clipboard.writeText(text)
+      if (await copyText(text)) {
         message.success('已复制，粘贴给任意 AI 工具即可代为配置')
-      } catch {
-        setFallback(text)
+        setCopyFailed(false)
+        setRealPrompt(null)
+      } else {
+        // 剪贴板不可用：自动展开预览并展示真实指令供手动复制
+        setRealPrompt(text)
+        setCopyFailed(true)
+        setPreviewOpen(['preview'])
       }
     } catch (e) {
       message.error((e as Error).message)
     } finally {
       setCopying(false)
+    }
+  }
+
+  const retryCopy = async () => {
+    if (!realPrompt) return
+    if (await copyText(realPrompt)) {
+      message.success('已复制')
+      setCopyFailed(false)
+      setRealPrompt(null)
+    } else {
+      message.error('复制仍失败，请全选预览文本手动复制')
     }
   }
 
@@ -211,6 +243,8 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
       return next.length > 0 ? next : prev
     })
   }
+
+  const maskedPrompt = buildAIPrompt(origin, MASKED_TOKEN, ['（复制时包含该令牌可路由的全部模型）'], clients)
 
   return (
     <Card style={{ marginBottom: 16 }}>
@@ -252,43 +286,36 @@ const AIHelpCard: React.FC<{ origin: string }> = ({ origin }) => {
       </Note>
       <Collapse
         ghost
+        activeKey={previewOpen}
+        onChange={(keys) => setPreviewOpen(keys as string[])}
         items={[
           {
             key: 'preview',
-            label: '指令预览（令牌已脱敏，复制时为真实值）',
+            label: copyFailed ? '指令预览（含真实令牌，请手动复制）' : '指令预览（令牌已脱敏，复制时为真实值）',
             children: (
-              <div style={{ background: '#f6f9fa', borderRadius: 8, padding: '8px 16px' }}>
-                <MdView text={buildAIPrompt(origin, MASKED_TOKEN, ['（复制时包含该令牌可路由的全部模型）'], clients)} />
+              <div>
+                {copyFailed ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 8 }}
+                    message="剪贴板不可用"
+                    description={
+                      <span>
+                        请全选下方文本手动复制（含真实令牌，注意保密）；或
+                        <a onClick={retryCopy}>重试复制</a>
+                      </span>
+                    }
+                  />
+                ) : null}
+                <div style={{ background: '#f6f9fa', borderRadius: 8, padding: '8px 16px' }}>
+                  <MdView text={realPrompt ?? maskedPrompt} />
+                </div>
               </div>
             ),
           },
         ]}
       />
-      <Modal
-        open={fallback !== null}
-        title="剪贴板不可用，请手动复制"
-        onCancel={() => setFallback(null)}
-        onOk={() => setFallback(null)}
-        width={720}
-        footer={[
-          <Button key="copy" type="primary" icon={<CopyOutlined />} onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(fallback ?? '')
-              message.success('已复制')
-              setFallback(null)
-            } catch {
-              message.error('复制失败，请全选文本手动复制')
-            }
-          }}>
-            复制全部
-          </Button>,
-          <Button key="close" onClick={() => setFallback(null)}>关闭</Button>,
-        ]}
-      >
-        <div style={{ background: '#f6f9fa', borderRadius: 8, padding: '8px 16px', maxHeight: '60vh', overflowY: 'auto' }}>
-          <MdView text={fallback ?? ''} />
-        </div>
-      </Modal>
     </Card>
   )
 }
