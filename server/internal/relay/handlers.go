@@ -52,7 +52,7 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 		}
 		candidates := append(matched, defaults...)
 		for _, rc := range candidates {
-			if rc.Channel.Type != "openai" {
+			if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
 				continue
 			}
 			upstreamModel := mapModel(rc.Channel, probe.Model)
@@ -61,6 +61,8 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			m["model"] = upstreamModel
 			sendBody, _ := json.Marshal(m)
 			for _, a := range s.planFor(rc) {
+				a.protocol = "openai"
+				a.request = c.Request
 				resp, _, err := s.sendUpstream(a, "POST", strings.TrimSuffix(a.lineURL, "/")+path, sendBody, false)
 				if err != nil {
 					continue
