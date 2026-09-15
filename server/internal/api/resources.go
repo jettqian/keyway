@@ -571,6 +571,19 @@ func channelDTO(ch *store.Channel) gin.H {
 	json.Unmarshal([]byte(ch.KeyIDsJSON), &keyIDs)
 	var mapping map[string]string
 	json.Unmarshal([]byte(ch.ModelMappingJSON), &mapping)
+	// 历史空配置可能存为 null；接口始终返回可遍历的集合。
+	if urls == nil {
+		urls = []string{}
+	}
+	if models == nil {
+		models = []string{}
+	}
+	if keyIDs == nil {
+		keyIDs = []int64{}
+	}
+	if mapping == nil {
+		mapping = map[string]string{}
+	}
 	dto := gin.H{
 		"id": ch.ID, "name": ch.Name, "type": ch.Type,
 		"baseUrls": urls, "keyIds": keyIDs,
@@ -599,7 +612,7 @@ func mustJSONStr(v any) []byte {
 }
 
 func nonEmpty(list []string) []string {
-	var out []string
+	out := make([]string, 0, len(list))
 	for _, s := range list {
 		if trimOrEmpty(s) != "" {
 			out = append(out, trimOrEmpty(s))

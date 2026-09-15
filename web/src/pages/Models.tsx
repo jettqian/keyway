@@ -29,7 +29,7 @@ const ModelsPage: React.FC = () => {
   const rows = React.useMemo<ModelRow[]>(() => {
     const map = new Map<string, Channel[]>()
     for (const channel of channels) {
-      for (const model of channel.models) {
+      for (const model of Array.isArray(channel.models) ? channel.models : []) {
         if (!model) continue
         const list = map.get(model) ?? []
         list.push(channel)
