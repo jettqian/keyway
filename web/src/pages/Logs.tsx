@@ -1,5 +1,5 @@
 import React from 'react'
-import { Table, Select, Input, InputNumber, Tooltip, message } from 'antd'
+import { Table, Select, Input, InputNumber, Popover, Typography, message } from 'antd'
 import { listLogs, listChannels } from '../api'
 import type { LogEntry, Channel } from '../api/types'
 import { formatDateTime, fmtCost, fmtInt, fmtMs } from '../format'
@@ -102,9 +102,20 @@ const LogsPage: React.FC = () => {
             ellipsis: { showTitle: false },
             render: (v?: string) =>
               v ? (
-                <Tooltip title={<span className="log-error-detail">{v}</span>} overlayStyle={{ maxWidth: 480 }}>
-                  <span className="status-error">{v}</span>
-                </Tooltip>
+                <Popover
+                  trigger="click"
+                  placement="topLeft"
+                  overlayStyle={{ maxWidth: 560 }}
+                  content={
+                    <Typography.Paragraph copyable={{ text: v }} className="log-error-detail">
+                      {v}
+                    </Typography.Paragraph>
+                  }
+                >
+                  <span className="status-error" style={{ cursor: 'pointer' }} title="点击查看完整错误">
+                    {v}
+                  </span>
+                </Popover>
               ) : (
                 <span className="text-tertiary">-</span>
               ),

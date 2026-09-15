@@ -23,8 +23,8 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
 /* 日志状态码：>=400 用语义红并加重 */
 .status-error { color: var(--kw-danger); font-weight: 600; }
 
-/* 日志错误详情悬浮：保留换行与断词，超长可滚动，保证完整可读 */
-.log-error-detail { display: block; max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+/* 日志错误详情弹层：清掉 Paragraph 自带边距，保留换行与断词，超长可滚动 */
+.log-error-detail { display: block; max-height: 360px; overflow-y: auto; margin: 0; white-space: pre-wrap; word-break: break-all; }
 
 .console-sider { border-right: 1px solid #e6edef; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 20px 20px 18px; }
