@@ -1,0 +1,16 @@
+export default {
+  'layout.subtitle': 'LLM Gateway Console',
+  'layout.keys': 'Key Pool',
+  'layout.channels': 'Channels',
+  'layout.models': 'Models',
+  'layout.templates': 'Templates',
+  'layout.tokens': 'Tokens',
+  'layout.guide': 'Guide',
+  'layout.logs': 'Logs',
+  'layout.stats': 'Stats',
+  'layout.admin': 'Admin',
+  'layout.openNav': 'Open navigation menu',
+  'layout.logout': 'Log Out',
+  'layout.loggedOut': 'Logged out',
+  'layout.adminTag': 'Admin',
+}

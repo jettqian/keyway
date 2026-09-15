@@ -1,5 +1,5 @@
 import React from 'react'
-import { Layout as AntLayout, Menu, Dropdown, Avatar, Tag, message, Drawer, Button, Grid } from 'antd'
+import { Layout as AntLayout, Menu, Dropdown, Avatar, Tag, message, Drawer, Button, Grid, Tooltip } from 'antd'
 import {
   KeyOutlined,
   ApiOutlined,
@@ -13,16 +13,23 @@ import {
   DeploymentUnitOutlined,
   LogoutOutlined,
   MenuOutlined,
+  SunOutlined,
+  MoonOutlined,
+  TranslationOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { logout, me } from '../api'
 import type { User } from '../api/types'
+import { useI18n } from '../i18n'
+import { useTheme } from '../theme'
 
 const { Sider, Header, Content } = AntLayout
 
 export const ConsoleLayout: React.FC = () => {
   const nav = useNavigate()
   const location = useLocation()
+  const { t, locale, setLocale } = useI18n()
+  const { mode, toggle } = useTheme()
   const [user, setUser] = React.useState<User | null>(null)
   // 窄屏（<lg）用头部汉堡 + 抽屉导航替代侧栏；首次渲染 screens 为空对象，
   // lg === false 判定让首帧按桌面渲染，避免移动端闪抽屉
@@ -39,23 +46,23 @@ export const ConsoleLayout: React.FC = () => {
   const isAdmin = user?.role === 100
 
   const items = [
-    { key: '/keys', icon: <KeyOutlined />, label: '密钥池' },
-    { key: '/channels', icon: <ApiOutlined />, label: '渠道' },
-    { key: '/models', icon: <DeploymentUnitOutlined />, label: '模型管理' },
-    { key: '/templates', icon: <TagsOutlined />, label: '预制模板' },
-    { key: '/tokens', icon: <LockOutlined />, label: '令牌' },
-    { key: '/guide', icon: <BookOutlined />, label: '接入指南' },
-    { key: '/logs', icon: <FileTextOutlined />, label: '日志' },
-    { key: '/stats', icon: <BarChartOutlined />, label: '统计' },
+    { key: '/keys', icon: <KeyOutlined />, label: t('layout.keys') },
+    { key: '/channels', icon: <ApiOutlined />, label: t('layout.channels') },
+    { key: '/models', icon: <DeploymentUnitOutlined />, label: t('layout.models') },
+    { key: '/templates', icon: <TagsOutlined />, label: t('layout.templates') },
+    { key: '/tokens', icon: <LockOutlined />, label: t('layout.tokens') },
+    { key: '/guide', icon: <BookOutlined />, label: t('layout.guide') },
+    { key: '/logs', icon: <FileTextOutlined />, label: t('layout.logs') },
+    { key: '/stats', icon: <BarChartOutlined />, label: t('layout.stats') },
   ]
   if (isAdmin) {
-    items.push({ key: '/admin', icon: <SettingOutlined />, label: '管理' })
+    items.push({ key: '/admin', icon: <SettingOutlined />, label: t('layout.admin') })
   }
 
   const brand = (
     <div className="brand">
       <div className="brand-mark">K</div>
-      <div><div className="brand-name">Keyway</div><div className="brand-subtitle">模型网关控制台</div></div>
+      <div><div className="brand-name">Keyway</div><div className="brand-subtitle">{t('layout.subtitle')}</div></div>
     </div>
   )
 
@@ -87,7 +94,7 @@ export const ConsoleLayout: React.FC = () => {
               <Button
                 type="text"
                 className="nav-trigger"
-                aria-label="打开导航菜单"
+                aria-label={t('layout.openNav')}
                 icon={<MenuOutlined />}
                 onClick={() => setNavOpen(true)}
               />
@@ -95,15 +102,37 @@ export const ConsoleLayout: React.FC = () => {
               <div style={{ flex: 1 }} />
             </>
           )}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Tooltip title={t('common.toggleTheme')}>
+              <Button
+                type="text"
+                className="pref-trigger"
+                aria-label={t('common.toggleTheme')}
+                icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
+                onClick={toggle}
+              />
+            </Tooltip>
+            <Tooltip title={t('common.toggleLang')}>
+              <Button
+                type="text"
+                className="pref-trigger"
+                aria-label={t('common.toggleLang')}
+                icon={<TranslationOutlined />}
+                onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
+              >
+                {locale === 'zh' ? 'EN' : '中'}
+              </Button>
+            </Tooltip>
+          </span>
           <Dropdown
             menu={{
               items: [
-                { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
+                { key: 'logout', icon: <LogoutOutlined />, label: t('layout.logout') },
               ],
               onClick: async ({ key }) => {
                 if (key === 'logout') {
                   await logout()
-                  message.success('已退出')
+                  message.success(t('layout.loggedOut'))
                   nav('/login')
                 }
               },
@@ -114,7 +143,7 @@ export const ConsoleLayout: React.FC = () => {
                 {user?.username?.slice(0, 1).toUpperCase()}
               </Avatar>
               <span className="user-chip-name">{user?.username ?? '...'}</span>
-              {isAdmin ? <Tag style={{ marginInlineEnd: 0 }}>管理员</Tag> : null}
+              {isAdmin ? <Tag style={{ marginInlineEnd: 0 }}>{t('layout.adminTag')}</Tag> : null}
             </span>
           </Dropdown>
         </Header>

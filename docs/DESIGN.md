@@ -1,6 +1,23 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.36（与 PRD v1.5.38 对应；前端**移动端适配**——Layout 用
+- 版本：v1.37（与 PRD v1.5.39 对应；前端**中英文切换与亮暗色主题**——① 自建轻量
+  i18n（`web/src/i18n/`，无第三方依赖）：LocaleProvider + `useI18n().t(key,
+  params)`，扁平 key 字典按页面拆分（common/layout/login/register/keys/channels/
+  models/templates/tokens/guide/logs/stats/admin，共 482 key）；zh 字典为类型源
+  （`DictKey = keyof typeof zh`），en 字典以 `satisfies Record<DictKey, string>`
+  编译期校验 key 完整性；Provider 同步 antd locale（zh_CN/en_US）、dayjs locale
+  与 `<html lang>`，并经 `setApiTranslator` 向 `api/client.ts` 注入翻译函数
+  （非组件层的「请求失败（status）」兜底文案本地化）；语言持久化 localStorage
+  （kw-locale，默认中文）；Guide 代码示例保持原样不翻译（可直接复制使用）；
+  ② 主题（`web/src/theme.tsx`）：ThemeProvider（light/dark）+ localStorage
+  （kw-theme），`initTheme()` 在 React 渲染前同步 `<html data-theme>`（防暗色
+  刷新闪一帧亮色），未设置时跟随 prefers-color-scheme；antd 走算法切换
+  （darkAlgorithm + 暗色 token 映射：布局底 #0e1417、头/侧栏 #121a1f、主色
+  提亮 #3f96b0、表头 #162027 等），自定义样式全量 CSS 变量化（styles.css
+  `:root` 与 `:root[data-theme='dark']` 双套取值），页面内联硬编码色改用
+  `var(--kw-*)`（代码块/浅色块/边框/主色等）；③ 控制台头部新增语言
+  （TranslationOutlined，显示目标语言缩写）与主题（Sun/MoonOutlined）切换按钮；
+  前版 v1.36：与 PRD v1.5.38 对应；前端**移动端适配**——Layout 用
   `Grid.useBreakpoint`（`screens.lg === false` 判定，首帧按桌面渲染防闪烁）
   在窄屏（<992px）切换为头部汉堡按钮 + Drawer 抽屉导航（width 280，菜单/品牌
   与侧栏复用同一 JSX）；各列表与分组 Table 统一加 `scroll={{ x: 'max-content' }}`
@@ -132,7 +149,7 @@ keyway/
 │       ├── fxrate/          # USD→CNY 汇率定时同步（多源回退）
 │       ├── usage/           # 异步日志写、价目、聚合查询
 │       └── webui/           # go:embed dist
-├── web/                     # Vite React 前端源码
+├── web/                     # Vite React 前端源码（src/i18n 中英字典、src/theme.tsx 亮暗主题）
 ├── Dockerfile               # 三阶段：node 构建前端 → go 构建 → distroless
 ├── docker-compose.yml
 └── README.md

@@ -7,6 +7,14 @@ export class ApiError extends Error {
   }
 }
 
+// 非组件层无法使用 i18n hook：由 LocaleProvider 注入翻译函数，
+// 用于本地化「请求失败」兜底文案；未注入时回退 HTTP 状态码
+type Translator = (key: string, params?: Record<string, string | number>) => string
+let translate: Translator | null = null
+export function setApiTranslator(fn: Translator): void {
+  translate = fn
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'X-Keyway-CSRF': '1',
@@ -25,7 +33,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await resp.text()
   const data = text ? JSON.parse(text) : null
   if (!resp.ok) {
-    const message = data?.error?.message || data?.message || `请求失败（${resp.status}）`
+    const message =
+      data?.error?.message ||
+      data?.message ||
+      (translate ? translate('common.requestFailed', { status: resp.status }) : `HTTP ${resp.status}`)
     throw new ApiError(message, resp.status)
   }
   return data as T

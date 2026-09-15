@@ -1,0 +1,17 @@
+export default {
+  'keys.title': 'Upstream Key Pool',
+  'keys.subtitle': 'Centrally store and reuse upstream API keys; key values are managed only here.',
+  'keys.create': 'New Key',
+  'keys.empty': 'No keys yet. Click "New Key" in the top right to add one',
+  'keys.cooldown': 'Cooling Down',
+  'keys.statusDisabled': 'Disabled',
+  'keys.lastError': 'Last Error',
+  'keys.enableSuccess': 'Enabled',
+  'keys.disableSuccess': 'Disabled, no longer participating in channel rotation',
+  'keys.confirmDelete': 'Delete this key? Channels bound to it will stop working',
+  'keys.edit': 'Edit Key',
+  'keys.value': 'Key Value',
+  'keys.valueKeep': 'Key Value (leave blank to keep unchanged)',
+  'keys.valueHint': 'Used only to connect to upstream services; it will not be fully displayed again after saving.',
+  'keys.namePlaceholder': 'e.g. openai-main',
+}
