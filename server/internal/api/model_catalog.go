@@ -142,30 +142,3 @@ func (s *Server) handleAdminDeleteCatalogModel(c *gin.Context) {
 	}
 	s.ok(c, gin.H{})
 }
-
-// handleAdminImportCatalogFromPricing 从价目表一键导入缺失的模型名（管理员预置的快捷方式）
-func (s *Server) handleAdminImportCatalogFromPricing(c *gin.Context) {
-	var pricing []store.ModelPricing
-	s.Store.DB().Order("model").Find(&pricing)
-	var existing []store.CatalogModel
-	s.Store.DB().Find(&existing)
-	seen := make(map[string]bool, len(existing))
-	for i := range existing {
-		seen[existing[i].Name] = true
-	}
-	now := time.Now().Unix()
-	imported := 0
-	for i := range pricing {
-		name := trimOrEmpty(pricing[i].Model)
-		if name == "" || seen[name] {
-			continue
-		}
-		seen[name] = true
-		if err := s.Store.DB().Create(&store.CatalogModel{
-			Name: name, Enabled: 1, CreatedAt: now, UpdatedAt: now,
-		}).Error; err == nil {
-			imported++
-		}
-	}
-	s.ok(c, gin.H{"imported": imported})
-}

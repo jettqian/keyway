@@ -41,6 +41,14 @@ body { margin: 0; min-width: 320px; background: #f4f7f8; }
 .channel-pill:hover > .anticon { color: #176b87; }
 .channel-pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* 价目表数字单元格：等宽数字，右对齐下逐位可比 */
+.price-cell { font-variant-numeric: tabular-nums; }
+
+/* 模型目录单价展示：标签浅色、数字等宽，两行档位一目了然 */
+.catalog-price { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.catalog-price-label { color: #8aa0a8; font-size: 12px; margin-right: 2px; }
+.catalog-price-sep { color: #c3d2d7; margin: 0 6px; }
+
 @media (max-width: 768px) {
   .console-content { padding: 20px 16px 32px !important; }
   .page-heading { align-items: stretch; flex-direction: column; }

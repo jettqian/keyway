@@ -1,11 +1,12 @@
 import React from 'react'
 import { Tooltip } from 'antd'
 import type { CatalogModel } from '../api/types'
+import { fmtPrice } from '../format'
 
 /**
  * 模型目录关联单价展示（用户页与管理员页共用）：
- * 主行显示输入/输出价，副行显示缓存读/写价（未配置按输入价回退，费用统计同口径）；
- * 价目表中无同名条目时显示"未定价"。
+ * 按模型名精确匹配 model_pricing，四档价直接显示生效数值——缓存档未配置时
+ * 回退输入价（费用统计同口径）；无同名条目显示"未定价"。
  */
 const CatalogPrice: React.FC<{ m: CatalogModel }> = ({ m }) => {
   if (m.inputPerM == null) {
@@ -15,16 +16,17 @@ const CatalogPrice: React.FC<{ m: CatalogModel }> = ({ m }) => {
       </Tooltip>
     )
   }
-  const hasCache = m.cachedInputPerM != null || m.cacheWritePerM != null
   return (
-    <div style={{ lineHeight: 1.6 }}>
+    <div className="catalog-price" style={{ lineHeight: 1.7 }}>
       <div>
-        输入 {m.inputPerM} / 输出 {m.outputPerM}
+        <span className="catalog-price-label">输入</span> ${fmtPrice(m.inputPerM)}
+        <span className="catalog-price-sep">·</span>
+        <span className="catalog-price-label">输出</span> ${fmtPrice(m.outputPerM)}
       </div>
-      <div style={{ color: '#999', fontSize: 12 }}>
-        {hasCache
-          ? `缓存读 ${m.cachedInputPerM ?? '同输入'} / 写 ${m.cacheWritePerM ?? '同输入'}`
-          : '缓存未配置，按输入价计'}
+      <div>
+        <span className="catalog-price-label">缓存读</span> ${fmtPrice(m.cachedInputPerM ?? m.inputPerM)}
+        <span className="catalog-price-sep">·</span>
+        <span className="catalog-price-label">缓存写</span> ${fmtPrice(m.cacheWritePerM ?? m.inputPerM)}
       </div>
     </div>
   )

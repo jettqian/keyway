@@ -196,7 +196,6 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 		admin.POST("/models", s.handleAdminCreateCatalogModel)
 		admin.PUT("/models/:id", s.handleAdminUpdateCatalogModel)
 		admin.DELETE("/models/:id", s.handleAdminDeleteCatalogModel)
-		admin.POST("/models/import_pricing", s.handleAdminImportCatalogFromPricing)
 		admin.GET("/proxies", s.handleAdminProxies)
 		admin.POST("/proxies", s.handleAdminCreateProxy)
 		admin.PUT("/proxies/:id", s.handleAdminUpdateProxy)
