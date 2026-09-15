@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	socksproxy "golang.org/x/net/proxy"
 )
 
 // UpstreamEndpoint 在渠道 base_url 后拼出上游端点：
@@ -65,22 +62,7 @@ func (p *Pool) Get(proxyURL string) (*http.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		if u.Scheme == "socks5" {
-			var auth *socksproxy.Auth
-			if u.User != nil {
-				password, _ := u.User.Password()
-				auth = &socksproxy.Auth{User: u.User.Username(), Password: password}
-			}
-			dialer, err := socksproxy.SOCKS5("tcp", u.Host, auth, dialer)
-			if err != nil {
-				return nil, fmt.Errorf("创建 SOCKS5 代理失败: %w", err)
-			}
-			transport.DialContext = func(_ context.Context, network, address string) (net.Conn, error) {
-				return dialer.Dial(network, address)
-			}
-		} else {
-			transport.Proxy = http.ProxyURL(u)
-		}
+		transport.Proxy = http.ProxyURL(u)
 	}
 	cl := &http.Client{Transport: transport}
 	p.clients[proxyURL] = cl
