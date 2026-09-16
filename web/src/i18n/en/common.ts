@@ -34,4 +34,5 @@ export default {
   'common.toggleTheme': 'Toggle light/dark theme',
   'common.toggleLang': 'Toggle 中文/English',
   'common.requestFailed': 'Request failed ({status})',
+  'common.allModelsCount': '{count} models in total',
 }

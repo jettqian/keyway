@@ -23,6 +23,7 @@ import type { ChannelTestResult } from '../api'
 import type { Channel, ChannelInput, ApiKey, CatalogModel, ChannelTemplate } from '../api/types'
 import { fmtMs } from '../format'
 import { useI18n } from '../i18n'
+import ModelTags from '../components/ModelTags'
 
 // 后端单组合探测总超时（probe.probeWait，秒）；矩阵并发执行，整体约等于单组合耗时
 const PROBE_WAIT_SECONDS = 30
@@ -303,6 +304,11 @@ const ChannelsPage: React.FC = () => {
           { title: t('channels.lineCount'), width: 90, align: 'right', render: (_, c) => c.baseUrls.length },
           { title: t('channels.keyCount'), width: 90, align: 'right', render: (_, c) => c.keyIds.length },
           { title: t('channels.priority'), dataIndex: 'priority', width: 90, align: 'right' },
+          {
+            title: t('common.model'),
+            dataIndex: 'models',
+            render: (_, c) => <ModelTags models={c.models} />,
+          },
           {
             title: t('common.status'),
             dataIndex: 'enabled',

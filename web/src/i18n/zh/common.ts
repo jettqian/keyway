@@ -35,4 +35,5 @@ export default {
   'common.toggleTheme': '切换亮色/暗色主题',
   'common.toggleLang': '切换中文/English',
   'common.requestFailed': '请求失败（{status}）',
+  'common.allModelsCount': '共 {count} 个模型',
 }

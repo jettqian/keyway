@@ -33,6 +33,7 @@ import { formatDateTime, fmtInt, fmtTokens } from '../format'
 import { useI18n } from '../i18n'
 import CatalogPrice from '../components/CatalogPrice'
 import Money from '../components/Money'
+import ModelTags from '../components/ModelTags'
 import { rangePresets } from './Stats'
 
 const UsersTab: React.FC = () => {
@@ -717,7 +718,7 @@ const TemplatesTab: React.FC = () => {
         columns={[
           { title: t('common.name'), dataIndex: 'name' },
           { title: t('admin.lineCount'), width: 90, align: 'right', render: (_, tpl) => tpl.baseUrls.length },
-          { title: t('admin.modelCount'), width: 90, align: 'right', render: (_, tpl) => tpl.models.length },
+          { title: t('common.model'), render: (_, tpl) => <ModelTags models={tpl.models} /> },
           { title: t('admin.copyCount'), dataIndex: 'copyCount', width: 90, align: 'right' },
           { title: t('common.description'), dataIndex: 'note', ellipsis: true },
           {

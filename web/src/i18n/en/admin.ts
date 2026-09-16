@@ -87,7 +87,6 @@ export default {
   // 预制模板
   'admin.createTemplate': 'New Template',
   'admin.lineCount': 'Lines',
-  'admin.modelCount': 'Models',
   'admin.copyCount': 'Copies',
   'admin.deleteTemplateConfirm': 'Delete template {name}?',
   'admin.deleteTemplateDesc': 'Channels already copied from it are unaffected',

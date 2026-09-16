@@ -1,6 +1,13 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.39（与 PRD v1.5.42 对应；请求日志**逐次上游尝试各记一条**——修复失败
+- 版本：v1.40（与 PRD v1.5.43 对应；渠道/模板列表**直接展示模型列表**——新增共享
+  组件 `web/src/components/ModelTags.tsx`：行内平铺前 5 个模型 Tag，超出部分收进
+  「+N」Tag 的 Popover（标题显示总数，内容区 maxWidth 360 / maxHeight 280 滚动
+  浏览全部），适配模型较多的渠道；渠道列表（`pages/Channels.tsx`）新增「模型」列，
+  管理员模板列表（`pages/Admin.tsx` TemplatesTab）「模型数」数字列改为模型列表，
+  两者复用同一组件；i18n 新增 `common.allModelsCount`，移除弃用的
+  `admin.modelCount`；
+  前版 v1.39：与 PRD v1.5.42 对应；请求日志**逐次上游尝试各记一条**——修复失败
   切换只记最后一条失败日志的问题：旧实现中间渠道的失败不留痕，排障时无法判断
   "哪些渠道被尝试过"（channel_id 显示的是最后一次尝试的渠道，有误导性）；现
   chat / responses / completions-embeddings 三条管线（`relay/handlers.go`）在每个

@@ -88,7 +88,6 @@ export default {
   // 预制模板
   'admin.createTemplate': '新建模板',
   'admin.lineCount': '线路数',
-  'admin.modelCount': '模型数',
   'admin.copyCount': '复制次数',
   'admin.deleteTemplateConfirm': '删除模板 {name}？',
   'admin.deleteTemplateDesc': '已复制的渠道不受影响',
