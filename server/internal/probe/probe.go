@@ -394,7 +394,7 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	result.LatencyMs = time.Since(start).Milliseconds()
 	resp.Body.Close()
-	if summary := upstreamErrorSummary(respBody); summary != "" {
+	if summary := UpstreamErrorSummary(respBody); summary != "" {
 		result.Error = fmt.Sprintf("上游返回 %d：%s", resp.StatusCode, summary)
 	} else {
 		result.Error = fmt.Sprintf("上游返回 %d", resp.StatusCode)
@@ -402,10 +402,11 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 	return result
 }
 
-// upstreamErrorSummary 提取上游错误响应体的 message 字段
+// UpstreamErrorSummary 提取上游错误响应体的 message 字段
 // （openai/anthropic/new_api 等通用 {"error":{"message":...}} 结构），
-// 解析不出时回退原文前段；截断到 120 rune 防止撑爆 UI 与 last_error 列
-func upstreamErrorSummary(body []byte) string {
+// 解析不出时回退原文前段；截断到 120 rune 防止撑爆 UI 与 last_error 列。
+// relay 失败尝试的日志摘要复用同一解析（v1.5.42）
+func UpstreamErrorSummary(body []byte) string {
 	var e struct {
 		Error struct {
 			Message string `json:"message"`

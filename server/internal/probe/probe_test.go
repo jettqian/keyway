@@ -282,20 +282,20 @@ func TestProbeChannel错误含上游摘要(t *testing.T) {
 
 // 错误摘要解析：优先 error.message，截断超长文本，无法解析时回退原文
 func TestUpstreamErrorSummary(t *testing.T) {
-	if got := upstreamErrorSummary([]byte(`{"error":{"message":"分组无渠道"}}`)); got != "分组无渠道" {
+	if got := UpstreamErrorSummary([]byte(`{"error":{"message":"分组无渠道"}}`)); got != "分组无渠道" {
 		t.Errorf("嵌套 message 解析失败：%q", got)
 	}
-	if got := upstreamErrorSummary([]byte(`{"message":"顶层消息"}`)); got != "顶层消息" {
+	if got := UpstreamErrorSummary([]byte(`{"message":"顶层消息"}`)); got != "顶层消息" {
 		t.Errorf("顶层 message 解析失败：%q", got)
 	}
-	if got := upstreamErrorSummary([]byte(`{}`)); got != "" {
+	if got := UpstreamErrorSummary([]byte(`{}`)); got != "" {
 		t.Errorf("空结构应返回空，实际 %q", got)
 	}
-	if got := upstreamErrorSummary([]byte("非 JSON 原文")); got != "非 JSON 原文" {
+	if got := UpstreamErrorSummary([]byte("非 JSON 原文")); got != "非 JSON 原文" {
 		t.Errorf("非 JSON 应回退原文，实际 %q", got)
 	}
 	long := strings.Repeat("长", 200)
-	if got := upstreamErrorSummary([]byte(`{"error":{"message":"` + long + `"}}`)); len([]rune(got)) != 121 {
+	if got := UpstreamErrorSummary([]byte(`{"error":{"message":"` + long + `"}}`)); len([]rune(got)) != 121 {
 		t.Errorf("超长摘要应截断到 120 rune + 省略号，实际 %d rune", len([]rune(got)))
 	}
 }

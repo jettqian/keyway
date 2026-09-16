@@ -17,6 +17,7 @@ import (
 
 	"keyway/internal/convert"
 	"keyway/internal/httpx"
+	"keyway/internal/probe"
 	"keyway/internal/routing"
 	"keyway/internal/store"
 	"keyway/internal/usage"
@@ -61,9 +62,6 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 		}
 		candidates := append(matched, defaults...)
 		reqStart := time.Now()
-		var lastAttempt *attempt
-		lastStatus := 0
-		lastErr := ""
 		for _, rc := range candidates {
 			if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
 				continue
@@ -74,41 +72,31 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			m["model"] = upstreamModel
 			sendBody, _ := json.Marshal(m)
 			for _, a := range s.planFor(rc) {
-				lastAttempt = &a
 				a.protocol = "openai"
 				a.request = c.Request
 				resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, path), sendBody, false)
 				if err != nil {
-					lastErr = err.Error()
+					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, err.Error(), reqStart)
 					continue
 				}
 				if isHTMLResponse(resp) {
 					// 上游 2xx 却返回 HTML（SPA 回退）：端点不存在，换组合
 					io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
-					lastErr = "上游返回 HTML（端点不存在）"
+					lastErr := "上游返回 HTML（端点不存在）"
+					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, lastErr, reqStart)
 					continue
 				}
 				if resp.StatusCode >= 500 {
-					lastStatus = resp.StatusCode
-					lastErr = fmt.Sprintf("上游返回 %d", resp.StatusCode)
-					io.Copy(io.Discard, resp.Body)
+					errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 					resp.Body.Close()
+					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, errBody), reqStart)
 					continue
 				}
 				passthroughResponse(c, resp)
 				s.submitLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, convert.Usage{}, 0, 0)
 				return
 			}
-		}
-		if lastAttempt != nil {
-			if lastStatus == 0 {
-				lastStatus = http.StatusBadGateway
-			}
-			if lastErr == "" {
-				lastErr = fmt.Sprintf("上游返回 %d", lastStatus)
-			}
-			s.submitFailureLog(c, *lastAttempt, "openai", probe.Model, mapModel(lastAttempt.rc.Channel, probe.Model), lastStatus, lastErr, reqStart)
 		}
 		respondOpenAIError(c, http.StatusBadGateway, "无可用上游（completions/embeddings 仅支持 openai 型渠道）")
 	}
@@ -147,10 +135,9 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 	}
 	reqStart := time.Now()
 	var (
-		lastStatus  int
-		lastBody    []byte
-		lastErr     string
-		lastAttempt *attempt
+		lastStatus int
+		lastBody   []byte
+		lastErr    string
 	)
 	for _, rc := range append(matched, defaults...) {
 		// 跨协议转换渠道（目标非 openai）无法承接 Responses 协议
@@ -166,13 +153,13 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 		m["model"] = upstreamModel
 		sendBody, _ := json.Marshal(m)
 		for _, a := range s.planFor(rc) {
-			lastAttempt = &a
 			a.protocol = "openai"
 			a.request = c.Request
 			resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, "/responses"), sendBody, probe.Stream)
 			if err != nil {
 				lastErr = err.Error()
 				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
+				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, err.Error(), reqStart)
 				continue
 			}
 			if isHTMLResponse(resp) {
@@ -181,6 +168,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				resp.Body.Close()
 				lastErr = "上游 /responses 返回 HTML（端点不存在）"
 				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, lastErr)
+				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, lastErr, reqStart)
 				continue
 			}
 			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 429 {
@@ -192,6 +180,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				lastStatus = resp.StatusCode
 				lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				resp.Body.Close()
+				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
 				continue
 			}
 			if resp.StatusCode >= 500 {
@@ -199,6 +188,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				resp.Body.Close()
 				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, fmt.Sprintf("上游 %d", resp.StatusCode))
+				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
 				continue
 			}
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, resp.StatusCode < 400, "")
@@ -213,16 +203,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			return
 		}
 	}
-	if lastAttempt != nil {
-		status := lastStatus
-		if status == 0 {
-			status = http.StatusBadGateway
-		}
-		if lastErr == "" {
-			lastErr = fmt.Sprintf("上游返回 %d", status)
-		}
-		s.submitFailureLog(c, *lastAttempt, "openai", probe.Model, mapModel(lastAttempt.rc.Channel, probe.Model), status, lastErr, reqStart)
-	}
+	// 全部组合耗尽：每次失败尝试已逐条落日志，这里透传最后一次上游错误
 	if lastStatus > 0 {
 		respondRawOrConverted(c, "openai", lastStatus, lastBody, false)
 		return
@@ -346,10 +327,8 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		lastBody       []byte
 		lastErr        string
 		lastCrossProto bool // 最后一次失败尝试是否跨协议（决定错误体是否需要转换）
-		lastAttempt    *attempt
 	)
 	for _, a := range attempts {
-		lastAttempt = &a
 		a.protocol = inbound
 		if a.rc.Channel.ForwardMode == "convert" {
 			a.protocol = a.rc.Channel.Type
@@ -368,6 +347,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastErr = err.Error()
 			lastCrossProto = cross
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
+			s.submitFailureLog(c, a, inbound, model, upstreamModel, http.StatusBadGateway, err.Error(), reqStart)
 			continue // 网络错误 → 下一组合
 		}
 
@@ -378,6 +358,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastErr = "上游返回 HTML（端点不存在）"
 			lastCrossProto = cross
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, lastErr)
+			s.submitFailureLog(c, a, inbound, model, upstreamModel, http.StatusBadGateway, lastErr, reqStart)
 			continue
 		}
 
@@ -392,6 +373,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 			lastCrossProto = cross
 			resp.Body.Close()
+			s.submitFailureLog(c, a, inbound, model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
 			continue
 		}
 		// 5xx → 换组合
@@ -401,6 +383,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastCrossProto = cross
 			resp.Body.Close()
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, fmt.Sprintf("上游 %d", resp.StatusCode))
+			s.submitFailureLog(c, a, inbound, model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
 			continue
 		}
 
@@ -421,17 +404,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		return
 	}
 
-	// 全部组合耗尽
-	if lastAttempt != nil {
-		status := lastStatus
-		if status == 0 {
-			status = http.StatusBadGateway
-		}
-		if lastErr == "" {
-			lastErr = fmt.Sprintf("上游返回 %d", status)
-		}
-		s.submitFailureLog(c, *lastAttempt, inbound, model, mapModel(lastAttempt.rc.Channel, model), status, lastErr, reqStart)
-	}
+	// 全部组合耗尽：每次失败尝试已逐条落日志，这里透传最后一次上游错误
 	if lastStatus > 0 {
 		respondRawOrConverted(c, inbound, lastStatus, lastBody, lastCrossProto)
 		return
@@ -821,6 +794,15 @@ func (s *Server) planFor(rc *routing.ResolvedChannel) []attempt {
 // submitLog 异步记录日志（含费用快照与耗时）
 func (s *Server) submitLog(c *gin.Context, a attempt, inbound, model, upstreamModel string, statusCode int, u convert.Usage, ttftMs, totalMs int64) {
 	s.submitLogWithError(c, a, inbound, model, upstreamModel, statusCode, u, ttftMs, totalMs, "")
+}
+
+// upstreamStatusError 失败尝试的日志/错误摘要：状态码 + 上游错误体 message
+// （与 probe 探测摘要同格式，复用同一解析）
+func upstreamStatusError(status int, body []byte) string {
+	if summary := probe.UpstreamErrorSummary(body); summary != "" {
+		return fmt.Sprintf("上游 %d：%s", status, summary)
+	}
+	return fmt.Sprintf("上游 %d", status)
 }
 
 func (s *Server) submitFailureLog(c *gin.Context, a attempt, inbound, model, upstreamModel string, statusCode int, message string, reqStart time.Time) {

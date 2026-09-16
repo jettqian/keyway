@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"keyway/internal/store"
 )
 
 // failoverUpstream 可编程上游：按序返回预设状态码，并统计命中次数
@@ -15,7 +19,6 @@ type failoverUpstream struct {
 	mu     sync.Mutex
 	status int // 每次请求返回的状态码
 	hits   int
-	body   string
 }
 
 func newFailoverUpstream(status int) *failoverUpstream {
@@ -26,8 +29,12 @@ func newFailoverUpstream(status int) *failoverUpstream {
 		u.hits++
 		u.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(st)
-		fmt.Fprintf(w, `{"id":"x","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"%s"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`, u.body)
+		if st >= 400 {
+			w.WriteHeader(st)
+			fmt.Fprintf(w, `{"error":{"message":"mock %d"}}`, st)
+			return
+		}
+		fmt.Fprintf(w, `{"id":"x","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
 	}))
 	return u
 }
@@ -42,6 +49,45 @@ func (u *failoverUpstream) setStatus(st int) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.status = st
+}
+
+// waitLogs 轮询等待指定模型的日志行（异步批写，满 200 条或 1s 刷盘）
+func (c *ctx) waitLogs(t *testing.T, model string, want int) []store.Log {
+	t.Helper()
+	var logs []store.Log
+	for i := 0; i < 50; i++ {
+		c.store.DB().Where("model = ?", model).Order("id").Find(&logs)
+		if len(logs) >= want {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return logs
+}
+
+// assertAttemptLogs 断言逐次尝试落日志：失败行数与错误摘要、成功行数（FR-L1）
+func assertAttemptLogs(t *testing.T, logs []store.Log, wantFail, wantOK int, failStatus int) {
+	t.Helper()
+	fail, ok := 0, 0
+	for _, l := range logs {
+		if l.StatusCode == nil {
+			continue
+		}
+		if *l.StatusCode == failStatus {
+			fail++
+			if l.Error == nil || !strings.Contains(*l.Error, fmt.Sprintf("上游 %d", failStatus)) {
+				t.Fatalf("失败日志应有状态码错误摘要，实际: %v", l.Error)
+			}
+			if l.ChannelID == nil {
+				t.Fatal("失败日志应记录渠道")
+			}
+		} else if *l.StatusCode == 200 {
+			ok++
+		}
+	}
+	if fail != wantFail || ok != wantOK {
+		t.Fatalf("失败/成功日志行数 = %d/%d，期望 %d/%d（总行 %d）", fail, ok, wantFail, wantOK, len(logs))
+	}
 }
 
 // setupFailover 注册用户并按顺序建 3 个渠道（共用一把密钥），令牌限定 [c1, c2, c3]
@@ -119,6 +165,8 @@ func TestE2E失败切换按顺序切渠道(t *testing.T) {
 	if up3.hitCount() != 0 {
 		t.Fatalf("渠道2 成功后不应再访问渠道3（hits=%d）", up3.hitCount())
 	}
+	// 逐次尝试落日志：渠道1 失败一条 + 渠道2 成功一条（FR-L1）
+	assertAttemptLogs(t, c.waitLogs(t, "gpt-fo", 2), 1, 1, 503)
 }
 
 // TestE2E失败切换Responses按顺序切渠道 /v1/responses 管线同场景
@@ -208,4 +256,6 @@ func TestE2E失败切换多线路耗尽预算切下一渠道(t *testing.T) {
 	if up2.hitCount() == 0 {
 		t.Fatalf("渠道2 应被尝试（hits=%d）", up2.hitCount())
 	}
+	// 逐次尝试落日志：渠道1 三条线路各一条失败 + 渠道2 成功一条（FR-L1）
+	assertAttemptLogs(t, c.waitLogs(t, "gpt-multi", 4), 3, 1, 503)
 }
