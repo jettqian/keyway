@@ -92,10 +92,21 @@ type linePath struct {
 // plan 生成组合序列：渠道（priority 降序）× 线路 × 路径 × 密钥（有序/轮询）
 // 路径集合 = proxyman（直连→个人→公共代理，渠道 opt-in）；
 // 线路×路径按 line_stats 探测数据排序：健康且新鲜者按延迟升序，未知按录入顺序，不健康殿后；
-// 预算截断为 cfg.AttemptBudget；冷却中的密钥排后（可用密钥优先）
+// 预算（FR-K5）按渠道粒度截断：单渠道组合耗尽（≤ cfg.AttemptBudget）→ 换下一候选渠道，
+// 全部渠道耗尽 → 透传最后错误；冷却中的密钥排后（可用密钥优先）；
+// 同一渠道同时命中 matched 与 defaults 时去重（第二轮重试必然同样失败）
 func (s *Server) plan(matched, defaults []*routing.ResolvedChannel) []attempt {
 	var out []attempt
+	budget := s.Cfg.AttemptBudget
+	if budget <= 0 {
+		budget = 3
+	}
+	seen := map[int64]bool{}
 	for _, rc := range append(matched, defaults...) {
+		if seen[rc.Channel.ID] {
+			continue
+		}
+		seen[rc.Channel.ID] = true
 		keys := s.orderKeys(rc)
 		if len(keys) == 0 {
 			continue
@@ -116,21 +127,19 @@ func (s *Server) plan(matched, defaults []*routing.ResolvedChannel) []attempt {
 			}
 		}
 		combos := orderCombos(s.Store.DB(), rc.Channel.ID, lines, rawPaths, probeIntervalMin(s.Cfg))
+		var chOut []attempt
 		for _, cb := range combos {
 			for _, k := range keys {
-				out = append(out, attempt{
+				chOut = append(chOut, attempt{
 					rc: rc, lineURL: cb.line, proxyURL: cb.proxy, via: cb.via,
 					proxyID: ids[cb.via], key: k,
 				})
 			}
 		}
-	}
-	budget := s.Cfg.AttemptBudget
-	if budget <= 0 {
-		budget = 3
-	}
-	if len(out) > budget {
-		out = out[:budget]
+		if len(chOut) > budget {
+			chOut = chOut[:budget]
+		}
+		out = append(out, chOut...)
 	}
 	return out
 }

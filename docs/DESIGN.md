@@ -1,6 +1,16 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.37（与 PRD v1.5.39 对应；前端**中英文切换与亮暗色主题**——① 自建轻量
+- 版本：v1.38（与 PRD v1.5.39 对应；失败切换**预算改为按渠道粒度**——修复
+  attempt 预算跨渠道共享导致的切换失效：旧实现把 `KEYWAY_ATTEMPT_BUDGET`
+  （默认 3）截断作用在全部候选渠道的组合总和上，首渠道多条线路/多把密钥即可
+  耗尽整个预算，后续渠道（含令牌限定的次优先级渠道）完全不参与尝试、503 直接
+  透传（违反 FR-K5「组合尝试上限 3 次，仍失败 → 换渠道」与 A9）；现改为
+  **单渠道组合数 ≤ budget，组合耗尽 → 换下一候选渠道，全部渠道耗尽才透传**，
+  chat 管线（`relay.plan`）与 responses/passthrough 管线（逐渠道 `planFor`）
+  行为对齐；`plan` 同时对 matched+defaults 双命中的同一渠道去重（第二轮重试
+  必然同样失败）；新增端到端测试覆盖「渠道1 多线路全部失败仍切换渠道2」
+  （failover_test.go，chat 与 responses 双管线）；
+  前版 v1.37：与 PRD v1.5.39 对应；前端**中英文切换与亮暗色主题**——① 自建轻量
   i18n（`web/src/i18n/`，无第三方依赖）：LocaleProvider + `useI18n().t(key,
   params)`，扁平 key 字典按页面拆分（common/layout/login/register/keys/channels/
   models/templates/tokens/guide/logs/stats/admin，共 482 key）；zh 字典为类型源
@@ -437,8 +447,10 @@ graph LR
    - 401 / 403 / 429 → **换密钥**（同线路）；429 时对该 key 设冷却 =
      `Retry-After` 头（缺省 `KEYWAY_KEY_COOLDOWN_DEFAULT=60s`）
    - 5xx 及其他 4xx → 换下一组合（先线路后渠道）
-5. 预算：单请求最多 3 个组合（环境变量可调）；组合耗尽 → 换下一候选渠道；
-   全部渠道耗尽 → 透传最后一次上游错误（保留状态码与 body）
+5. 预算：**按渠道粒度**——单个渠道最多尝试 budget（`KEYWAY_ATTEMPT_BUDGET`，
+   默认 3）个组合，组合耗尽 → 换下一候选渠道；全部渠道耗尽 → 透传最后一次
+   上游错误（保留状态码与 body）。注意预算不是跨渠道共享的全局上限：首渠道的
+   多线路/多密钥组合不得挤占后续渠道的尝试机会（FR-K5/A9，v1.38 修正）
 6. **首字节保护**：一旦向客户端写出任何字节（含流式首包），不再做任何切换，错误透传
 
 ### 5.3 转发管线
