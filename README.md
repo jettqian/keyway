@@ -80,15 +80,19 @@ Agent 侧一次性配置（之后零改动；控制台「接入指南」页自�
 ```
 
 ```toml
-# Codex：~/.codex/config.toml（Responses 与 chat 协议均可；密钥直接写入）
+# Codex：~/.codex/config.toml（网关已支持 Responses API，保持默认协议即可，不建议 chat）
 model = "gpt-5.2"                 # 渠道中配置的模型名
 model_provider = "keyway"
 
 [model_providers.keyway]
 name = "keyway"
 base_url = "https://your-domain/v1"
-wire_api = "chat"                 # 或 "responses"（默认），网关均支持
-experimental_bearer_token = "sk-keyway-..."
+wire_api = "responses"            # 默认值
+```
+
+```jsonc
+// ~/.codex/auth.json（密钥写在这里）
+{ "OPENAI_API_KEY": "sk-keyway-..." }
 ```
 
 ```jsonc
