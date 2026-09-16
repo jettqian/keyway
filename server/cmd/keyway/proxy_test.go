@@ -177,10 +177,25 @@ func TestE2E管理员模板CRUD与复制(t *testing.T) {
 		t.Fatalf("用户侧模板不可见: %s", w.Body.String())
 	}
 
-	// 复制模板：草稿（无密钥、停用），无需先建密钥
-	w = c.do("POST", "/api/channels/from_template/1", nil, true)
+	// 从模板开始新建：预填模板配置提交草稿（无密钥、停用），记录来源并计数
+	w = c.do("POST", "/api/channels", map[string]any{
+		"fromTemplateId":   1,
+		"name":             "官方 OpenAI",
+		"type":             "",
+		"baseUrls":         []string{upstream.URL},
+		"keyIds":           []int64{},
+		"lineStrategy":     "auto",
+		"allowPublicProxy": false,
+		"models":           []string{"tpl-model"},
+		"modelMapping":     map[string]string{},
+		"forwardMode":      "passthrough",
+		"priority":         8,
+		"priceMultiplier":  1,
+		"pricingMode":      "usd",
+		"enabled":          false,
+	}, true)
 	if w.Code != 200 {
-		t.Fatalf("复制模板失败: %s", w.Body.String())
+		t.Fatalf("从模板新建渠道失败: %s", w.Body.String())
 	}
 	var copyResp struct {
 		Channel struct {
@@ -196,6 +211,15 @@ func TestE2E管理员模板CRUD与复制(t *testing.T) {
 	}
 	if len(copyResp.Channel.KeyIDs) != 0 || copyResp.Channel.Enabled {
 		t.Fatalf("复制应为无密钥的停用草稿: %s", w.Body.String())
+	}
+	// 来源标记与复制计数
+	w = c.do("GET", "/api/channels", nil, true)
+	if !strings.Contains(w.Body.String(), `"copiedFromTemplateId":1`) {
+		t.Fatalf("渠道应记录来源模板标记: %s", w.Body.String())
+	}
+	w = c.do("GET", "/api/admin/templates", nil, true)
+	if !strings.Contains(w.Body.String(), `"copyCount":1`) {
+		t.Fatalf("模板复制次数应自增: %s", w.Body.String())
 	}
 	// 草稿不参与路由：该模型请求仍应 404（未配置其他渠道）
 	if w := c.do("POST", "/api/tokens", map[string]any{"name": "t1"}, true); w.Code != 200 {
@@ -221,9 +245,24 @@ func TestE2E管理员模板CRUD与复制(t *testing.T) {
 	}, true); w.Code != 200 {
 		t.Fatalf("更新模板失败: %s", w.Body.String())
 	}
-	w = c.do("POST", "/api/channels/from_template/1", nil, true)
+	w = c.do("POST", "/api/channels", map[string]any{
+		"fromTemplateId":   1,
+		"name":             "官方 OpenAI",
+		"type":             "",
+		"baseUrls":         []string{upstream.URL},
+		"keyIds":           []int64{},
+		"lineStrategy":     "auto",
+		"allowPublicProxy": false,
+		"models":           []string{"tpl-model"},
+		"modelMapping":     map[string]string{},
+		"forwardMode":      "passthrough",
+		"priority":         8,
+		"priceMultiplier":  1,
+		"pricingMode":      "usd",
+		"enabled":          false,
+	}, true)
 	if w.Code == 200 {
-		t.Fatal("停用模板不应接受复制")
+		t.Fatal("停用模板不应接受从模板新建")
 	}
 
 	// 删除模板：已复制渠道不受影响

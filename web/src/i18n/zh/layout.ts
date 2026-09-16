@@ -4,7 +4,6 @@ export default {
   'layout.keys': '密钥池',
   'layout.channels': '渠道',
   'layout.models': '模型管理',
-  'layout.templates': '预制模板',
   'layout.tokens': '令牌',
   'layout.guide': '接入指南',
   'layout.logs': '日志',

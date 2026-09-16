@@ -100,7 +100,9 @@ type Channel struct {
 	// PricingMode=cny_ratio 时：$1 官方用量的渠道实收人民币金额（如 0.5 表示 $1 → ¥0.5）
 	CNYRatio  float64 `gorm:"column:cny_ratio;not null;default:0"`
 	IsDefault int     `gorm:"column:is_default;not null;default:0"`
-	Enabled   int     `gorm:"column:enabled;not null;default:1;index:idx_channels_user,priority:2"`
+	// enabled 默认 0（草稿）：未显式启用的渠道不参与路由；GORM 零值 default 标签会把
+	// 0 替换为 DefaultValueInterface，default:0 时替换结果恰好与期望一致
+	Enabled   int     `gorm:"column:enabled;not null;default:0;index:idx_channels_user,priority:2"`
 	LastOkAt  *int64  `gorm:"column:last_ok_at"`
 	LastError *string `gorm:"column:last_error"`
 	CreatedAt int64   `gorm:"column:created_at"`

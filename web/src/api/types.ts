@@ -66,6 +66,8 @@ export interface ChannelInput {
   cnyRatio?: number
   isDefault: boolean
   enabled: boolean
+  /** 新建时可选：从预制模板快速开始（后端校验模板并记录复制计数） */
+  fromTemplateId?: number
 }
 
 export interface ChannelTemplate {

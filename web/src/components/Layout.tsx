@@ -3,7 +3,6 @@ import { Layout as AntLayout, Menu, Dropdown, Avatar, Tag, message, Drawer, Butt
 import {
   KeyOutlined,
   ApiOutlined,
-  TagsOutlined,
   LockOutlined,
   FileTextOutlined,
   BarChartOutlined,
@@ -49,7 +48,6 @@ export const ConsoleLayout: React.FC = () => {
     { key: '/keys', icon: <KeyOutlined />, label: t('layout.keys') },
     { key: '/channels', icon: <ApiOutlined />, label: t('layout.channels') },
     { key: '/models', icon: <DeploymentUnitOutlined />, label: t('layout.models') },
-    { key: '/templates', icon: <TagsOutlined />, label: t('layout.templates') },
     { key: '/tokens', icon: <LockOutlined />, label: t('layout.tokens') },
     { key: '/guide', icon: <BookOutlined />, label: t('layout.guide') },
     { key: '/logs', icon: <FileTextOutlined />, label: t('layout.logs') },

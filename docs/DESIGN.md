@@ -213,7 +213,8 @@ CREATE TABLE channels (
   pricing_mode TEXT NOT NULL DEFAULT 'usd',   -- usd | cny_ratio
   cny_ratio REAL NOT NULL DEFAULT 0,          -- cny_ratio 模式：$1 官方用量实收 ¥X
   is_default INTEGER NOT NULL DEFAULT 0,
-  enabled INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 0,          -- 默认 0=草稿（不参与路由）；GORM default 标签
+                                               -- 会把零值替换为 DefaultValueInterface，取 0 才能写入草稿
   last_ok_at INTEGER, last_error TEXT, created_at INTEGER
 );
 CREATE INDEX idx_channels_user ON channels(user_id, enabled);
@@ -748,10 +749,14 @@ new-api 的已知语义（仅参考行为，代码自研）。
 
 ## 9. 预制渠道复制（FR-X2/X3）
 
-- `POST /api/channels/from_template/:id`：读模板 → 预填渠道字段（密钥留空、
-  allow_public_proxy 取模板默认值、priority 取 priority_default）→ 返回草稿 ID
-  （status=draft，不参与路由）→ 用户编辑绑定 key 后 `PUT /api/channels/:id` 转正式
-- 复制即自增模板 copy_count；channels.copied_from_template_id 仅作来源标记
+- 入口整合：**新建渠道弹窗内提供"从模板开始"选择器**（用户侧不再有独立模板页），
+  前端选中后把模板配置（线路、模型、映射、线路策略、公共代理默认值、优先级默认值）
+  预填进表单，密钥留空；用户可在同一表单继续修改任意字段后保存，一次流程完成
+- `POST /api/channels` 增加可选 `from_template_id`：后端校验模板存在且启用（否则 404），
+  创建成功后自增模板 copy_count、渠道记录 `copied_from_template_id` 来源标记；
+  字段值以用户提交为准（后端不做预填）
+- 渠道表 `enabled` 列默认值改为 0（草稿）：GORM 对带 default 标签的零值字段会用
+  DefaultValueInterface 覆盖写入值，default:0 使草稿 enabled=0 可正常落库
 - "源模板已更新"提示：渠道列表接口联查 `templates.updated_at > channel.created_at`
   的来源标记，前端展示徽标（无自动行为）
 - 模板删除：无级联（channels.copied_from_template_id 保留为悬挂标记，提示自然消失）
@@ -788,11 +793,10 @@ GET /oauth/feishu/callback?code&state
 | GET /api/auth/feishu/url；PUT /api/auth/feishu/bind | 登录跳转 / 绑定解绑 |
 | GET/POST/PUT/DELETE /api/keys[/:id] | 密钥池 CRUD |
 | PUT /api/keys/:id/status | 密钥启用/停用（停用后不参与渠道轮换） |
-| GET/POST/PUT/DELETE /api/channels[/:id] | 渠道 CRUD |
+| GET/POST/PUT/DELETE /api/channels[/:id] | 渠道 CRUD（POST 支持可选 from_template_id：校验模板并计数，见 §9） |
 | GET /api/channels | 读取渠道及其模型列表（模型管理页数据源） |
 | GET /api/models/catalog | 全局模型目录（启用项，用户点选数据源，只读） |
 | PUT /api/models/bindings | 原子批量加入、移出或重命名渠道模型 |
-| POST /api/channels/from_template/:tid | 从模板复制（草稿） |
 | POST /api/channels/:id/test；POST /api/channels/:id/test_keys | 矩阵测试 / 逐密钥测试 |
 | GET /api/templates | 模板列表（用户侧，含复制数） |
 | GET/POST/PUT/DELETE /api/tokens[/:id] | 令牌 CRUD（列表仅返回前缀；DELETE 为删除记录） |
@@ -877,7 +881,7 @@ text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无�
 | M1 骨架 | 项目脚手架、配置、DB 迁移、用户/会话/注册、渠道与密钥池 CRUD、令牌签发、透传转发（同协议）+ 流式、异步日志 | A1 A2 A5(部分) A6 A8 A10 | ✅ |
 | M2 协议转换 | 双向转换器 + 流式事件映射 + 金样本回归、count_tokens、/v1/models 双格式 | A4 | ✅ |
 | M3 优选与切换 | 探测器、line_stats、attempt plan、失败切换、key 轮换冷却、测试按钮 | A9 A11 A15 A16 | ✅ |
-| M4 代理与模板 | proxyman（个人+公共池）、流量统计、预制模板 CRUD+草稿复制 | A3 A12 A17 A18 | ✅ |
+| M4 代理与模板 | proxyman（个人+公共池）、流量统计、预制模板 CRUD+从模板新建渠道（v1.5.40 起入口整合进新建渠道弹窗） | A3 A12 A17 A18 | ✅ |
 | M5 观测 | 价目表（CRUD/导入导出）、费用快照（计价模式/汇率）、统计页、CSV、管理员用户管理 | A14 | ✅ |
 | M6 准入与收尾 | 飞书 OAuth、邀请码、保留期清理、docker 化、README | A13 | ✅ |
 | 迭代 | 渠道计价模式、令牌多渠道绑定、耗时指标（A7 压测除外均完成） | — | ✅ |

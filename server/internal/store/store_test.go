@@ -232,9 +232,9 @@ func TestChannelCRUD(t *testing.T) {
 	if err := st.db.Create(ch).Error; err != nil {
 		t.Fatalf("创建渠道失败: %v", err)
 	}
-	// DDL 默认值
+	// DDL 默认值（enabled 默认 0 = 草稿，不参与路由）
 	if ch.KeyStrategy != "ordered" || ch.LineStrategy != "auto" || ch.AllowPublicProxy != 0 ||
-		ch.Priority != 0 || ch.IsDefault != 0 || ch.Enabled != 1 || ch.ModelMappingJSON != "{}" {
+		ch.Priority != 0 || ch.IsDefault != 0 || ch.Enabled != 0 || ch.ModelMappingJSON != "{}" {
 		t.Fatalf("默认值不符合 DDL: %+v", ch)
 	}
 	if ch.ProxyURLEnc != nil || ch.LastOkAt != nil || ch.LastError != nil || ch.CopiedFromTemplateID != nil {
@@ -243,7 +243,7 @@ func TestChannelCRUD(t *testing.T) {
 
 	// 走 idx_channels_user 的查询
 	var got []Channel
-	if err := st.db.Where("user_id = ? AND enabled = ?", 7, 1).Find(&got).Error; err != nil || len(got) != 1 {
+	if err := st.db.Where("user_id = ? AND enabled = ?", 7, 0).Find(&got).Error; err != nil || len(got) != 1 {
 		t.Fatalf("按用户查询渠道失败: %v len=%d", err, len(got))
 	}
 	if err := st.db.Model(ch).Updates(map[string]any{"priority": 9, "enabled": 2}).Error; err != nil {

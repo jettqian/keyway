@@ -17,10 +17,10 @@ import {
   Spin,
 } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
-import { Link, useParams } from 'react-router-dom'
-import { listChannels, createChannel, updateChannel, deleteChannel, listKeys, testChannel, listCatalogModels } from '../api'
+import { useParams } from 'react-router-dom'
+import { listChannels, createChannel, updateChannel, deleteChannel, listKeys, testChannel, listCatalogModels, listTemplates } from '../api'
 import type { ChannelTestResult } from '../api'
-import type { Channel, ChannelInput, ApiKey, CatalogModel } from '../api/types'
+import type { Channel, ChannelInput, ApiKey, CatalogModel, ChannelTemplate } from '../api/types'
 import { fmtMs } from '../format'
 import { useI18n } from '../i18n'
 
@@ -52,6 +52,7 @@ const ChannelsPage: React.FC = () => {
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [keys, setKeys] = React.useState<ApiKey[]>([])
   const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
+  const [templates, setTemplates] = React.useState<ChannelTemplate[]>([])
   const [loading, setLoading] = React.useState(true)
   const [modalOpen, setModalOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<Channel | null>(null)
@@ -63,11 +64,12 @@ const ChannelsPage: React.FC = () => {
 
   const refresh = React.useCallback(() => {
     setLoading(true)
-    Promise.all([listChannels(), listKeys(), listCatalogModels()])
-      .then(([c, k, m]) => {
+    Promise.all([listChannels(), listKeys(), listCatalogModels(), listTemplates()])
+      .then(([c, k, m, tpl]) => {
         setChannels(c.channels)
         setKeys(k.keys)
         setCatalog(m.models)
+        setTemplates(tpl.templates)
       })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
@@ -101,6 +103,36 @@ const ChannelsPage: React.FC = () => {
     form.resetFields()
     form.setFieldsValue(emptyInput)
     setModalOpen(true)
+  }
+
+  // 从模板开始：选中即整体重置表单并预填模板配置（密钥留空，保存后与模板解耦）；
+  // 清除选择回到空白新建
+  const applyTemplate = (tplId?: number) => {
+    const tpl = tplId ? templates.find((tp) => tp.id === tplId) : undefined
+    form.resetFields()
+    if (!tpl) {
+      form.setFieldsValue(emptyInput)
+      return
+    }
+    form.setFieldsValue({
+      fromTemplateId: tpl.id,
+      name: tpl.name,
+      type: '',
+      baseUrls: tpl.baseUrls.length ? tpl.baseUrls : [''],
+      keyIds: [],
+      keyStrategy: 'ordered',
+      lineStrategy: tpl.lineStrategy,
+      allowPublicProxy: tpl.allowPublicProxyDefault,
+      models: tpl.models,
+      modelMapping: Object.entries(tpl.modelMapping).map(([from, to]) => ({ from, to })),
+      forwardMode: 'passthrough',
+      priority: tpl.priorityDefault,
+      priceMultiplier: 1,
+      pricingMode: 'usd',
+      cnyRatio: 0,
+      isDefault: false,
+      enabled: true,
+    })
   }
 
   const openEdit = (c: Channel) => {
@@ -152,6 +184,8 @@ const ChannelsPage: React.FC = () => {
       cnyRatio: v.cnyRatio || 0,
       isDefault: v.isDefault,
       enabled: v.enabled,
+      // 仅新建时有效：来源模板标记（编辑时表单无该字段）
+      fromTemplateId: editing ? undefined : v.fromTemplateId || undefined,
     }
     try {
       if (editing) {
@@ -233,11 +267,7 @@ const ChannelsPage: React.FC = () => {
       <div className="page-heading">
         <div>
           <h2>{t('channels.title')}</h2>
-          <p>
-            {t('channels.subtitleLead')}
-            <Link to="/templates">{t('channels.templatesLink')}</Link>
-            {t('channels.subtitleTail')}
-          </p>
+          <p>{t('channels.subtitle')}</p>
         </div>
         <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('channels.create')}</Button></div>
       </div>
@@ -319,6 +349,20 @@ const ChannelsPage: React.FC = () => {
         destroyOnClose
       >
         <Form form={form} layout="vertical" initialValues={emptyInput}>
+          {!editing ? (
+            <Form.Item
+              name="fromTemplateId"
+              label={t('channels.fromTemplate')}
+              extra={<span className="form-hint">{t('channels.fromTemplateExtra')}</span>}
+            >
+              <Select
+                allowClear
+                placeholder={t('channels.fromTemplatePlaceholder')}
+                options={templates.map((tpl) => ({ value: tpl.id, label: tpl.name }))}
+                onChange={applyTemplate}
+              />
+            </Form.Item>
+          ) : null}
           <Form.Item name="name" label={t('common.name')} tooltip={t('channels.nameTooltip')} rules={[{ required: true, message: t('common.nameRequired') }]}>
             <Input placeholder={t('channels.namePlaceholder')} />
           </Form.Item>

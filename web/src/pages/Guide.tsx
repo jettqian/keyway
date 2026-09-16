@@ -356,8 +356,6 @@ const GuidePage: React.FC = () => {
                   {t('guide.step1DescA')}
                   <a href="#/channels">{t('guide.step1LinkChannels')}</a>
                   {t('guide.step1DescB')}
-                  <a href="#/templates">{t('guide.step1LinkTemplates')}</a>
-                  {t('guide.step1DescC')}
                 </>
               ),
             },
@@ -418,15 +416,17 @@ const GuidePage: React.FC = () => {
               children: (
                 <div>
                   <Typography.Title level={5} style={{ marginTop: 0 }}>{t('guide.codexConfigTitle')}</Typography.Title>
-                  <CodeBlock text={`model = "gpt-5.2"                 # 改成渠道中配置的模型名\nmodel_provider = "keyway"\n\n[model_providers.keyway]\nname = "keyway"\nbase_url = "${origin}/v1"      # 填 ${origin} 也可以\nwire_api = "chat"                # 网关走 chat/completions，必须为 chat\nexperimental_bearer_token = "${tokenPlaceholder}"   # 密钥直接写入（内网推荐）`} />
+                  <CodeBlock text={`model = "gpt-5.2"                 # 改成渠道中配置的模型名\nmodel_provider = "keyway"\n\n[model_providers.keyway]\nname = "keyway"\nbase_url = "${origin}/v1"      # 填 ${origin} 也可以\nwire_api = "responses"           # 默认值；网关优先使用 Responses，不建议 chat`} />
+                  <Typography.Title level={5}>{t('guide.codexAuthTitle')}</Typography.Title>
+                  <CodeBlock text={`{\n  "OPENAI_API_KEY": "${tokenPlaceholder}"\n}`} />
                   <Note>
-                    <Typography.Text code>experimental_bearer_token</Typography.Text>
+                    <Typography.Text code>auth.json</Typography.Text>
                     {t('guide.codexNoteA')}
                     <Typography.Text code>env_key = "KEYWAY_API_KEY"</Typography.Text>
                     {t('guide.codexNoteB')}
                     <Typography.Text code>wire_api</Typography.Text>
                     {t('guide.codexNoteC')}
-                    <Typography.Text code>chat</Typography.Text>
+                    <Typography.Text code>responses</Typography.Text>
                     {t('guide.codexNoteD')}
                   </Note>
                 </div>

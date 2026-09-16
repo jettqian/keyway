@@ -151,6 +151,9 @@ type channelInput struct {
 	CNYRatio         float64           `json:"cnyRatio"`
 	IsDefault        bool              `json:"isDefault"`
 	Enabled          bool              `json:"enabled"`
+	// FromTemplateID 新建时可选：从预制模板快速开始（前端预填字段后提交，
+	// 后端仅校验模板有效、自增 copy_count、记录来源标记，不干预字段值）
+	FromTemplateID *int64 `json:"fromTemplateId"`
 }
 
 func (s *Server) validateChannel(in *channelInput) string {
@@ -271,14 +274,27 @@ func (s *Server) handleCreateChannel(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, "包含不属于你的密钥")
 		return
 	}
+	// 从模板开始：仅校验模板有效并记录来源，字段值以用户提交为准（前端预填模板配置）
+	var tpl *store.ChannelTemplate
+	if in.FromTemplateID != nil {
+		var t store.ChannelTemplate
+		if err := s.Store.DB().Where("id = ? AND enabled = 1", *in.FromTemplateID).First(&t).Error; err != nil {
+			s.fail(c, http.StatusNotFound, "模板不存在或已停用")
+			return
+		}
+		tpl = &t
+	}
 	ch := store.Channel{UserID: currentUser(c).ID, CreatedAt: time.Now().Unix()}
-	if err := s.applyChannelInput(&ch, &in, nil); err != nil {
+	if err := s.applyChannelInput(&ch, &in, in.FromTemplateID); err != nil {
 		s.fail(c, http.StatusInternalServerError, "保存失败")
 		return
 	}
 	if err := s.Store.DB().Create(&ch).Error; err != nil {
 		s.fail(c, http.StatusInternalServerError, "创建失败")
 		return
+	}
+	if tpl != nil {
+		s.Store.DB().Model(tpl).UpdateColumn("copy_count", tpl.CopyCount+1)
 	}
 	if ch.IsDefault == 1 {
 		s.clearOtherDefaults(ch.UserID, ch.ID)
@@ -378,56 +394,6 @@ func (s *Server) handleTestKeys(c *gin.Context) {
 		return
 	}
 	s.ok(c, gin.H{"results": results})
-}
-
-func (s *Server) handleCopyTemplate(c *gin.Context) {
-	tid, _ := strconv.ParseInt(c.Param("tid"), 10, 64)
-	var tpl store.ChannelTemplate
-	if err := s.Store.DB().Where("id = ? AND enabled = 1", tid).First(&tpl).Error; err != nil {
-		s.fail(c, http.StatusNotFound, "模板不存在或已停用")
-		return
-	}
-	var urls, models []string
-	json.Unmarshal([]byte(tpl.BaseURLsJSON), &urls)
-	json.Unmarshal([]byte(tpl.ModelsJSON), &models)
-	var mapping map[string]string
-	json.Unmarshal([]byte(tpl.ModelMappingJSON), &mapping)
-	if len(urls) == 0 || len(urls) > 5 {
-		s.fail(c, http.StatusBadRequest, "模板线路配置无效")
-		return
-	}
-	// 复制为草稿：不绑定密钥、不启用，用户编辑绑定密钥后再启用。
-	// 用 map 显式列值创建，绕过 GORM 对带 default 标签零值字段的跳过（Enabled=0 会被 default:1 覆盖）
-	userID := currentUser(c).ID
-	if err := s.Store.DB().Model(&store.Channel{}).Create(map[string]any{
-		"user_id":                 userID,
-		"copied_from_template_id": tpl.ID,
-		"name":                    tpl.Name,
-		"type":                    tpl.Type,
-		"base_urls_json":          tpl.BaseURLsJSON,
-		"key_ids_json":            "[]",
-		"key_strategy":            "ordered",
-		"line_strategy":           tpl.LineStrategy,
-		"allow_public_proxy":      tpl.AllowPublicProxyDefault,
-		"models_json":             tpl.ModelsJSON,
-		"model_mapping_json":      tpl.ModelMappingJSON,
-		"priority":                tpl.PriorityDefault,
-		"price_multiplier":        1,
-		"is_default":              0,
-		"enabled":                 0,
-		"created_at":              time.Now().Unix(),
-	}).Error; err != nil {
-		s.fail(c, http.StatusInternalServerError, "复制失败")
-		return
-	}
-	var ch store.Channel
-	if err := s.Store.DB().Where("user_id = ? AND copied_from_template_id = ?", userID, tpl.ID).
-		Order("id DESC").First(&ch).Error; err != nil {
-		s.fail(c, http.StatusInternalServerError, "回读草稿失败")
-		return
-	}
-	s.Store.DB().Model(&tpl).UpdateColumn("copy_count", tpl.CopyCount+1)
-	s.ok(c, gin.H{"channel": channelDTO(&ch)})
 }
 
 // ---------- 模板（用户侧只读）----------

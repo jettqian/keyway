@@ -167,7 +167,6 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 
 	r.GET("/channels", s.handleListChannels)
 	r.POST("/channels", s.handleCreateChannel)
-	r.POST("/channels/from_template/:tid", s.handleCopyTemplate)
 	r.PUT("/channels/:id", s.handleUpdateChannel)
 	r.DELETE("/channels/:id", s.handleDeleteChannel)
 	r.POST("/channels/:id/test", s.handleTestChannel)

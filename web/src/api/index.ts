@@ -49,8 +49,6 @@ export const updateChannel = (id: number, input: ChannelInput) =>
   put<{ channel: Channel }>(`/api/channels/${id}`, input)
 export const deleteChannel = (id: number) => del<void>(`/api/channels/${id}`)
 export const testChannel = (id: number) => post<{ results: ChannelTestResult[] }>(`/api/channels/${id}/test`)
-export const copyTemplate = (templateId: number) =>
-  post<{ channel: Channel }>(`/api/channels/from_template/${templateId}`)
 
 export interface ChannelTestResult {
   lineUrl: string

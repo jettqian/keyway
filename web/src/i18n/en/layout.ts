@@ -3,7 +3,6 @@ export default {
   'layout.keys': 'Key Pool',
   'layout.channels': 'Channels',
   'layout.models': 'Models',
-  'layout.templates': 'Templates',
   'layout.tokens': 'Tokens',
   'layout.guide': 'Guide',
   'layout.logs': 'Logs',

@@ -1,11 +1,12 @@
 // 页面文案：key 统一以模块前缀命名，避免与其它字典冲突
 export default {
   'channels.title': '渠道',
-  'channels.subtitleLead': '管理上游线路、密钥和模型路由，保存后下一个请求即可生效；没有头绪可先从',
-  'channels.templatesLink': '预制模板',
-  'channels.subtitleTail': '复制。',
+  'channels.subtitle': '管理上游线路、密钥和模型路由，保存后下一个请求即可生效；新建时可从预制模板快速开始。',
   'channels.create': '新建渠道',
-  'channels.empty': '暂无渠道，点击右上角「新建渠道」或从预制模板复制',
+  'channels.empty': '暂无渠道，点击右上角「新建渠道」，可从预制模板快速开始',
+  'channels.fromTemplate': '从模板开始',
+  'channels.fromTemplatePlaceholder': '跳过则空白新建',
+  'channels.fromTemplateExtra': '选中后自动预填线路、模型等配置，密钥仍需自行绑定；保存后即为自有渠道，与模板解耦。',
   'channels.copiedFromTemplate': '复制自模板',
   'channels.defaultTag': '默认',
   'channels.forward': '转发',
