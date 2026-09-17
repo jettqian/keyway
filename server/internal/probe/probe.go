@@ -87,7 +87,8 @@ func (e *Engine) warmupInterval() int {
 // 任意 <500 的非 HTML HTTP 响应都记为线路通并取其延迟——4xx 是模型/密钥维度
 // 问题，不代表线路差；网络错误、HTML 回退、5xx 记为不通。
 // 有流量的渠道按流量节拍保持新鲜，无流量渠道零成本；next 节流保证并发请求
-// 不重复触发。manual 线路策略不参与优选，无需预热
+// 不重复触发。前置校验（无模型/无线路）不消耗节流窗口——渠道配置补齐后
+// 下一个请求即可触发，不必等一个新鲜度周期。manual 线路策略不参与优选，无需预热
 func (e *Engine) MaybeWarmup(ch *store.Channel) {
 	if ch == nil || ch.LineStrategy == "manual" {
 		return
@@ -95,6 +96,13 @@ func (e *Engine) MaybeWarmup(ch *store.Channel) {
 	interval := e.warmupInterval()
 	if interval <= 0 {
 		return
+	}
+	if len(probeModels(ch)) == 0 {
+		return // 未配置模型列表：无法预热，不占窗口
+	}
+	var lines []string
+	if json.Unmarshal([]byte(ch.BaseURLsJSON), &lines) != nil || len(lines) == 0 {
+		return // 无线路：无法预热，不占窗口
 	}
 	freshness := time.Duration(3*interval) * time.Minute
 	now := time.Now()
@@ -170,7 +178,7 @@ func (e *Engine) warmup(ch *store.Channel) {
 		}()
 	}
 	wg.Wait()
-	e.saveResults(ch.ID, results)
+	e.saveResults(ch.ID, results, false) // 预热只落 line_stats，不刷渠道级健康
 }
 
 // ProbeChannel 并发探测一个渠道的全部"线路 × 路径"组合并写 line_stats
@@ -216,7 +224,7 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 		}()
 	}
 	wg.Wait()
-	e.saveResults(ch.ID, results)
+	e.saveResults(ch.ID, results, true)
 	// 探测成功即关闭对应模型的熔断（FR-B4 恢复信号：与真实转发完全一致的
 	// 最小流式请求已走通，足以证明渠道×模型可用；「测试渠道」按钮走本路径，
 	// 点击即联动恢复矩阵覆盖到的模型）
@@ -476,8 +484,11 @@ func truncateRunes(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// saveResults 结果落 line_stats + 更新渠道健康状态
-func (e *Engine) saveResults(channelID int64, results []Result) {
+// saveResults 结果落 line_stats；updateChannel 时同步刷新渠道级健康
+// （last_ok_at/last_error）——仅全矩阵诊断（「测试渠道」）使用：其 OK 判定
+// 是严格语义（真实 2xx 走通）。线路预热是宽松判定（4xx 也记通），只度量
+// 线路质量、不代表渠道健康，不碰渠道级字段
+func (e *Engine) saveResults(channelID int64, results []Result, updateChannel bool) {
 	now := time.Now().Unix()
 	anyOK := false
 	for _, r := range results {
@@ -500,7 +511,7 @@ func (e *Engine) saveResults(channelID int64, results []Result) {
 		}
 		e.store.DB().Clauses(clause.OnConflict{UpdateAll: true}).Create(&stat)
 	}
-	if len(results) > 0 {
+	if len(results) > 0 && updateChannel {
 		if anyOK {
 			e.store.DB().Model(&store.Channel{}).Where("id = ?", channelID).
 				Updates(map[string]any{"last_ok_at": now, "last_error": nil})

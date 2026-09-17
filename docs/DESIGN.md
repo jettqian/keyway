@@ -1,6 +1,19 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.42（与 PRD v1.5.45 对应；新增**渠道×模型熔断器**与**按需线路预热**
+- 版本：v1.43（与 PRD v1.5.46 对应；熔断器与按需预热评审修复。① `RecordFailure`
+  退避进度以 DB 行 fail_count 为准推进（max(行+1, 本地计数)，乐观锁 + 重试防并发
+  丢失更新，首次落行 OnConflict DoNothing）——重启后本地计数归零不降级已持久化
+  的进度、不缩短既有冷却；② `ClaimHalfOpen` 先读行再原子认领，冷却顺延到**下一
+  退避档**（与试探失败后 RecordFailure 写入值一致），非计入型收尾（如 400 透传）
+  不回退进度；③ 预热 `saveResults` 拆出 updateChannel 开关——宽松判定只落
+  line_stats，不误刷渠道 last_ok_at（线路通 ≠ 渠道健康），「测试渠道」严格判定
+  才更新渠道级字段；④ `MaybeWarmup` 前置校验（无模型/无线路）不消耗节流窗口；
+  ⑤ completions-embeddings 管线熔断 last_error 记末次失败摘要；⑥ 新增
+  `PruneModels`：渠道改配移除模型后清理其熔断行与计数（默认渠道承接任意模型，
+  调用方不清理）；⑦ breaker.New 上限低于基础冷却时 clamp 到基础冷却。测试：
+  重启不降级/认领退避档/上限收敛/PruneModels 单测 + 改配清理 e2e，预热断言改为
+  不刷 last_ok_at）；
+  前版 v1.42：与 PRD v1.5.45 对应；新增**渠道×模型熔断器**与**按需线路预热**
   （移除定时探测循环）。熔断器 `internal/breaker`：`breaker_states` 表（复合主键
   channel_id+model）只保存熔断中的行（无行 = 关闭），低于阈值的连续失败计数在
   引擎内存（mutex map，重启清零）。relay 三条管线（chat `relay()` / responses /
@@ -304,7 +317,7 @@ CREATE TABLE breaker_states (              -- 渠道×模型熔断（v1.5.45；�
   channel_id INTEGER NOT NULL, model TEXT NOT NULL,  -- model = 入站请求模型名（路由键）
   fail_count INTEGER NOT NULL DEFAULT 0,   -- 连续失败次数（≥ 阈值才落行）
   opened_at INTEGER NOT NULL DEFAULT 0,    -- 首次熔断时间
-  cooldown_until INTEGER NOT NULL DEFAULT 0, -- 半开试探到期时间；认领时顺延一个周期
+  cooldown_until INTEGER NOT NULL DEFAULT 0, -- 半开试探到期时间；认领时顺延到下一退避档
   last_error TEXT DEFAULT '', updated_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(channel_id, model)
 );
@@ -630,24 +643,29 @@ sequenceDiagram
 - **存储**：`breaker_states` 只保存熔断中的行（无行 = 关闭），复合主键
   (channel_id, model)——model 为入站请求模型名（路由键）；低于阈值的连续失败
   计数只在引擎内存（mutex map），重启清零（代价：重启后最多多付 N-1 个请求的
-  尝试成本）
+  尝试成本）。已开闸行的退避进度以 DB fail_count 为准推进：`RecordFailure`
+  取 max(行 fail_count+1, 本地计数)——重启后本地归零不降级进度、不缩短冷却；
+  乐观锁（fail_count 不变才写）+ 冲突重试防并发丢失更新，首次落行以
+  OnConflict DoNothing 创建（并发创建败者转更新路径），opened_at 只在首次写入
 - **失败记录粒度**：一个请求把某渠道某模型的组合**全部尝试耗尽**才计一次失败
   （chat 管线按渠道分段、段落切换时统一落账；responses / completions-embeddings
   管线在渠道循环后落账并以 seen 集合防 matched+defaults 重复命中双计）；404 与
   透传型管线的 401/403/429（这些码在 chat/responses 管线会继续换 key、由段落耗尽
   统一记录）直接计失败——404 即"模型/端点不存在"（model_not_found 类**模型维度**
   故障，正是按模型熔断要捕获的形态）；其余 4xx（400/413 等客户端问题）不计
-- **半开认领**（`ClaimHalfOpen`）：`UPDATE breaker_states SET cooldown_until =
-  now + cooldown WHERE channel_id = ? AND model = ? AND cooldown_until <= now`，
-  RowsAffected=1 即认领成功——原子性保证同一时刻仅一个试探在飞；认领把冷却顺延
-  一个周期，试探失败由 RecordFailure 以更大退避覆盖、成功则整行删除；认领发生在
-  试探**执行前**（chat 管线计划预生成、执行时认领），高优先级渠道持续成功时低优先级
-  熔断渠道的试探窗口不会被无谓消耗。失败试探只花 1 个组合（不是整组预算），该
-  请求自动切换到备用渠道完成，客户端无感
+- **半开认领**（`ClaimHalfOpen`）：读行后以 `UPDATE breaker_states SET
+  cooldown_until = :now + backoff(fail_count+1) WHERE channel_id = ? AND model = ?
+  AND cooldown_until <= :now`，RowsAffected=1 即认领成功——原子性保证同一时刻仅一
+  个试探在飞；顺延到**下一退避档**（与试探失败后 RecordFailure 写入的值一致），
+  非计入型收尾（如 400 透传）不把冷却打回基础周期、退避进度得以保持，成功则整行
+  删除；认领发生在试探**执行前**（chat 管线计划预生成、执行时认领），高优先级
+  渠道持续成功时低优先级熔断渠道的试探窗口不会被无谓消耗。失败试探只花 1 个组合
+  （不是整组预算），该请求自动切换到备用渠道完成，客户端无感
 - **恢复信号**：① 半开试探成功（上条）；② 「测试渠道」探测成功——
   `probe.Result.Model` 记录判定健康的模型，矩阵返回后逐模型 `RecordSuccess`
   （矩阵覆盖模型列表前 3 个）；③ 前端手动恢复 `Reset(channelID, model)`
-  （model 空 = 整渠道，删除行并清零计数，删除渠道时联动清理）；④ 全候选旁路
+  （model 空 = 整渠道，删除行并清零计数，删除渠道与改配移除模型时联动清理——
+  `PruneModels`，默认渠道承接任意模型故不清理）；④ 全候选旁路
   期间的真实流量成功（`recordUpstreamOutcome` 对 2xx/3xx 调 `RecordSuccess`）——
   旁路是唯一绕过冷却直接命中熔断渠道的流量路径
 - **全候选熔断旁路**：`breakerView` 发现该模型全部候选渠道（matched+defaults，
@@ -675,7 +693,8 @@ sequenceDiagram
 - **触发**：relay 生成尝试计划时（`plan` 内），对参与尝试的渠道调用——
   line_stats 缺失或整体过期（> 3 个预热周期）时**异步**补一次线路质量探测，
   本请求按现有数据继续路由（不阻塞）；已有新鲜数据（如刚点过「测试」）则
-  对齐到其过期时刻后跳过
+  对齐到其过期时刻后跳过；前置校验（无模型列表/无线路）不消耗节流窗口，
+  渠道配置补齐后下一个请求即可触发
 - **节拍与开关**：`KEYWAY_PROBE_INTERVAL_MIN`（默认 30 分钟）为预热新鲜度
   周期；**0 = 关闭预热**（线路排序回退录入顺序）。next map（mutex）节流，
   并发请求不会重复触发；**有流量的渠道按流量节拍保鲜，无流量渠道零成本**——
@@ -685,7 +704,9 @@ sequenceDiagram
   其延迟（4xx 是模型/密钥维度问题，不代表线路质量差——任何模型的响应延迟都
   代表线路质量）；网络错误、HTML 回退（SPA）、5xx 记为不通
 - 结果 UPSERT line_stats（latency_ms / ok / last_probe_at）供 `orderCombos`
-  路由排序；矩阵上限 = 5 线路 × 4 路径，超出截断（直连与个人代理优先保留）
+  路由排序，**不碰渠道级健康字段**（宽松判定下线路通 ≠ 渠道健康，渠道
+  last_ok_at/last_error 仅由「测试渠道」的严格判定更新）；矩阵上限 = 5 线路 ×
+  4 路径，超出截断（直连与个人代理优先保留）
 
 预热决策与执行流程：
 
@@ -708,7 +729,7 @@ flowchart TD
         A3{"响应判定（宽松 loose）"}
         A3 -->|"2xx / 3xx / 4xx 且非 HTML"| A4["记线路通 + 延迟<br/>（4xx 是模型/密钥维度问题，不代表线路差）"]
         A3 -->|"网络错误 / HTML / 5xx"| A5["记线路不通"]
-        A4 --> A6["UPSERT line_stats + 刷新渠道 last_ok_at"]
+        A4 --> A6["UPSERT line_stats（不碰渠道级健康字段）"]
         A5 --> A6
         A1 --> A2 --> A3
     end

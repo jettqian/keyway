@@ -351,6 +351,12 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 	if ch.IsDefault == 1 {
 		s.clearOtherDefaults(ch.UserID, ch.ID)
 	}
+	// 改配后清理不再服务模型的熔断行（默认渠道承接任意模型，不清理）
+	if ch.IsDefault != 1 {
+		var models []string
+		json.Unmarshal([]byte(ch.ModelsJSON), &models)
+		s.Breaker.PruneModels(ch.ID, models)
+	}
 	s.ok(c, gin.H{"channel": channelDTO(&ch)})
 }
 

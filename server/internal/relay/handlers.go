@@ -85,6 +85,7 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			m["model"] = upstreamModel
 			sendBody, _ := json.Marshal(m)
 			tried := false
+			segErr := "" // 段落失败原因（熔断 last_error 用，取末次失败摘要）
 			for _, a := range s.planFor(rc, probe.Model, view) {
 				if a.trial && !s.Breaker.ClaimHalfOpen(rc.Channel.ID, probe.Model) {
 					continue // 半开试探已被并发请求认领
@@ -94,21 +95,23 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 				a.request = c.Request
 				resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, path), sendBody, false)
 				if err != nil {
-					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, err.Error(), reqStart)
+					segErr = err.Error()
+					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, segErr, reqStart)
 					continue
 				}
 				if isHTMLResponse(resp) {
 					// 上游 2xx 却返回 HTML（SPA 回退）：端点不存在，换组合
 					io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
-					lastErr := "上游返回 HTML（端点不存在）"
-					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, lastErr, reqStart)
+					segErr = "上游返回 HTML（端点不存在）"
+					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, segErr, reqStart)
 					continue
 				}
 				if resp.StatusCode >= 500 {
 					errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 					resp.Body.Close()
-					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, errBody), reqStart)
+					segErr = upstreamStatusError(resp.StatusCode, errBody)
+					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, segErr, reqStart)
 					continue
 				}
 				s.recordUpstreamOutcome(rc.Channel.ID, probe.Model, resp.StatusCode)
@@ -118,7 +121,10 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 				return
 			}
 			if tried && !recorded[rc.Channel.ID] {
-				s.Breaker.RecordFailure(rc.Channel.ID, probe.Model, "全部组合尝试失败")
+				if segErr == "" {
+					segErr = "全部组合尝试失败"
+				}
+				s.Breaker.RecordFailure(rc.Channel.ID, probe.Model, segErr)
 				recorded[rc.Channel.ID] = true
 			}
 		}

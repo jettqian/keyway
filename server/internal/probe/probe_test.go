@@ -376,11 +376,12 @@ func TestWarmup线路预热宽松判定(t *testing.T) {
 			t.Fatalf("应记录延迟: %+v", stt)
 		}
 	}
-	// 渠道状态同步刷新（last_ok_at）
+	// 预热只度量线路质量（宽松判定 4xx 记通），不碰渠道级健康字段：
+	// 全模型 404 的渠道 last_ok_at 不被误刷（线路通 ≠ 渠道健康）
 	var got store.Channel
 	st.DB().First(&got, ch.ID)
-	if got.LastOkAt == nil {
-		t.Fatalf("预热成功应刷新 last_ok_at: %+v", got)
+	if got.LastOkAt != nil {
+		t.Fatalf("预热不应刷新 last_ok_at: %+v", got)
 	}
 }
 

@@ -437,3 +437,47 @@ func TestE2E半开试探恢复(t *testing.T) {
 		t.Fatalf("关闭后渠道 1 应正常承接（首个组合成功），实际 %d 次", n)
 	}
 }
+
+// TestE2E渠道改配清理熔断 渠道模型列表移除某模型后，该模型的熔断行随之清理，
+// 不再在熔断列表残留（FR-B5 展示卫生）
+func TestE2E渠道改配清理熔断(t *testing.T) {
+	c, _ := setupApp(t)
+	up1 := newBreakerUpstream(map[string]int{"gpt-old": 503})
+	defer up1.srv.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "brk8", "password": "password123"}, false); w.Code != 200 {
+		t.Fatalf("注册失败: %d %s", w.Code, w.Body.String())
+	}
+	setupBreaker(t, c, []string{up1.srv.URL}, nil, []string{"gpt-old"})
+	ch1 := c.firstChannelID(t)
+
+	for i := 0; i < 3; i++ {
+		c.chat(t, "gpt-old")
+	}
+	if list := c.listBreakersViaAPI(t); len(list) != 1 {
+		t.Fatalf("应已熔断: %v", list)
+	}
+
+	// 改配：模型列表移除 gpt-old（其余字段原样回传）
+	var keyResp struct {
+		Keys []struct {
+			ID int64 `json:"id"`
+		} `json:"keys"`
+	}
+	w := c.do("GET", "/api/keys", nil, true)
+	if w.Code != 200 {
+		t.Fatalf("查密钥失败: %d", w.Code)
+	}
+	json.Unmarshal(w.Body.Bytes(), &keyResp)
+	w = c.do("PUT", fmt.Sprintf("/api/channels/%d", ch1), map[string]any{
+		"name": "brk-1", "type": "openai", "baseUrls": []string{up1.srv.URL},
+		"keyIds": []int64{keyResp.Keys[0].ID}, "models": []string{"gpt-new"},
+		"priority": 100, "enabled": true,
+	}, true)
+	if w.Code != 200 {
+		t.Fatalf("改配渠道失败: %d %s", w.Code, w.Body.String())
+	}
+	if list := c.listBreakersViaAPI(t); len(list) != 0 {
+		t.Fatalf("移除模型后熔断行应被清理: %v", list)
+	}
+}

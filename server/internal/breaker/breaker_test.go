@@ -124,10 +124,14 @@ func Test半开认领单飞(t *testing.T) {
 	if e.ClaimHalfOpen(1, "gpt-x") {
 		t.Fatal("认领后并发请求不应再次进入试探")
 	}
-	// 认领把冷却顺延一个周期：View 不再 Due
+	// 认领把冷却顺延到下一退避档（threshold=1，fc=1 → backoff(2)=2×300）：
+	// View 不再 Due
 	view = e.View([]int64{1}, "gpt-x")
 	if view.Due(1, after.Unix()) {
 		t.Fatal("认领后应视为冷却中")
+	}
+	if r := e.row(t, 1, "gpt-x"); r.CooldownUntil != after.Add(600*time.Second).Unix() {
+		t.Fatalf("认领应顺延到下一退避档（600s）: %d", r.CooldownUntil)
 	}
 }
 
@@ -195,5 +199,115 @@ func Test模型维度隔离(t *testing.T) {
 	view = e.View([]int64{1}, "gpt-y")
 	if view != nil {
 		t.Fatalf("gpt-y 不应有熔断视图: %v", view)
+	}
+}
+
+// 重启模拟：新引擎（本地计数归零）在同一存储上继续记录，退避进度以 DB 行的
+// fail_count 为准推进——不降级计数、不缩短冷却、保留 opened_at
+func Test重启后退避进度不降级(t *testing.T) {
+	e, st := openEngine(t, 3, 300, 3600)
+	base := time.Unix(1_800_000_000, 0)
+	e.now = func() time.Time { return base }
+	for i := 0; i < 5; i++ {
+		e.RecordFailure(1, "gpt-x", "e") // fc=5，冷却 300×2²=1200s
+	}
+	r := e.row(t, 1, "gpt-x")
+	if r.FailCount != 5 || r.CooldownUntil != base.Add(1200*time.Second).Unix() {
+		t.Fatalf("前置条件不符: %+v", r)
+	}
+
+	// 重启：同一 DB、新引擎（内存计数清零）
+	e2 := New(st.DB(), 3, 300, 3600)
+	restart := base.Add(10 * time.Minute)
+	e2.now = func() time.Time { return restart }
+	for i := 0; i < 3; i++ { // 重新累积到阈值（本地 n=3）
+		e2.RecordFailure(1, "gpt-x", "e")
+	}
+	r = e2.row(t, 1, "gpt-x")
+	if r.FailCount != 6 {
+		t.Fatalf("重启后 fail_count 应从 DB 行推进到 6，而非本地计数 3: %+v", r)
+	}
+	if r.CooldownUntil != restart.Add(2400*time.Second).Unix() {
+		t.Fatalf("冷却应按 fail_count=6 退避（300×2³=2400s）: %d", r.CooldownUntil)
+	}
+	if r.OpenedAt != base.Unix() {
+		t.Fatalf("opened_at 应保留首次开闸时刻: %+v", r)
+	}
+}
+
+// 认领顺延到下一退避档：与试探失败后 RecordFailure 写入的值一致——
+// 非计入型收尾（如 400 透传）不再把冷却打回基础周期，退避进度得以保持
+func Test认领顺延至下一退避档(t *testing.T) {
+	e, _ := openEngine(t, 3, 300, 3600)
+	base := time.Unix(1_800_000_000, 0)
+	e.now = func() time.Time { return base }
+	for i := 0; i < 3; i++ {
+		e.RecordFailure(1, "m", "e") // fc=3，冷却 300s
+	}
+	after := base.Add(301 * time.Second)
+	e.now = func() time.Time { return after }
+	if !e.ClaimHalfOpen(1, "m") {
+		t.Fatal("到期认领应成功")
+	}
+	r := e.row(t, 1, "m")
+	if r.CooldownUntil != after.Add(600*time.Second).Unix() {
+		t.Fatalf("认领应把冷却顺延到下一退避档（600s），实际 %d", r.CooldownUntil)
+	}
+	// 试探失败（计入）后 RecordFailure 写入同一档位：进度一致
+	e.RecordFailure(1, "m", "试探失败")
+	r = e.row(t, 1, "m")
+	if r.CooldownUntil != after.Add(600*time.Second).Unix() || r.FailCount != 4 {
+		t.Fatalf("试探失败后的冷却应与认领顺延值一致: %+v", r)
+	}
+}
+
+// 上限配置低于基础冷却时 clamp 到基础冷却（而非回落 3600），退避不再增长
+func Test上限低于基础冷却时收敛(t *testing.T) {
+	e, _ := openEngine(t, 3, 600, 100)
+	base := time.Unix(1_800_000_000, 0)
+	e.now = func() time.Time { return base }
+	for i := 0; i < 3; i++ {
+		e.RecordFailure(1, "m", "e")
+	}
+	if r := e.row(t, 1, "m"); r.CooldownUntil != base.Add(600*time.Second).Unix() {
+		t.Fatalf("冷却上限应 clamp 到基础冷却 600s，实际到 %d", r.CooldownUntil)
+	}
+	for i := 0; i < 3; i++ {
+		e.RecordFailure(1, "m", "e")
+	}
+	if r := e.row(t, 1, "m"); r.CooldownUntil != base.Add(600*time.Second).Unix() {
+		t.Fatalf("退避应封顶在 600s，实际到 %d", r.CooldownUntil)
+	}
+}
+
+// 清理不再服务的模型（渠道改配）：行与内存计数一并清理，空列表 = 清理全部
+func Test清理不再服务的模型(t *testing.T) {
+	e, _ := openEngine(t, 2, 300, 3600)
+	e.now = func() time.Time { return time.Unix(1_800_000_000, 0) }
+
+	e.RecordFailure(1, "gpt-a", "e")
+	e.RecordFailure(1, "gpt-a", "e")
+	e.RecordFailure(1, "gpt-b", "e")
+	e.RecordFailure(1, "gpt-b", "e")
+	e.RecordFailure(1, "gpt-c", "e")
+	e.RecordFailure(1, "gpt-c", "e")
+	e.PruneModels(1, []string{"gpt-a", "gpt-d"})
+	if r := e.row(t, 1, "gpt-a"); r == nil {
+		t.Fatal("列表内的模型不应被清理")
+	}
+	for _, m := range []string{"gpt-b", "gpt-c"} {
+		if r := e.row(t, 1, m); r != nil {
+			t.Fatalf("列表外模型 %s 应被清理: %+v", m, r)
+		}
+	}
+	// 内存计数同步清理：gpt-b 再失败一次不足以落行（计数已从零开始）
+	e.RecordFailure(1, "gpt-b", "e")
+	if r := e.row(t, 1, "gpt-b"); r != nil {
+		t.Fatalf("清理后计数应清零，单次失败不应落行: %+v", r)
+	}
+	// 空列表 = 清理全部
+	e.PruneModels(1, nil)
+	if r := e.row(t, 1, "gpt-a"); r != nil {
+		t.Fatalf("空列表应清理全部: %+v", r)
 	}
 }

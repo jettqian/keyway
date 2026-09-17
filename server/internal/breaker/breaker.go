@@ -8,16 +8,19 @@
 //     冷却期内路由整渠道跳过，流量稳定停留在备用渠道（缓存粘性优先）；
 //   - 冷却到期后进入半开：下一个请求原子认领一次试探资格，仅放行单个组合
 //     （成功 → 立即关闭、流量切回；失败 → 重新熔断并以指数退避拉长冷却）；
+//     认领把冷却顺延到下一退避档，非计入型收尾（如 400 透传）不回退进度；
 //   - 该模型的全部候选渠道都熔断时，relay 侧直接旁路熔断（行为与无熔断一致，
 //     可用性优先，旁路期间真实流量成功同样关闭熔断）；
 //   - 「测试渠道」按钮的探测成功与前端手动恢复同样关闭熔断（探测已无定时
 //     循环，恢复以流量试探为主）。
 //
 // 状态存储：breaker_states 表只保存熔断中的行（无行 = 关闭），重启后关闭的
-// 熔断需要重新累积失败；低于阈值的连续失败计数只存内存。
+// 熔断需要重新累积失败；低于阈值的连续失败计数只存内存。已开闸行的退避进度
+// （fail_count）以 DB 为准推进——重启后本地计数归零不降级进度、不缩短冷却。
 package breaker
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -54,10 +57,7 @@ func New(db *gorm.DB, failThreshold, cooldownSec, cooldownMaxSec int) *Engine {
 		cooldownSec = 600
 	}
 	if cooldownMaxSec < cooldownSec {
-		cooldownMaxSec = 3600
-		if cooldownMaxSec < cooldownSec {
-			cooldownMaxSec = cooldownSec
-		}
+		cooldownMaxSec = cooldownSec // 上限不低于基础冷却（clamp，而非回落 3600）
 	}
 	return &Engine{
 		db:          db,
@@ -110,7 +110,10 @@ func (e *Engine) View(channelIDs []int64, model string) View {
 
 // RecordFailure 记一次「渠道×模型」失败：一个请求把该渠道该模型的组合尝试
 // 耗尽（或以 404/透传型 4xx 失败收尾）时调用一次。达到阈值即写入熔断行并
-// 按连续失败次数指数退避（cooldown × 2^n，上限 cooldownMax）
+// 指数退避（cooldown × 2^n，上限 cooldownMax）。
+// 退避进度以 DB 行的 fail_count 为准推进（max(行+1, 本地计数)）：本地计数
+// 重启归零后不降级已持久化的进度、不缩短既有冷却；乐观锁（fail_count 不变
+// 才写）防并发丢失更新，冲突重试
 func (e *Engine) RecordFailure(channelID int64, model, errMsg string) {
 	if e == nil || channelID == 0 || model == "" {
 		return
@@ -124,25 +127,45 @@ func (e *Engine) RecordFailure(channelID int64, model, errMsg string) {
 		return
 	}
 	now := e.now().Unix()
-	st := store.BreakerState{
-		ChannelID:     channelID,
-		Model:         model,
-		FailCount:     n,
-		OpenedAt:      now,
-		CooldownUntil: now + int64(e.backoff(n)/time.Second),
-		LastError:     truncate(errMsg, 500),
-		UpdatedAt:     now,
+	for try := 0; try < 4; try++ {
+		var prev store.BreakerState
+		err := e.db.Where("channel_id = ? AND model = ?", channelID, model).First(&prev).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// 首次落行（opened_at 记开闸时刻）；并发同时创建时败者转走更新路径
+			st := store.BreakerState{
+				ChannelID:     channelID,
+				Model:         model,
+				FailCount:     n,
+				OpenedAt:      now,
+				CooldownUntil: now + int64(e.backoff(n)/time.Second),
+				LastError:     truncate(errMsg, 500),
+				UpdatedAt:     now,
+			}
+			res := e.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&st)
+			if res.Error == nil && res.RowsAffected == 1 {
+				return
+			}
+			continue
+		}
+		if err != nil {
+			return
+		}
+		fc := prev.FailCount + 1
+		if n > fc {
+			fc = n
+		}
+		res := e.db.Model(&store.BreakerState{}).
+			Where("channel_id = ? AND model = ? AND fail_count = ?", channelID, model, prev.FailCount).
+			Updates(map[string]any{
+				"fail_count":     fc,
+				"cooldown_until": now + int64(e.backoff(fc)/time.Second),
+				"last_error":     truncate(errMsg, 500),
+				"updated_at":     now,
+			})
+		if res.Error == nil && res.RowsAffected == 1 {
+			return
+		}
 	}
-	// UPSERT：首次写入保留 opened_at；后续只刷新计数、退避与最近错误
-	e.db.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "channel_id"}, {Name: "model"}},
-		DoUpdates: clause.Assignments(map[string]any{
-			"fail_count":     st.FailCount,
-			"cooldown_until": st.CooldownUntil,
-			"last_error":     st.LastError,
-			"updated_at":     st.UpdatedAt,
-		}),
-	}).Create(&st)
 }
 
 // RecordSuccess 记一次成功：删除熔断行并清零连续失败计数（关闭熔断，
@@ -157,18 +180,23 @@ func (e *Engine) RecordSuccess(channelID int64, model string) {
 	e.db.Where("channel_id = ? AND model = ?", channelID, model).Delete(&store.BreakerState{})
 }
 
-// ClaimHalfOpen 原子认领一次半开试探：仅当冷却已到期时成功，并把冷却窗口
-// 顺延一个周期（试探期间并发请求不再进入该渠道；试探失败会以更大退避覆盖，
-// 成功则整行删除）。认领发生在试探真正执行前，避免高优先级渠道持续成功时
-// 无谓消耗低优先级渠道的试探窗口
+// ClaimHalfOpen 原子认领一次半开试探：仅当冷却已到期时成功，并把冷却顺延到
+// 当前退避级别的**下一档**（与试探失败后 RecordFailure 写入的值一致——非计入型
+// 收尾（如 400 透传）不再把冷却打回基础周期，退避进度得以保持）。认领发生在
+// 试探真正执行前，避免高优先级渠道持续成功时无谓消耗低优先级渠道的试探窗口
 func (e *Engine) ClaimHalfOpen(channelID int64, model string) bool {
 	if e == nil || channelID == 0 || model == "" {
 		return false
 	}
 	now := e.now().Unix()
+	var row store.BreakerState
+	if err := e.db.Where("channel_id = ? AND model = ?", channelID, model).First(&row).Error; err != nil {
+		return false
+	}
+	next := now + int64(e.backoff(row.FailCount+1)/time.Second)
 	res := e.db.Model(&store.BreakerState{}).
 		Where("channel_id = ? AND model = ? AND cooldown_until <= ?", channelID, model, now).
-		Update("cooldown_until", now+int64(e.cooldown/time.Second))
+		Update("cooldown_until", next)
 	return res.Error == nil && res.RowsAffected == 1
 }
 
@@ -186,6 +214,37 @@ func (e *Engine) Reset(channelID int64, model string) {
 	e.mu.Lock()
 	for k := range e.counts {
 		if k.ChannelID == channelID && (model == "" || k.Model == model) {
+			delete(e.counts, k)
+		}
+	}
+	e.mu.Unlock()
+}
+
+// PruneModels 清理渠道模型列表之外的熔断行与内存计数：渠道改配后不再服务的
+// 模型，其熔断状态已无意义。默认渠道承接任意模型（fallback），调用方不应对
+// 其执行清理；models 为空 = 清理该渠道全部
+func (e *Engine) PruneModels(channelID int64, models []string) {
+	if e == nil || channelID == 0 {
+		return
+	}
+	q := e.db.Where("channel_id = ?", channelID)
+	if len(models) > 0 {
+		q = q.Where("model NOT IN ?", models)
+	}
+	q.Delete(&store.BreakerState{})
+	e.mu.Lock()
+	for k := range e.counts {
+		if k.ChannelID != channelID {
+			continue
+		}
+		keep := false
+		for _, m := range models {
+			if m == k.Model {
+				keep = true
+				break
+			}
+		}
+		if !keep {
 			delete(e.counts, k)
 		}
 	}
