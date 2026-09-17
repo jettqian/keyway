@@ -424,55 +424,70 @@ resolve(model, user, token) → []RouteCandidate
 后使该用户快照失效（单实例内完成，保证 FR-R7 即时生效）。`GET /v1/models` 从同一快照去重
 模型名，仅返回至少有一个启用渠道的模型。
 
-路由流程：
+路由流程（全链路，v1.5.45：含熔断过滤、半开试探、按需预热与失败分类；
+`/v1/responses` 与 `/v1/completions·embeddings` 管线以渠道为外层循环逐渠道
+`planFor`，熔断视图/认领/记录逻辑与下图一致）：
 
 ```mermaid
 flowchart TD
-    A[客户端请求] --> B[解析请求协议与 model]
-    B --> C[校验网关令牌]
-    C -->|失败| E401[返回 401]
-    C -->|成功| D[读取用户渠道配置]
+    REQ["客户端请求（chat · messages · responses · completions）"] --> AUTH["令牌鉴权（Bearer / x-api-key）"]
+    AUTH -->|"失败"| R401["401"]
+    AUTH -->|"成功"| RES["解析 model → Resolve：启用渠道 ∩ 模型列表命中 ∩ 令牌限定"]
 
-    D --> E[筛选 enabled 渠道]
-    E --> F[筛选渠道模型列表中包含请求 model 的渠道]
-    F --> G[应用令牌的渠道限制]
-    G --> H{是否找到候选渠道}
+    RES -->|"零候选"| DEF{"配置默认渠道？"}
+    DEF -->|"有"| DEFC["默认渠道承接（模型名透传）"]
+    DEF -->|"无"| R404["404 model 未命中"]
+    DEFC --> SORT
+    RES -->|"有候选"| SORT["候选排序：令牌限定→绑定顺序；不限→priority 降序"]
 
-    H -->|否| I{是否配置默认渠道}
-    I -->|是| J[使用默认渠道\n模型名透传]
-    I -->|否| E404[返回 404\n模型未配置]
+    SORT --> BV["breakerView：一次索引查询候选在该 model 上的熔断行"]
+    BV -->|"全部候选熔断"| BYP["旁路：视图置空，行为与无熔断一致（可用性优先）"]
+    BV -->|"部分 / 无熔断"| FIL["过滤视图"]
+    BYP --> PLAN["plan：对每个候选渠道生成尝试序列"]
+    FIL --> PLAN
 
-    H -->|是| K{令牌是否限定渠道}
-    K -->|是| K1[按令牌绑定顺序排列]
-    K -->|否| K2[按渠道 priority 降序排列]
-    K1 --> L[依次尝试候选渠道]
-    K2 --> L
+    subgraph PLAN_SG["plan：对每个候选渠道生成尝试序列"]
+        direction TB
+        B1{"熔断且冷却未到期？"} -->|"是"| B2["跳过整渠道（0 次上游请求，不占预算）"]
+        B1 -->|"否"| B3["密钥排序：ordered / round_robin，冷却密钥排后"]
+        B3 --> B4["MaybeWarmup：line_stats 缺失 / 过期 → 异步预热（不阻塞本请求，见 §6.1）"]
+        B4 --> B5{"line_strategy"}
+        B5 -->|"manual"| B6["固定首线路 × 首路径"]
+        B5 -->|"auto"| B7["orderCombos：健康且新鲜→延迟升序；未知→录入序；不健康殿后"]
+        B6 --> B8["组合 × 密钥展开"]
+        B7 --> B8
+        B8 --> B9["预算截断：单渠道 ≤ AttemptBudget（默认 3）"]
+        B9 --> B10{"熔断且冷却已到期？（半开）"}
+        B10 -->|"是"| B11["仅保留首个组合，标记 trial"]
+        B10 -->|"否"| B12["完整组合序列"]
+    end
 
-    L --> M[选择线路与出站路径]
-    M --> N[选择可用上游密钥]
-    N --> O{forward_mode}
+    PLAN --> EMPTY{"计划为空且做过熔断过滤？"}
+    EMPTY -->|"是"| REB["以空视图重建（兜底可用性）"]
+    EMPTY -->|"否"| RUN["逐组合执行"]
+    REB --> RUN
 
-    O -->|passthrough 默认| P[透明转发\n替换线路、鉴权和必要模型映射]
-    O -->|convert 高级设置| Q[按渠道协议执行跨协议转换]
-
-    P --> R[请求上游]
-    Q --> R
-
-    R --> S{是否已向客户端写出首字节}
-    S -->|是| T[停止切换\n继续透传响应或错误]
-    S -->|否| U{上游结果}
-
-    U -->|成功| V[返回响应并记录日志]
-    U -->|网络/TLS/超时| W[切换线路或出站路径]
-    U -->|401/403/429| X[切换密钥并按需冷却]
-    U -->|其他错误| Y[尝试下一个候选渠道]
-
-    W --> M
-    X --> N
-    W -.尝试耗尽.-> Y
-    X -.尝试耗尽.-> Y
-    Y --> L
-    L -.所有候选耗尽.-> Z[透传最后一次上游错误]
+    subgraph RUN_SG["逐组合执行（首字节保护：已向客户端写出任何字节即停止切换）"]
+        direction TB
+        C0{"trial（半开试探）？"} -->|"是"| C1{"ClaimHalfOpen 原子认领"}
+        C1 -->|"他人已认领"| C2["跳过该渠道 → 判定候选是否耗尽"]
+        C1 -->|"认领成功"| SEND
+        C0 -->|"否"| SEND["转发：passthrough 透传 / convert 转换"]
+        SEND --> OUT{"上游结果"}
+        OUT -->|"2xx / 3xx"| OK["回写客户端 + 落日志 + RecordSuccess 关闭熔断（请求结束）"]
+        OUT -->|"404"| P404["计熔断失败 + 透传 404（请求结束，不切换）"]
+        OUT -->|"其他 4xx"| P4XX["透传（请求结束，不计熔断——客户端侧问题）"]
+        OUT -->|"网络错误 / HTML / 5xx"| N1["落失败日志 → 换下一组合"]
+        OUT -->|"401 / 403 / 429"| N2["换密钥（429 按 Retry-After 冷却），密钥耗尽换组合"]
+        N1 --> SEG{"本渠道组合耗尽？"}
+        N2 --> SEG
+        SEG -->|"否"| C0
+        SEG -->|"是"| RF["RecordFailure ×1（渠道×模型连续失败 +1）→ 换下一候选渠道"]
+        RF --> MORE{"候选耗尽？"}
+        C2 --> MORE
+        MORE -->|"否"| C0
+        MORE -->|"是"| R502["透传最后一次上游错误（保留状态码与 body）"]
+    end
 ```
 
 渠道与模型是“一个渠道绑定多个模型”的关系；同一模型可以被多个渠道绑定：
@@ -550,13 +565,66 @@ graph LR
 下降）。熔断器在「渠道 × 模型」维度记住失败，令切换**有粘性**：冷却期内流量稳定
 停留在备用渠道，到期后以最小代价（单组合试探）验证恢复才切回。
 
-**状态机**（`internal/breaker`，单实例内共享、并发安全）：
+**状态机**（`internal/breaker`，单实例内共享、并发安全；half-open 非持久态，
+由 `cooldown_until ≤ now` 派生 + 认领实现）：
 
+```mermaid
+stateDiagram-v2
+    direction LR
+    closed : closed（无行，内存计数 0..N-1）
+    open : open（有行，冷却 600s×2ⁿ 上限 3600s）
+    halfOpen : half-open（冷却到期，认领制单组合试探）
+
+    [*] --> closed
+    closed --> closed : 任一成功（2xx/3xx）计数清零
+    closed --> open : 连续 N 个请求耗尽该渠道×模型组合
+    open --> halfOpen : cooldown_until 到期
+    halfOpen --> closed : 试探成功（删行，流量切回）
+    halfOpen --> open : 试探失败（仅 1 个组合），冷却翻倍
+    open --> closed : 探测成功 / 手动恢复 / 旁路流量成功
 ```
-closed ──连续 N 个请求耗尽组合（N=KEYWAY_BREAKER_FAIL_THRESHOLD，默认 3）──▶ open
-open   ──cooldown_until 到期──▶ half-open（认领制，单请求单组合试探）
-half-open ──试探成功 / 探测成功 / 手动恢复──▶ closed（行删除，流量切回）
-half-open ──试探失败──▶ open（冷却 ×2^n 指数退避，上限 KEYWAY_BREAKER_COOLDOWN_MAX_S）
+
+> 计入失败的上游形态：网络错误、HTML 回退、5xx、鉴权限流（401/403/429，含换
+> key 后仍耗尽）、404（模型或端点不存在）；其余 4xx（400/413 等客户端侧问题）
+> 不计。触发阈值的 N 与各冷却时长见 §12 环境变量。
+
+**恢复时间线示例**（渠道 1 priority 100 故障，渠道 2 priority 50 健康）：
+
+```mermaid
+sequenceDiagram
+    participant CLI as 客户端
+    participant GW as 网关
+    participant C1 as 渠道 1（熔断维度：渠道1×模型m）
+    participant C2 as 渠道 2
+
+    Note over C1: 上游故障开始
+    CLI->>GW: 请求 #1（模型 m）
+    GW->>C1: 组合尝试（≤3）
+    C1--xGW: 失败
+    GW->>C2: 失败切换
+    C2-->>GW: 200
+    GW-->>CLI: 200（C2 承接）
+    Note over GW: 连续失败计数 1/3
+    CLI->>GW: 请求 #2（C1 尝试耗尽 → C2）
+    Note over GW: 计数 2/3
+    CLI->>GW: 请求 #3（同上）
+    Note over GW: 计数 3/3 → 熔断（open）<br/>冷却 600s 开始
+    CLI->>GW: 请求 #4..N
+    GW->>C2: 直接路由（C1 零命中、零延迟损耗）
+    C2-->>GW: 200
+    Note over C1: 上游恢复（冷却期内零请求打向 C1）
+    Note over GW: 冷却到期 → half-open
+    CLI->>GW: 下一个请求
+    GW->>C1: 单组合试探（ClaimHalfOpen 认领）
+    alt 试探成功
+        C1-->>GW: 200
+        Note over GW: 删行关闭熔断，流量切回 C1
+        GW-->>CLI: 200（C1 承接）
+    else 试探失败
+        C1--xGW: 失败
+        GW->>C2: 该请求继续由 C2 完成（客户端无感）
+        Note over GW: 重新熔断，冷却翻倍 1200s
+    end
 ```
 
 - **存储**：`breaker_states` 只保存熔断中的行（无行 = 关闭），复合主键
@@ -618,6 +686,35 @@ half-open ──试探失败──▶ open（冷却 ×2^n 指数退避，上限 
   代表线路质量）；网络错误、HTML 回退（SPA）、5xx 记为不通
 - 结果 UPSERT line_stats（latency_ms / ok / last_probe_at）供 `orderCombos`
   路由排序；矩阵上限 = 5 线路 × 4 路径，超出截断（直连与个人代理优先保留）
+
+预热决策与执行流程：
+
+```mermaid
+flowchart TD
+    REQ["请求进入 plan（该渠道参与尝试）"] --> W0{"line_strategy = manual？"}
+    W0 -->|"是"| NW1["不预热（固定首线路，无优选）"]
+    W0 -->|"否"| W1{"预热已开启？<br/>（KEYWAY_PROBE_INTERVAL_MIN）"}
+    W1 -->|"否（0 = 关闭预热）"| NW2["不预热<br/>线路排序回退录入顺序"]
+    W1 -->|"是"| W2{"节流：next[渠道] ≤ now？"}
+    W2 -->|"否"| SK["本次跳过（并发请求不重复触发）"]
+    W2 -->|"是"| W3{"line_stats 新鲜？<br/>（最近探测 ≤ 3×周期）"}
+    W3 -->|"是"| W4["next 对齐到数据过期时刻，返回"]
+    W3 -->|"否 / 缺失"| W5["认领节流窗口 → 异步 warmup（本请求按现有数据继续路由）"]
+
+    subgraph WARM_SG["warmup（后台 goroutine）"]
+        direction TB
+        A1["解析渠道：密钥 / 线路 / 路径（直连 + 个人 + 公共代理 opt-in）"]
+        A2["每条 线路×路径 组合并发发 1 个最小流式请求<br/>渠道首个模型 × 其首选端点形态"]
+        A3{"响应判定（宽松 loose）"}
+        A3 -->|"2xx / 3xx / 4xx 且非 HTML"| A4["记线路通 + 延迟<br/>（4xx 是模型/密钥维度问题，不代表线路差）"]
+        A3 -->|"网络错误 / HTML / 5xx"| A5["记线路不通"]
+        A4 --> A6["UPSERT line_stats + 刷新渠道 last_ok_at"]
+        A5 --> A6
+        A1 --> A2 --> A3
+    end
+    W5 --> WARM_SG
+    WARM_SG --> ORD["后续请求 orderCombos 排序：<br/>健康且新鲜→延迟升序；未知→录入序；不健康殿后"]
+```
 
 ### 6.2 「测试渠道」/「逐密钥测试」按钮（诊断，用户主动触发）
 
