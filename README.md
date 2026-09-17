@@ -50,10 +50,8 @@ docker compose up -d          # 默认 0.0.0.0:20170，SQLite 落在 ./data
 |---|---|---|
 | `KEYWAY_SECRET` | ✅ | 32 字节主密钥，`openssl rand -base64 32` 生成 |
 | `KEYWAY_BASE_URL` | — | 对外地址（OAuth 回调/链接展示），如 `https://keyway.example.com` |
-| `KEYWAY_PROBE_INTERVAL_MIN` | — | 线路探测周期（分钟），默认 30（v1.5.45 起渠道×模型熔断器接管请求路径的健康反馈，探测频率下调以省上游额度） |
-| `KEYWAY_BREAKER_FAIL_THRESHOLD` | — | 渠道×模型熔断阈值：连续 N 个请求耗尽该渠道该模型的组合尝试后熔断，默认 3 |
-| `KEYWAY_BREAKER_COOLDOWN_S` | — | 熔断基础冷却（秒），默认 300；到期后放行一次试探，失败按 2 倍指数退避 |
-| `KEYWAY_BREAKER_COOLDOWN_MAX_S` | — | 熔断退避上限（秒），默认 3600 |
+| `KEYWAY_PROBE_INTERVAL_MIN` | — | 线路探测周期（分钟），默认 30（v1.5.45：探测承担渠道×模型熔断的自动恢复，以 30 分钟为节拍） |
+| `KEYWAY_BREAKER_FAIL_THRESHOLD` | — | 渠道×模型熔断阈值：连续 N 个请求耗尽该渠道该模型的组合尝试后熔断、流量长期走备用渠道（保持缓存命中）；探测成功或手动恢复后切回，默认 3 |
 | `KEYWAY_RESPONSE_HEADER_TIMEOUT_S` | — | 上游响应头等待超时（秒），默认 1800，0=不限制；仅覆盖响应头阶段，流式响应不受影响 |
 | `KEYWAY_IDLE_STREAM_TIMEOUT_S` | — | 流式空闲超时（秒），默认 300，0=关闭；流式期间每 15s 发 SSE 注释 ping 保活，上游持续无数据则关闭上游止损 |
 | `KEYWAY_LOG_RETENTION_DAYS` | — | 请求日志保留期（天），默认 30 |

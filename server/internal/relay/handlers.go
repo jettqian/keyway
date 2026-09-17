@@ -72,12 +72,11 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			viable = append(viable, rc)
 		}
 		view := s.breakerView(viable, probe.Model)
-		now := time.Now().Unix()
 		reqStart := time.Now()
 		recorded := map[int64]bool{} // 熔断失败只按渠道记一次（matched+defaults 可能重复命中）
 		for _, rc := range viable {
-			if view != nil && view.Open(rc.Channel.ID) && !view.Due(rc.Channel.ID, now) {
-				continue // 熔断冷却中：跳过该渠道
+			if view != nil && view.Open(rc.Channel.ID) {
+				continue // 熔断中：跳过该渠道
 			}
 			upstreamModel := mapModel(rc.Channel, probe.Model)
 			m := map[string]any{}
@@ -86,9 +85,6 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			sendBody, _ := json.Marshal(m)
 			tried := false
 			for _, a := range s.planFor(rc, probe.Model, view) {
-				if a.trial && !s.Breaker.ClaimHalfOpen(rc.Channel.ID, probe.Model) {
-					continue // 半开试探已被并发请求认领
-				}
 				tried = true
 				a.protocol = "openai"
 				a.request = c.Request
@@ -167,7 +163,6 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 		viable = append(viable, rc)
 	}
 	view := s.breakerView(viable, probe.Model)
-	now := time.Now().Unix()
 	var (
 		lastStatus int
 		lastBody   []byte
@@ -175,8 +170,8 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 	)
 	recorded := map[int64]bool{} // 熔断失败只按渠道记一次（matched+defaults 可能重复命中）
 	for _, rc := range viable {
-		if view != nil && view.Open(rc.Channel.ID) && !view.Due(rc.Channel.ID, now) {
-			continue // 熔断冷却中：跳过该渠道
+		if view != nil && view.Open(rc.Channel.ID) {
+			continue // 熔断中：跳过该渠道
 		}
 		upstreamModel := mapModel(rc.Channel, probe.Model)
 		m := map[string]any{}
@@ -188,9 +183,6 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 		sendBody, _ := json.Marshal(m)
 		tried := false
 		for _, a := range s.planFor(rc, probe.Model, view) {
-			if a.trial && !s.Breaker.ClaimHalfOpen(rc.Channel.ID, probe.Model) {
-				continue // 半开试探已被并发请求认领
-			}
 			tried = true
 			a.protocol = "openai"
 			a.request = c.Request
@@ -393,9 +385,6 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		if a.rc.Channel.ID != segCh {
 			closeSeg()
 			segCh, segTried, segErr = a.rc.Channel.ID, false, ""
-		}
-		if a.trial && !s.Breaker.ClaimHalfOpen(a.rc.Channel.ID, model) {
-			continue // 半开试探已被并发请求认领，跳过该渠道
 		}
 		segTried = true
 		a.protocol = inbound

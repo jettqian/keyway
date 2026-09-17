@@ -24,8 +24,6 @@ type Config struct {
 	PricingSyncHours         int
 	FxSourceURL              string
 	BreakerFailThreshold     int
-	BreakerCooldownSec       int
-	BreakerCooldownMaxSec    int
 }
 
 func Load() Config {
@@ -50,10 +48,8 @@ func Load() Config {
 		PricingSyncHours:         envInt("KEYWAY_PRICING_SYNC_HOURS", 24),
 		FxSourceURL:              envStr("KEYWAY_FX_SOURCE_URL", ""),
 		// 渠道×模型熔断器（v1.5.45）：连续 N 个请求耗尽该渠道该模型的组合
-		// 尝试后熔断，冷却 S 秒后半开试探，失败指数退避（上限 MAX 秒）
-		BreakerFailThreshold:  envInt("KEYWAY_BREAKER_FAIL_THRESHOLD", 3),
-		BreakerCooldownSec:    envInt("KEYWAY_BREAKER_COOLDOWN_S", 300),
-		BreakerCooldownMaxSec: envInt("KEYWAY_BREAKER_COOLDOWN_MAX_S", 3600),
+		// 尝试后熔断、流量长期走备用渠道；切回由探测成功或前端手动恢复触发
+		BreakerFailThreshold: envInt("KEYWAY_BREAKER_FAIL_THRESHOLD", 3),
 	}
 }
 

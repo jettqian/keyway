@@ -11,8 +11,7 @@ import (
 // ---------- 渠道×模型熔断（FR-B5/FR-B6，v1.5.45） ----------
 
 // handleListBreakers GET /api/breakers：本人渠道的熔断状态列表（渠道名关联）。
-// 只返回熔断中的行（无行 = 关闭）；半开与否由前端按 cooldownUntil 与当前
-// 时间比较得出
+// 只返回熔断中的行（无行 = 关闭）
 func (s *Server) handleListBreakers(c *gin.Context) {
 	var chans []store.Channel
 	if err := s.Store.DB().Where("user_id = ?", currentUser(c).ID).Find(&chans).Error; err != nil {
@@ -35,14 +34,13 @@ func (s *Server) handleListBreakers(c *gin.Context) {
 		for i := range rows {
 			r := &rows[i]
 			out = append(out, gin.H{
-				"channelId":     r.ChannelID,
-				"channelName":   nameByID[r.ChannelID],
-				"model":         r.Model,
-				"failCount":     r.FailCount,
-				"openedAt":      r.OpenedAt,
-				"cooldownUntil": r.CooldownUntil,
-				"lastError":     r.LastError,
-				"updatedAt":     r.UpdatedAt,
+				"channelId":   r.ChannelID,
+				"channelName": nameByID[r.ChannelID],
+				"model":       r.Model,
+				"failCount":   r.FailCount,
+				"openedAt":    r.OpenedAt,
+				"lastError":   r.LastError,
+				"updatedAt":   r.UpdatedAt,
 			})
 		}
 	}

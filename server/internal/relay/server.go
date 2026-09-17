@@ -82,7 +82,6 @@ type attempt struct {
 	via      string // direct | personal | proxy:{id}
 	proxyID  int64  // 公共代理 ID（via 为 proxy:{id} 时非零）
 	key      *store.Key
-	trial    bool // 半开试探：执行前需原子认领（ClaimHalfOpen），仅放行单个组合
 }
 
 type linePath struct {
@@ -98,23 +97,23 @@ type linePath struct {
 // 预算（FR-K5）按渠道粒度截断：单渠道组合耗尽（≤ cfg.AttemptBudget）→ 换下一候选渠道，
 // 全部渠道耗尽 → 透传最后错误；冷却中的密钥排后（可用密钥优先）；
 // 同一渠道同时命中 matched 与 defaults 时去重（第二轮重试必然同样失败）；
-// 熔断过滤（FR-B1/FR-B2，v1.5.45）：view 中熔断且冷却未到期的渠道整渠道跳过；
-// 冷却已到期（半开）的渠道只放行首个组合并标记 trial（执行前需认领）
+// 熔断过滤（FR-B1，v1.5.45）：view 中熔断的渠道整渠道跳过——不做流量试探，
+// 流量长期稳定走备用渠道（保护上游 prompt 缓存命中率），切回由探测成功或
+// 手动恢复触发（关闭熔断后该渠道自然回到计划中）
 func (s *Server) plan(matched, defaults []*routing.ResolvedChannel, model string, view breaker.View) []attempt {
 	var out []attempt
 	budget := s.Cfg.AttemptBudget
 	if budget <= 0 {
 		budget = 3
 	}
-	now := time.Now().Unix()
 	seen := map[int64]bool{}
 	for _, rc := range append(matched, defaults...) {
 		if seen[rc.Channel.ID] {
 			continue
 		}
 		seen[rc.Channel.ID] = true
-		if view != nil && view.Open(rc.Channel.ID) && !view.Due(rc.Channel.ID, now) {
-			continue // 熔断冷却中：跳过整渠道，流量稳定走备用渠道
+		if view != nil && view.Open(rc.Channel.ID) {
+			continue // 熔断中：跳过整渠道，流量稳定走备用渠道
 		}
 		keys := s.orderKeys(rc)
 		if len(keys) == 0 {
@@ -147,11 +146,6 @@ func (s *Server) plan(matched, defaults []*routing.ResolvedChannel, model string
 		}
 		if len(chOut) > budget {
 			chOut = chOut[:budget]
-		}
-		if view != nil && view.Due(rc.Channel.ID, now) && len(chOut) > 0 {
-			// 半开试探：单组合 + 首选密钥，成功即关闭、流量切回
-			chOut = chOut[:1]
-			chOut[0].trial = true
 		}
 		out = append(out, chOut...)
 	}

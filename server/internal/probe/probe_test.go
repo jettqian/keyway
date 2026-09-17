@@ -75,7 +75,7 @@ func newEngineWithBreaker(t *testing.T) (*store.Store, *Engine, *breaker.Engine)
 		t.Fatalf("打开测试存储失败: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	bk := breaker.New(st.DB(), 1, 300, 3600)
+	bk := breaker.New(st.DB(), 1)
 	r := routing.New(st, testSecret)
 	pm := proxyman.New(st, testSecret)
 	return st, New(st, testSecret, r, pm, config.Config{}, bk), bk

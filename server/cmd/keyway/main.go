@@ -46,8 +46,8 @@ func buildApp(cfg config.Config) (*app, error) {
 	routingSvc := routing.New(st, cfg.Secret)
 	logWriter := usage.NewWriter(st.DB())
 	pm := proxyman.New(st, cfg.Secret)
-	// 渠道×模型熔断器：relay 失败计数/半开恢复 + probe 成功关闭 + API 展示与手动恢复
-	breakerEngine := breaker.New(st.DB(), cfg.BreakerFailThreshold, cfg.BreakerCooldownSec, cfg.BreakerCooldownMaxSec)
+	// 渠道×模型熔断器：relay 失败计数 + probe 成功/手动恢复关闭 + API 展示
+	breakerEngine := breaker.New(st.DB(), cfg.BreakerFailThreshold)
 	probeEngine := probe.New(st, cfg.Secret, routingSvc, pm, cfg, breakerEngine)
 	// 汇率定时同步（USD→CNY，auto 模式下每 24h 覆盖，manual 保留固定值）
 	fxEngine := fxrate.New(st, cfg.FxSourceURL)
