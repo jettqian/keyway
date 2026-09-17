@@ -205,7 +205,9 @@ const TokensPage: React.FC = () => {
   const [loading, setLoading] = React.useState(true)
   const [modalOpen, setModalOpen] = React.useState(false)
   const [created, setCreated] = React.useState<string | null>(null)
+  const [renaming, setRenaming] = React.useState<GatewayToken | null>(null)
   const [form] = Form.useForm()
+  const [renameForm] = Form.useForm()
 
   const refresh = React.useCallback(() => {
     setLoading(true)
@@ -238,6 +240,19 @@ const TokensPage: React.FC = () => {
       setModalOpen(false)
       setCreated(r.plaintext)
       refresh()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
+  // 重命名：名称纯展示用途，服务端 PUT /tokens/:id 已支持 name 字段
+  const submitRename = async () => {
+    const v = await renameForm.validateFields()
+    try {
+      const r = await updateToken(renaming!.id, { name: v.name })
+      applyTokenUpdate(r.token)
+      setRenaming(null)
+      message.success(t('common.updated'))
     } catch (e) {
       message.error((e as Error).message)
     }
@@ -326,10 +341,11 @@ const TokensPage: React.FC = () => {
           },
           {
             title: t('common.action'),
-            width: 200,
+            width: 260,
             render: (_, tk) =>
               <Space>
                 <Button size="small" onClick={() => copyKey(tk)} onPointerDown={() => prefetchKey(tk.id)} onMouseEnter={() => prefetchKey(tk.id)}>{t('tokens.copyKey')}</Button>
+                <Button size="small" onClick={() => { setRenaming(tk); renameForm.setFieldsValue({ name: tk.name }) }}>{t('tokens.rename')}</Button>
                 {tk.revoked ? (
                   <Popconfirm
                     title={t('tokens.deleteConfirm')}
@@ -375,6 +391,20 @@ const TokensPage: React.FC = () => {
           </Form.Item>
           <Form.Item name="expiresAt" label={t('tokens.expiresAtOptional')}>
             <DatePicker showTime style={{ width: '100%' }} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal title={t('tokens.renameTitle')} open={renaming !== null} onOk={submitRename} onCancel={() => setRenaming(null)} destroyOnClose>
+        <Form form={renameForm} layout="vertical">
+          <Form.Item
+            name="name"
+            label={t('common.name')}
+            rules={[
+              { required: true, message: t('common.nameRequired') },
+              { max: 64, message: t('tokens.nameMaxLength', { max: 64 }) },
+            ]}
+          >
+            <Input placeholder={t('tokens.namePlaceholder')} autoFocus />
           </Form.Item>
         </Form>
       </Modal>
