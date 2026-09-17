@@ -150,6 +150,36 @@ func (e *Engine) Reset(channelID int64, model string) {
 	e.mu.Unlock()
 }
 
+// OpenModels 列出渠道当前熔断中的模型（探测定向补测用）：按 updated_at
+// 升序（最久未触达者优先，配合 Touch 实现 LRU 轮转，长期死模型不阻塞
+// 同渠道其他熔断模型的补测）
+func (e *Engine) OpenModels(channelID int64) []string {
+	if e == nil || channelID == 0 {
+		return nil
+	}
+	var rows []store.BreakerState
+	if err := e.db.Where("channel_id = ?", channelID).
+		Order("updated_at ASC, model ASC").Find(&rows).Error; err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(rows))
+	for i := range rows {
+		out = append(out, rows[i].Model)
+	}
+	return out
+}
+
+// Touch 刷新熔断行的 updated_at（定向补测失败后排队后移，避免长期死模型
+// 阻塞同一渠道其他熔断模型的补测轮转）
+func (e *Engine) Touch(channelID int64, model string) {
+	if e == nil || channelID == 0 || model == "" {
+		return
+	}
+	e.db.Model(&store.BreakerState{}).
+		Where("channel_id = ? AND model = ?", channelID, model).
+		Update("updated_at", e.now().Unix())
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

@@ -343,3 +343,64 @@ func TestProbeChannel成功关闭熔断(t *testing.T) {
 		t.Fatalf("探测成功应关闭熔断: %v", v)
 	}
 }
+
+// 熔断模型定向补测（FR-B2/B4）：探测矩阵只覆盖模型列表前 3 个，第 4 个起的
+// 熔断模型由补测自动关闭——矩阵存在健康组合时在首个健康组合上补一次最小探测
+func TestProbeChannel定向补测关闭覆盖外熔断(t *testing.T) {
+	srv := openAIOnly(t)
+	defer srv.Close()
+	st, e, bk := newEngineWithBreaker(t)
+	ch := seedChannel(t, st, &store.Channel{
+		Name: "many", ForwardMode: "passthrough", Enabled: 1,
+		BaseURLsJSON: fmt.Sprintf(`["%s"]`, srv.URL),
+		ModelsJSON:   `["m1","m2","m3","m4"]`,
+	})
+	bk.RecordFailure(ch.ID, "m4", "旧故障")
+	if v := bk.View([]int64{ch.ID}, "m4"); !v.Open(ch.ID) {
+		t.Fatal("前置条件：m4 应处于熔断")
+	}
+	results, err := e.ProbeChannel(ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("矩阵应探测成功: %+v", results)
+	}
+	if v := bk.View([]int64{ch.ID}, "m4"); v != nil {
+		t.Fatalf("定向补测应关闭 m4 熔断: %v", v)
+	}
+}
+
+// 定向补测失败（模型维度故障未恢复）保持熔断，只刷新轮转时间
+func TestProbeChannel定向补测失败保持熔断(t *testing.T) {
+	// 上游对 m4 返回 404（model_not_found 类模型维度故障），其余模型正常
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		json.NewDecoder(r.Body).Decode(&req)
+		if req["model"] == "m4" {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"message":"model not found"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"c","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"pong"}}]}`)
+	}))
+	defer srv.Close()
+	st, e, bk := newEngineWithBreaker(t)
+	ch := seedChannel(t, st, &store.Channel{
+		Name: "many", ForwardMode: "passthrough", Enabled: 1,
+		BaseURLsJSON: fmt.Sprintf(`["%s"]`, srv.URL),
+		ModelsJSON:   `["m1","m2","m3","m4"]`,
+	})
+	bk.RecordFailure(ch.ID, "m4", "旧故障")
+	results, err := e.ProbeChannel(ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("矩阵应由 m1 探测成功: %+v", results)
+	}
+	if v := bk.View([]int64{ch.ID}, "m4"); !v.Open(ch.ID) {
+		t.Fatal("补测失败应保持 m4 熔断")
+	}
+}

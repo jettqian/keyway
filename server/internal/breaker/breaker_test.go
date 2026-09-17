@@ -133,3 +133,32 @@ func Test模型维度隔离(t *testing.T) {
 		t.Fatalf("gpt-y 不应有熔断视图: %v", view)
 	}
 }
+
+// OpenModels 按 updated_at 升序（最久未触达优先），Touch 后移排队（LRU 轮转）
+func TestOpenModels轮转(t *testing.T) {
+	e, _ := openEngine(t, 1)
+	base := time.Unix(1_800_000_000, 0)
+	now := base
+	e.now = func() time.Time { return now }
+
+	e.RecordFailure(1, "a", "e") // updated_at = t0
+	now = base.Add(10 * time.Second)
+	e.RecordFailure(1, "b", "e") // updated_at = t0+10
+	now = base.Add(20 * time.Second)
+	e.RecordFailure(1, "c", "e") // updated_at = t0+20
+	got := e.OpenModels(1)
+	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+		t.Fatalf("应按 updated_at 升序: %v", got)
+	}
+	// 补测失败 Touch 后 a 排到队尾
+	now = base.Add(30 * time.Second)
+	e.Touch(1, "a")
+	got = e.OpenModels(1)
+	if len(got) != 3 || got[0] != "b" || got[1] != "c" || got[2] != "a" {
+		t.Fatalf("Touch 后应排队后移: %v", got)
+	}
+	// 其他渠道不受影响
+	if got := e.OpenModels(2); len(got) != 0 {
+		t.Fatalf("无熔断渠道应返回空: %v", got)
+	}
+}

@@ -30,6 +30,8 @@ const (
 	probeWait  = 30 * time.Second // 单次探测（组合）总超时：覆盖 responses/messages 排队 + 首事件等待
 	// 单组合探测最多尝试的模型数（回退控制上游请求成本，DESIGN §6）
 	probeModelCap = 3
+	// 熔断模型定向补测的每轮每渠道上限（成本护栏；超出部分按 LRU 轮转到后续轮次）
+	breakerProbeCap = 10
 )
 
 // Result 线路×路径探测结果；OK 时 Model 记录判定健康的模型
@@ -208,13 +210,46 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 	wg.Wait()
 	e.saveResults(ch.ID, results)
 	// 探测成功即关闭对应模型的熔断（FR-B4 恢复信号：与真实转发完全一致的
-	// 最小流式请求已走通，足以证明渠道×模型可用；探测覆盖渠道模型列表前 3 个，
-	// 未覆盖的模型由半开试探恢复）
+	// 最小流式请求已走通，足以证明渠道×模型可用）
 	if e.breakers != nil {
 		for _, r := range results {
 			if r.OK && r.Model != "" {
 				e.breakers.RecordSuccess(ch.ID, r.Model)
 			}
+		}
+		// 熔断中的模型定向补测（FR-B2/FR-B4）：探测矩阵只覆盖模型列表前
+		// probeModelCap 个且按序回退，熔断模型可能不在覆盖内。仅在矩阵存在
+		// 健康组合时补测（渠道整体不可用时必然失败，不发无谓请求），每个
+		// 熔断模型在首个健康组合上补发一次最小探测（并发、每轮每渠道上限
+		// breakerProbeCap、最久未测优先），成功即关闭、失败 Touch 排队后移；
+		// 后台探测与「测试渠道」按钮共用本路径，渠道恢复后最长一个探测
+		// 周期内全部熔断自动恢复
+		hi := -1
+		for i := range results {
+			if results[i].OK {
+				hi = i
+				break
+			}
+		}
+		if hi >= 0 {
+			t := &targets[hi]
+			models := e.breakers.OpenModels(ch.ID)
+			if len(models) > breakerProbeCap {
+				models = models[:breakerProbeCap]
+			}
+			var bwg sync.WaitGroup
+			for _, m := range models {
+				bwg.Add(1)
+				go func() {
+					defer bwg.Done()
+					if r := e.probeOnce(ch, []string{m}, keyPlain, t.line, t.proxyURL, t.via); r.OK {
+						e.breakers.RecordSuccess(ch.ID, m)
+					} else {
+						e.breakers.Touch(ch.ID, m)
+					}
+				}()
+			}
+			bwg.Wait()
 		}
 	}
 	return results, nil
