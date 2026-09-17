@@ -96,6 +96,11 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
 .auth-card .ant-card-body { padding: 32px; }
 .auth-mark { width: 42px; height: 42px; display: grid; place-items: center; margin: 0 auto 14px; border-radius: 12px; color: #fff; background: var(--kw-primary); font-size: 22px; font-weight: 800; }
 
+/* 登录/注册卡片下方的 GitHub 引导链接 */
+.auth-github { margin-top: 16px; text-align: center; }
+.auth-github a { display: inline-flex; align-items: center; gap: 6px; color: var(--kw-secondary); font-size: 13px; }
+.auth-github a:hover { color: var(--kw-primary); }
+
 /* 头部用户区：头像 + 用户名，明确可点开的账户入口 */
 .user-chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 8px; cursor: pointer; transition: background .15s; }
 .user-chip:hover { background: var(--kw-hover); }

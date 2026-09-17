@@ -1,8 +1,10 @@
 import React from 'react'
 import { Card, Form, Input, Button, message, Typography } from 'antd'
+import { GithubOutlined } from '@ant-design/icons'
 import { Link, useNavigate } from 'react-router-dom'
 import { register } from '../api'
 import { useI18n } from '../i18n'
+import { GITHUB_URL } from '../constants'
 
 const RegisterPage: React.FC = () => {
   const { t } = useI18n()
@@ -50,6 +52,11 @@ const RegisterPage: React.FC = () => {
           {t('register.haveAccount')}{' '}<Link to="/login">{t('register.logIn')}</Link>
         </div>
       </Card>
+      <div className="auth-github">
+        <a href={GITHUB_URL} target="_blank" rel="noreferrer">
+          <GithubOutlined /> {t('common.githubStar')}
+        </a>
+      </div>
     </div>
   )
 }

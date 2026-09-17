@@ -34,6 +34,8 @@ export default {
   'common.unpricedTip': '价目表中无同名条目，使用该模型的请求费用将记为未定价',
   'common.toggleTheme': '切换亮色/暗色主题',
   'common.toggleLang': '切换中文/English',
+  'common.github': 'GitHub 仓库',
+  'common.githubStar': '开源项目，欢迎 Star 支持',
   'common.requestFailed': '请求失败（{status}）',
   'common.allModelsCount': '共 {count} 个模型',
 }

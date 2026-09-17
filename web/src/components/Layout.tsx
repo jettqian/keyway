@@ -15,12 +15,14 @@ import {
   SunOutlined,
   MoonOutlined,
   TranslationOutlined,
+  GithubOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { logout, me } from '../api'
 import type { User } from '../api/types'
 import { useI18n } from '../i18n'
 import { useTheme } from '../theme'
+import { GITHUB_URL } from '../constants'
 
 const { Sider, Header, Content } = AntLayout
 
@@ -101,6 +103,17 @@ export const ConsoleLayout: React.FC = () => {
             </>
           )}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Tooltip title={t('common.github')}>
+              <Button
+                type="text"
+                className="pref-trigger"
+                aria-label={t('common.github')}
+                icon={<GithubOutlined />}
+                href={GITHUB_URL}
+                target="_blank"
+                rel="noreferrer"
+              />
+            </Tooltip>
             <Tooltip title={t('common.toggleTheme')}>
               <Button
                 type="text"

@@ -33,6 +33,8 @@ export default {
   'common.unpricedTip': 'No matching entry in the pricing table; requests using this model will be recorded as unpriced',
   'common.toggleTheme': 'Toggle light/dark theme',
   'common.toggleLang': 'Toggle 中文/English',
+  'common.github': 'GitHub repository',
+  'common.githubStar': 'Open source — star us on GitHub',
   'common.requestFailed': 'Request failed ({status})',
   'common.allModelsCount': '{count} models in total',
 }
