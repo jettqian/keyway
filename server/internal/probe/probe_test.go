@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"keyway/internal/breaker"
 	"keyway/internal/config"
@@ -75,7 +76,7 @@ func newEngineWithBreaker(t *testing.T) (*store.Store, *Engine, *breaker.Engine)
 		t.Fatalf("打开测试存储失败: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	bk := breaker.New(st.DB(), 1)
+	bk := breaker.New(st.DB(), 1, 300, 3600)
 	r := routing.New(st, testSecret)
 	pm := proxyman.New(st, testSecret)
 	return st, New(st, testSecret, r, pm, config.Config{}, bk), bk
@@ -344,63 +345,92 @@ func TestProbeChannel成功关闭熔断(t *testing.T) {
 	}
 }
 
-// 熔断模型定向补测（FR-B2/B4）：探测矩阵只覆盖模型列表前 3 个，第 4 个起的
-// 熔断模型由补测自动关闭——矩阵存在健康组合时在首个健康组合上补一次最小探测
-func TestProbeChannel定向补测关闭覆盖外熔断(t *testing.T) {
-	srv := openAIOnly(t)
-	defer srv.Close()
-	st, e, bk := newEngineWithBreaker(t)
+// 按需线路预热（FR-S1，v1.5.45 取代定时探测）：单模型、宽松判定——
+// 4xx 也记线路通并取延迟（模型/密钥维度问题不代表线路差），5xx 记不通
+func TestWarmup线路预热宽松判定(t *testing.T) {
+	mk := func() *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"message":"model not found"}}`)
+		}))
+	}
+	srv1, srv2 := mk(), mk()
+	defer srv1.Close()
+	defer srv2.Close()
+	st, e, _ := newEngineWithBreaker(t)
 	ch := seedChannel(t, st, &store.Channel{
-		Name: "many", ForwardMode: "passthrough", Enabled: 1,
-		BaseURLsJSON: fmt.Sprintf(`["%s"]`, srv.URL),
+		Name: "warm", ForwardMode: "passthrough", Enabled: 1,
+		BaseURLsJSON: fmt.Sprintf(`["%s", "%s"]`, srv1.URL, srv2.URL),
 		ModelsJSON:   `["m1","m2","m3","m4"]`,
 	})
-	bk.RecordFailure(ch.ID, "m4", "旧故障")
-	if v := bk.View([]int64{ch.ID}, "m4"); !v.Open(ch.ID) {
-		t.Fatal("前置条件：m4 应处于熔断")
+	e.warmup(ch)
+	stats := LoadStats(st.DB(), ch.ID)
+	if len(stats) != 2 {
+		t.Fatalf("两条线路都应写入 line_stats: %v", stats)
 	}
-	results, err := e.ProbeChannel(ch)
-	if err != nil {
-		t.Fatal(err)
+	for _, stt := range stats {
+		if stt.Ok == nil || *stt.Ok != 1 {
+			t.Fatalf("404 响应应记线路通（宽松判定）: %+v", stt)
+		}
+		if stt.LatencyMs == nil || *stt.LatencyMs < 0 {
+			t.Fatalf("应记录延迟: %+v", stt)
+		}
 	}
-	if len(results) != 1 || !results[0].OK {
-		t.Fatalf("矩阵应探测成功: %+v", results)
-	}
-	if v := bk.View([]int64{ch.ID}, "m4"); v != nil {
-		t.Fatalf("定向补测应关闭 m4 熔断: %v", v)
+	// 渠道状态同步刷新（last_ok_at）
+	var got store.Channel
+	st.DB().First(&got, ch.ID)
+	if got.LastOkAt == nil {
+		t.Fatalf("预热成功应刷新 last_ok_at: %+v", got)
 	}
 }
 
-// 定向补测失败（模型维度故障未恢复）保持熔断，只刷新轮转时间
-func TestProbeChannel定向补测失败保持熔断(t *testing.T) {
-	// 上游对 m4 返回 404（model_not_found 类模型维度故障），其余模型正常
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]any
-		json.NewDecoder(r.Body).Decode(&req)
-		if req["model"] == "m4" {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":{"message":"model not found"}}`)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"c","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"pong"}}]}`)
-	}))
+// 预热节流：已有新鲜数据（如刚点过「测试」）时 MaybeWarmup 不再触发异步预热；
+// KEYWAY_PROBE_INTERVAL_MIN=0 时完全关闭
+func TestMaybeWarmup节流与开关(t *testing.T) {
+	srv := openAIOnly(t)
 	defer srv.Close()
-	st, e, bk := newEngineWithBreaker(t)
+	st, e, _ := newEngineWithBreaker(t)
+	e.cfg.ProbeIntervalMin = 30
 	ch := seedChannel(t, st, &store.Channel{
-		Name: "many", ForwardMode: "passthrough", Enabled: 1,
+		Name: "warm2", ForwardMode: "passthrough", Enabled: 1,
 		BaseURLsJSON: fmt.Sprintf(`["%s"]`, srv.URL),
-		ModelsJSON:   `["m1","m2","m3","m4"]`,
+		ModelsJSON:   `["m1"]`,
 	})
-	bk.RecordFailure(ch.ID, "m4", "旧故障")
-	results, err := e.ProbeChannel(ch)
-	if err != nil {
-		t.Fatal(err)
+
+	// 周期 = 0：不预热
+	e.cfg.ProbeIntervalMin = 0
+	e.MaybeWarmup(ch)
+	if n := lineStatCount(st, ch.ID); n != 0 {
+		t.Fatalf("周期为 0 应关闭预热，实际写入 %d 行", n)
 	}
-	if len(results) != 1 || !results[0].OK {
-		t.Fatalf("矩阵应由 m1 探测成功: %+v", results)
+
+	// 首次触发：异步预热（轮询等待 line_stats 落库）
+	e.cfg.ProbeIntervalMin = 30
+	e.MaybeWarmup(ch)
+	for i := 0; i < 50 && lineStatCount(st, ch.ID) == 0; i++ {
+		time.Sleep(50 * time.Millisecond)
 	}
-	if v := bk.View([]int64{ch.ID}, "m4"); !v.Open(ch.ID) {
-		t.Fatal("补测失败应保持 m4 熔断")
+	if n := lineStatCount(st, ch.ID); n != 1 {
+		t.Fatalf("首次触发应预热 1 条线路，实际 %d 行", n)
 	}
+
+	// 数据新鲜：同步跳过（不再起 goroutine，命中数不再增长）
+	hits := lineStatProbeCount(st, ch.ID)
+	e.MaybeWarmup(ch)
+	if got := lineStatProbeCount(st, ch.ID); got != hits {
+		t.Fatalf("新鲜数据不应重复预热: %d → %d", hits, got)
+	}
+}
+
+func lineStatCount(st *store.Store, channelID int64) int {
+	var n int64
+	st.DB().Model(&store.LineStat{}).Where("channel_id = ?", channelID).Count(&n)
+	return int(n)
+}
+
+func lineStatProbeCount(st *store.Store, channelID int64) int64 {
+	var n int64
+	st.DB().Model(&store.LineStat{}).Where("channel_id = ?", channelID).
+		Select("COALESCE(SUM(last_probe_at), 0)").Scan(&n)
+	return n
 }

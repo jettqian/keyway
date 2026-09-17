@@ -124,17 +124,18 @@ type LineStat struct {
 func (LineStat) TableName() string { return "line_stats" }
 
 // BreakerState 渠道×模型熔断状态（DESIGN §5.4）：
-// 行存在 = 熔断中（open），无行 = 关闭。行一经写入长期有效，直到探测成功 /
-// 手动恢复 / 全候选旁路下的真实流量成功才关闭；低于阈值的连续失败计数只在
+// 行存在 = 熔断中（open），无行 = 关闭；冷却到期（cooldown_until ≤ now）即进入
+// 半开——由 relay 原子认领后放行单个组合试探。低于阈值的连续失败计数只在
 // breaker 引擎内存中，不落库（重启清零，代价是重启后最多多付 threshold-1 个
 // 请求的尝试成本）
 type BreakerState struct {
-	ChannelID int64  `gorm:"column:channel_id;primaryKey;autoIncrement:false"`
-	Model     string `gorm:"column:model;primaryKey"` // 入站请求模型名（路由键）
-	FailCount int    `gorm:"column:fail_count;not null;default:0"`
-	OpenedAt  int64  `gorm:"column:opened_at;not null;default:0"`
-	LastError string `gorm:"column:last_error;default:''"`
-	UpdatedAt int64  `gorm:"column:updated_at;not null;default:0"`
+	ChannelID     int64  `gorm:"column:channel_id;primaryKey;autoIncrement:false"`
+	Model         string `gorm:"column:model;primaryKey"` // 入站请求模型名（路由键）
+	FailCount     int    `gorm:"column:fail_count;not null;default:0"`
+	OpenedAt      int64  `gorm:"column:opened_at;not null;default:0"`
+	CooldownUntil int64  `gorm:"column:cooldown_until;not null;default:0"`
+	LastError     string `gorm:"column:last_error;default:''"`
+	UpdatedAt     int64  `gorm:"column:updated_at;not null;default:0"`
 }
 
 func (BreakerState) TableName() string { return "breaker_states" }

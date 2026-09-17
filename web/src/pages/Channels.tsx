@@ -268,7 +268,7 @@ const ChannelsPage: React.FC = () => {
     }
   }
 
-  // 熔断明细弹层（FR-B5）：模型、失败次数、熔断时间、最近错误与逐项恢复
+  // 熔断明细弹层（FR-B5）：模型、失败次数、下次试探时间、最近错误与逐项恢复
   const breakerPopover = (list: BreakerInfo[]) => (
     <div style={{ maxWidth: 480 }}>
       <div className="text-secondary" style={{ marginBottom: 8, whiteSpace: 'normal' }}>
@@ -282,7 +282,7 @@ const ChannelsPage: React.FC = () => {
           <Tag color="red">{b.model}</Tag>
           <span style={{ flex: 1, minWidth: 0 }}>
             <span className="text-secondary">
-              {t('channels.breakerFailCount', { count: b.failCount })} · {t('channels.breakerOpenedAt', { time: dayjs.unix(b.openedAt).format('MM-DD HH:mm') })}
+              {t('channels.breakerFailCount', { count: b.failCount })} · {t('channels.breakerNextTrial', { time: dayjs.unix(b.cooldownUntil).format('MM-DD HH:mm') })}
             </span>
             {b.lastError ? (
               <div className="text-secondary" style={{ fontSize: 12, whiteSpace: 'normal', wordBreak: 'break-all' }}>

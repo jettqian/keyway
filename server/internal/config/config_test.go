@@ -10,7 +10,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DataDir != "./data" || cfg.Port != 8080 || cfg.ProbeIntervalMin != 30 ||
 		cfg.AttemptBudget != 3 || cfg.KeyCooldownSec != 60 || cfg.DefaultMaxTokens != 8192 ||
 		cfg.BodyLimitMB != 50 || cfg.IdleStreamTimeoutSec != 300 || cfg.LogRetentionDays != 30 ||
-		cfg.ResponseHeaderTimeoutSec != 1800 || cfg.BreakerFailThreshold != 3 {
+		cfg.ResponseHeaderTimeoutSec != 1800 ||
+		cfg.BreakerFailThreshold != 3 || cfg.BreakerCooldownSec != 600 || cfg.BreakerCooldownMaxSec != 3600 {
 		t.Fatalf("默认值不符合 DESIGN §12: %+v", cfg)
 	}
 }

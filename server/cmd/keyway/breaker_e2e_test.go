@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"keyway/internal/store"
 )
@@ -117,6 +118,17 @@ func (c *ctx) listBreakersViaAPI(t *testing.T) []map[string]any {
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	return resp.Breakers
+}
+
+// expireCooldown 把指定渠道全部熔断行的冷却置为已过期（模拟时间推进，测试半开）
+func (c *ctx) expireCooldown(t *testing.T, channelID int64) {
+	t.Helper()
+	now := time.Now().Unix()
+	if err := c.store.DB().Model(&store.BreakerState{}).
+		Where("channel_id = ?", channelID).
+		Update("cooldown_until", now-1).Error; err != nil {
+		t.Fatalf("推进冷却失败: %v", err)
+	}
 }
 
 // firstChannelID 按创建顺序取第一个渠道 ID（测试内每 app 只有本用户建渠道）
@@ -249,7 +261,7 @@ func TestE2E全部候选熔断旁路(t *testing.T) {
 	}
 }
 
-// TestE2E探测恢复熔断 熔断不做流量试探、长期走备用渠道；探测成功后自动切回（FR-B2/B4）
+// TestE2E探测恢复熔断 冷却期内流量稳定走备用渠道；「测试渠道」探测成功即联动切回（FR-B4）
 func TestE2E探测恢复熔断(t *testing.T) {
 	c, _ := setupApp(t)
 	up1 := newBreakerUpstream(map[string]int{"gpt-ho": 503})
@@ -357,15 +369,71 @@ func TestE2E熔断Responses管线(t *testing.T) {
 	if n := up1.hitCount(); n != 3 {
 		t.Fatalf("熔断后不应再尝试渠道 1，实际 %d 次", n)
 	}
-	// 渠道恢复 + 探测成功 → 下一个 responses 请求切回渠道 1
+	// 冷却到期 + 渠道恢复 → 下一个 responses 请求放行单次试探并切回渠道 1
 	up1.setHealthy()
-	if w := c.do("POST", fmt.Sprintf("/api/channels/%d/test", ch1), nil, true); w.Code != 200 {
-		t.Fatalf("测试渠道失败: %d %s", w.Code, w.Body.String())
-	}
+	c.expireCooldown(t, ch1)
 	if w := call(); w.Code != 200 {
-		t.Fatalf("恢复后 responses 请求应由渠道 1 成功，得到 %d %s", w.Code, w.Body.String())
+		t.Fatalf("试探成功应由渠道 1 承接，得到 %d %s", w.Code, w.Body.String())
 	}
-	if n := up1.hitCount(); n != 5 {
-		t.Fatalf("恢复后渠道 1 应承接流量（探测 1 次 + 请求 1 次），实际 %d 次", n)
+	if n := up1.hitCount(); n != 4 {
+		t.Fatalf("半开试探应只放行 1 次且成功切回，实际 %d 次", n)
+	}
+}
+
+// TestE2E半开试探恢复 冷却到期后仅放行单个组合试探：成功即关闭、流量切回；
+// 失败重新熔断且只花 1 次尝试（FR-B2）
+func TestE2E半开试探恢复(t *testing.T) {
+	c, _ := setupApp(t)
+	// 渠道 1 三条线路全部 503（正常状态下每请求最多耗 3 次预算）
+	up1 := newBreakerUpstream(map[string]int{"gpt-ho": 503})
+	up2 := newBreakerUpstream(nil)
+	defer up1.srv.Close()
+	defer up2.srv.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "brk7", "password": "password123"}, false); w.Code != 200 {
+		t.Fatalf("注册失败: %d", w.Code)
+	}
+	setupBreaker(t, c, []string{up1.srv.URL, up1.srv.URL, up1.srv.URL}, []string{up2.srv.URL}, []string{"gpt-ho"})
+	ch1 := c.firstChannelID(t)
+
+	for i := 0; i < 3; i++ {
+		if w := c.chat(t, "gpt-ho"); w.Code != 200 {
+			t.Fatalf("请求 %d 应由渠道 2 成功，得到 %d", i, w.Code)
+		}
+	}
+	if n := up1.hitCount(); n != 9 {
+		t.Fatalf("渠道 1 三线路 × 3 请求应命中 9 次，实际 %d", n)
+	}
+	// 熔断后再请求：整渠道跳过
+	c.chat(t, "gpt-ho")
+	if n := up1.hitCount(); n != 9 {
+		t.Fatalf("熔断期不应尝试渠道 1，实际 %d", n)
+	}
+
+	// 冷却到期（测试中直接推进冷却时间），渠道 1 仍 503：
+	// 半开仅放行 1 个组合（而非 3 个预算），失败后继续走渠道 2
+	c.expireCooldown(t, ch1)
+	if w := c.chat(t, "gpt-ho"); w.Code != 200 {
+		t.Fatalf("试探失败后应由渠道 2 成功，得到 %d", w.Code)
+	}
+	if n := up1.hitCount(); n != 10 {
+		t.Fatalf("半开试探应只放行 1 个组合，实际新增 %d 次", n-9)
+	}
+	// 再次到期且渠道 1 已恢复：试探成功 → 关闭熔断、流量切回
+	up1.setHealthy()
+	c.expireCooldown(t, ch1)
+	if w := c.chat(t, "gpt-ho"); w.Code != 200 {
+		t.Fatalf("试探成功应切回渠道 1，得到 %d %s", w.Code, w.Body.String())
+	}
+	if n := up1.hitCount(); n != 11 {
+		t.Fatalf("恢复后渠道 1 应承接流量，实际 %d 次", n)
+	}
+	if list := c.listBreakersViaAPI(t); len(list) != 0 {
+		t.Fatalf("试探成功后熔断应关闭: %v", list)
+	}
+	// 关闭后渠道 1 恢复正常尝试：首个组合即成功
+	c.chat(t, "gpt-ho")
+	if n := up1.hitCount(); n != 12 {
+		t.Fatalf("关闭后渠道 1 应正常承接（首个组合成功），实际 %d 次", n)
 	}
 }

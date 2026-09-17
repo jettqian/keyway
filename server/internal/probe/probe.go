@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
@@ -24,14 +23,10 @@ import (
 )
 
 const (
-	scanTick   = 30 * time.Second
-	maxBackoff = 60 * time.Minute
-	matrixCap  = 20
-	probeWait  = 30 * time.Second // 单次探测（组合）总超时：覆盖 responses/messages 排队 + 首事件等待
+	matrixCap = 20
+	probeWait = 30 * time.Second // 单次探测（组合）总超时：覆盖 responses/messages 排队 + 首事件等待
 	// 单组合探测最多尝试的模型数（回退控制上游请求成本，DESIGN §6）
 	probeModelCap = 3
-	// 熔断模型定向补测的每轮每渠道上限（成本护栏；超出部分按 LRU 轮转到后续轮次）
-	breakerProbeCap = 10
 )
 
 // Result 线路×路径探测结果；OK 时 Model 记录判定健康的模型
@@ -55,7 +50,10 @@ type KeyResult struct {
 	Error     string `json:"error"`
 }
 
-// Engine 后台探测器（DESIGN §6）
+// Engine 探测器（DESIGN §6，v1.5.45 起无定时循环）：
+//   - 按需线路预热（MaybeWarmup）：请求路由到渠道且 line_stats 缺失/过期时
+//     异步补一次线路质量探测，流量驱动、无流量零成本；
+//   - 「测试渠道」/「逐密钥测试」按钮的即时矩阵（诊断用，成功联动关闭熔断）
 type Engine struct {
 	store    *store.Store
 	secret   string
@@ -65,9 +63,8 @@ type Engine struct {
 	pool     *httpx.Pool
 	breakers *breaker.Engine // 探测成功联动关闭渠道×模型熔断（可空）
 
-	mu       sync.Mutex
-	next     map[int64]time.Time // 渠道 → 下次探测时间
-	failMult map[int64]int       // 连续失败退避倍数
+	mu   sync.Mutex
+	next map[int64]time.Time // 渠道 → 下次预热检查时间（节流，防并发重复预热）
 }
 
 func New(st *store.Store, secret string, r *routing.Service, pm *proxyman.Manager, cfg config.Config, breakers *breaker.Engine) *Engine {
@@ -76,93 +73,104 @@ func New(st *store.Store, secret string, r *routing.Service, pm *proxyman.Manage
 		pool:     httpx.NewPool(cfg.ResponseHeaderTimeoutSec),
 		breakers: breakers,
 		next:     map[int64]time.Time{},
-		failMult: map[int64]int{},
 	}
 }
 
-// Start 启动调度循环：初始随机铺开，30s 扫描到期渠道
-func (e *Engine) Start(stop <-chan struct{}) {
-	interval := e.baseInterval()
-	var chans []store.Channel
-	e.store.DB().Where("enabled = 1").Find(&chans)
-	e.mu.Lock()
-	for i := range chans {
-		// 初始铺开：0~1 个周期内随机
-		e.next[chans[i].ID] = time.Now().Add(time.Duration(rand.Float64() * float64(interval)))
+// warmupInterval 预热节拍（分钟）；≤0 = 按需预热关闭（KEYWAY_PROBE_INTERVAL_MIN=0）
+func (e *Engine) warmupInterval() int {
+	return e.cfg.ProbeIntervalMin
+}
+
+// MaybeWarmup 按需线路预热（FR-S1，v1.5.45 取代定时探测）：请求路由到该渠道
+// 且 line_stats 缺失或整体过期（> 3 个预热周期）时，异步补一次线路质量探测。
+// 预热每条线路×路径只发一个最小请求（渠道首个模型、首选端点形态），宽松判定：
+// 任意 <500 的非 HTML HTTP 响应都记为线路通并取其延迟——4xx 是模型/密钥维度
+// 问题，不代表线路差；网络错误、HTML 回退、5xx 记为不通。
+// 有流量的渠道按流量节拍保持新鲜，无流量渠道零成本；next 节流保证并发请求
+// 不重复触发。manual 线路策略不参与优选，无需预热
+func (e *Engine) MaybeWarmup(ch *store.Channel) {
+	if ch == nil || ch.LineStrategy == "manual" {
+		return
 	}
+	interval := e.warmupInterval()
+	if interval <= 0 {
+		return
+	}
+	freshness := time.Duration(3*interval) * time.Minute
+	now := time.Now()
+	e.mu.Lock()
+	if now.Before(e.next[ch.ID]) {
+		e.mu.Unlock()
+		return
+	}
+	// 认领节流窗口；已有新鲜数据（如刚点过「测试」）则对齐到其过期时刻
+	e.next[ch.ID] = now.Add(freshness)
 	e.mu.Unlock()
 
-	ticker := time.NewTicker(scanTick)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			e.scanOnce()
+	stats := LoadStats(e.store.DB(), ch.ID)
+	latest := int64(0)
+	for _, st := range stats {
+		if st.LastProbeAt != nil && *st.LastProbeAt > latest {
+			latest = *st.LastProbeAt
 		}
 	}
+	if latest > 0 && now.Unix() < latest+int64(freshness/time.Second) {
+		e.mu.Lock()
+		e.next[ch.ID] = time.Unix(latest+int64(freshness/time.Second), 0)
+		e.mu.Unlock()
+		return
+	}
+	go e.warmup(ch)
 }
 
-func (e *Engine) scanOnce() {
-	var chans []store.Channel
-	e.store.DB().Where("enabled = 1").Find(&chans)
-	now := time.Now()
-	for i := range chans {
-		ch := &chans[i]
-		e.mu.Lock()
-		due := e.next[ch.ID]
-		e.mu.Unlock()
-		if now.Before(due) {
-			continue
-		}
-		results, err := e.ProbeChannel(ch)
-		if err != nil {
-			continue
-		}
-		anyOK := false
-		for _, r := range results {
-			if r.OK {
-				anyOK = true
+// warmup 预热一个渠道的全部线路×路径组合（并发、单模型、宽松判定），
+// 结果 UPSERT line_stats 供路由排序（orderCombos）使用
+func (e *Engine) warmup(ch *store.Channel) {
+	rc, err := e.routing.ForChannel(ch)
+	if err != nil {
+		return
+	}
+	if len(rc.Keys) == 0 {
+		return
+	}
+	models := probeModels(ch)
+	if len(models) == 0 || len(rc.BaseURLs) == 0 {
+		return
+	}
+	key := pickKey(rc.Keys)
+	keyPlain, err := routing.DecodeKeyValue(e.secret, key)
+	if err != nil {
+		return
+	}
+	paths := e.pm.Paths(rc.PersonalProxyURL, ch.AllowPublicProxy == 1)
+	type combo struct{ line, proxyURL, via string }
+	var combos []combo
+	for _, line := range rc.BaseURLs {
+		for _, p := range paths {
+			if len(combos) >= matrixCap {
 				break
 			}
+			combos = append(combos, combo{line, p.ProxyURL, p.Via})
 		}
-		e.scheduleNext(ch.ID, anyOK)
 	}
-}
-
-func (e *Engine) baseInterval() time.Duration {
-	min := e.cfg.ProbeIntervalMin
-	if min <= 0 {
-		min = 10
+	if len(combos) == 0 {
+		return
 	}
-	return time.Duration(min) * time.Minute
-}
-
-// scheduleNext 成功恢复基准频率（±20% jitter）；失败指数退避（上限 60 分钟）
-func (e *Engine) scheduleNext(id int64, ok bool) {
-	base := e.baseInterval()
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if ok {
-		e.failMult[id] = 0
-	} else {
-		e.failMult[id]++
+	model := models[0] // 单模型：线路质量与模型无关，任一响应的延迟都代表线路
+	shape := probeShapes(ch, model)[0]
+	results := make([]Result, len(combos))
+	var wg sync.WaitGroup
+	for i, c := range combos {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), probeWait)
+			defer cancel()
+			results[i] = e.probeOne(ctx, ch, routing.ApplyModelMapping(ch, model), keyPlain, c.line, c.proxyURL, c.via, shape, true)
+		}()
 	}
-	mult := int64(1) << min64(int64(e.failMult[id]), 5)
-	wait := base * time.Duration(mult)
-	if wait > maxBackoff {
-		wait = maxBackoff
-	}
-	jitter := 0.8 + 0.4*rand.Float64()
-	e.next[id] = time.Now().Add(time.Duration(float64(wait) * jitter))
-}
-
-func min64(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
+	wg.Wait()
+	e.saveResults(ch.ID, results)
 }
 
 // ProbeChannel 并发探测一个渠道的全部"线路 × 路径"组合并写 line_stats
@@ -210,46 +218,13 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 	wg.Wait()
 	e.saveResults(ch.ID, results)
 	// 探测成功即关闭对应模型的熔断（FR-B4 恢复信号：与真实转发完全一致的
-	// 最小流式请求已走通，足以证明渠道×模型可用）
+	// 最小流式请求已走通，足以证明渠道×模型可用；「测试渠道」按钮走本路径，
+	// 点击即联动恢复矩阵覆盖到的模型）
 	if e.breakers != nil {
 		for _, r := range results {
 			if r.OK && r.Model != "" {
 				e.breakers.RecordSuccess(ch.ID, r.Model)
 			}
-		}
-		// 熔断中的模型定向补测（FR-B2/FR-B4）：探测矩阵只覆盖模型列表前
-		// probeModelCap 个且按序回退，熔断模型可能不在覆盖内。仅在矩阵存在
-		// 健康组合时补测（渠道整体不可用时必然失败，不发无谓请求），每个
-		// 熔断模型在首个健康组合上补发一次最小探测（并发、每轮每渠道上限
-		// breakerProbeCap、最久未测优先），成功即关闭、失败 Touch 排队后移；
-		// 后台探测与「测试渠道」按钮共用本路径，渠道恢复后最长一个探测
-		// 周期内全部熔断自动恢复
-		hi := -1
-		for i := range results {
-			if results[i].OK {
-				hi = i
-				break
-			}
-		}
-		if hi >= 0 {
-			t := &targets[hi]
-			models := e.breakers.OpenModels(ch.ID)
-			if len(models) > breakerProbeCap {
-				models = models[:breakerProbeCap]
-			}
-			var bwg sync.WaitGroup
-			for _, m := range models {
-				bwg.Add(1)
-				go func() {
-					defer bwg.Done()
-					if r := e.probeOnce(ch, []string{m}, keyPlain, t.line, t.proxyURL, t.via); r.OK {
-						e.breakers.RecordSuccess(ch.ID, m)
-					} else {
-						e.breakers.Touch(ch.ID, m)
-					}
-				}()
-			}
-			bwg.Wait()
 		}
 	}
 	return results, nil
@@ -344,7 +319,7 @@ func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, p
 		var shapeErrs []string
 		var last Result
 		for _, shape := range probeShapes(ch, m) {
-			last = e.probeOne(ctx, ch, upstreamModel, keyPlain, line, proxyURL, via, shape)
+			last = e.probeOne(ctx, ch, upstreamModel, keyPlain, line, proxyURL, via, shape, false)
 			if last.OK {
 				last.Model = m // 记录判定健康的模型（熔断恢复联动用）
 				return last
@@ -368,8 +343,10 @@ func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, p
 // 流式探测（v1.5.26）：响应头/首事件（response.created、message_start、首个
 // data 块）在推理开始前即返回，读到首字节即判通并立即断开止损——非流式下
 // responses/messages 需等完整推理（慢思考模型首 token 10s+，15s 总超时内
-// 完不成会误判失败），且探测成本更高
-func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlain, line, proxyURL, via, shape string) Result {
+// 完不成会误判失败），且探测成本更高。
+// loose = 线路预热语义（FR-S1，v1.5.45）：4xx 也记为通并取延迟——4xx 是
+// 模型/密钥维度问题，不代表线路差；仅网络错误、HTML 回退、5xx 记为不通
+func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlain, line, proxyURL, via, shape string, loose bool) Result {
 	result := Result{LineURL: line, Via: via}
 
 	var body []byte
@@ -435,6 +412,16 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 			return result
 		}
 		// 读首字节确认事件流已开始（毫秒级，不等推理），随即断开止损
+		one := make([]byte, 1)
+		io.ReadFull(resp.Body, one)
+		result.LatencyMs = time.Since(start).Milliseconds()
+		resp.Body.Close()
+		result.OK = true
+		return result
+	}
+	// 预热语义：4xx 是模型/密钥维度问题，线路本身通，延迟仍有效
+	if loose && resp.StatusCode >= 400 && resp.StatusCode < 500 &&
+		!strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
 		one := make([]byte, 1)
 		io.ReadFull(resp.Body, one)
 		result.LatencyMs = time.Since(start).Milliseconds()

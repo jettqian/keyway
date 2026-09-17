@@ -14,7 +14,8 @@ services:
       KEYWAY_SECRET: ${KEYWAY_SECRET:?请在 .env 或环境变量中设置 KEYWAY_SECRET}
       # 对外地址（OAuth 回调/链接展示），如 https://keyway.example.com
       KEYWAY_BASE_URL: ${KEYWAY_BASE_URL:-}
-      # 探测周期（分钟）；渠道×模型熔断默认连续 3 次失败熔断，探测成功/手动恢复后切回
+      # 线路预热新鲜度周期（分钟，0=关闭）；渠道×模型熔断默认连续 3 次失败熔断、
+      # 冷却 600s 后下一个请求单组合试探切回
       KEYWAY_PROBE_INTERVAL_MIN: "30"
       # 日志保留期（天）
       KEYWAY_LOG_RETENTION_DAYS: "30"

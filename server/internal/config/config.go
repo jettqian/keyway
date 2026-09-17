@@ -24,6 +24,8 @@ type Config struct {
 	PricingSyncHours         int
 	FxSourceURL              string
 	BreakerFailThreshold     int
+	BreakerCooldownSec       int
+	BreakerCooldownMaxSec    int
 }
 
 func Load() Config {
@@ -32,9 +34,10 @@ func Load() Config {
 		DataDir: envStr("KEYWAY_DATA_DIR", "./data"),
 		Port:    envInt("KEYWAY_PORT", 8080),
 		BaseURL: envStr("KEYWAY_BASE_URL", ""),
-		// v1.5.45 起默认 30 分钟：渠道×模型熔断器接管请求路径的健康反馈
-		// （失败计数/半开恢复），探测退居线路排序与状态展示，频率下调降低
-		// 探测对上游额度的消耗（KEYWAY_PROBE_INTERVAL_MIN 可覆盖）
+		// 探测周期（分钟）：v1.5.45 起为「按需线路预热」的新鲜度节拍——
+		// line_stats 缺失或超过 3 个周期未刷新时，下一个请求异步补一次线路
+		// 质量探测（每线路×路径一个最小请求）；0 = 关闭预热（线路排序回退
+		// 录入顺序，仍可手动点「测试渠道」）
 		ProbeIntervalMin:     envInt("KEYWAY_PROBE_INTERVAL_MIN", 30),
 		AttemptBudget:        envInt("KEYWAY_ATTEMPT_BUDGET", 3),
 		KeyCooldownSec:       envInt("KEYWAY_KEY_COOLDOWN_S", 60),
@@ -48,8 +51,11 @@ func Load() Config {
 		PricingSyncHours:         envInt("KEYWAY_PRICING_SYNC_HOURS", 24),
 		FxSourceURL:              envStr("KEYWAY_FX_SOURCE_URL", ""),
 		// 渠道×模型熔断器（v1.5.45）：连续 N 个请求耗尽该渠道该模型的组合
-		// 尝试后熔断、流量长期走备用渠道；切回由探测成功或前端手动恢复触发
-		BreakerFailThreshold: envInt("KEYWAY_BREAKER_FAIL_THRESHOLD", 3),
+		// 尝试后熔断；冷却 S 秒后下一个请求放行单组合试探（失败指数退避，
+		// 上限 MAX 秒），成功即切回
+		BreakerFailThreshold:  envInt("KEYWAY_BREAKER_FAIL_THRESHOLD", 3),
+		BreakerCooldownSec:    envInt("KEYWAY_BREAKER_COOLDOWN_S", 600),
+		BreakerCooldownMaxSec: envInt("KEYWAY_BREAKER_COOLDOWN_MAX_S", 3600),
 	}
 }
 

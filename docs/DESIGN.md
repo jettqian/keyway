@@ -1,27 +1,34 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.42（与 PRD v1.5.45 对应；新增**渠道×模型熔断器**——`internal/breaker` 包：
-  `breaker_states` 表（复合主键 channel_id+model）只保存熔断中的行（无行 = 关闭），
-  低于阈值的连续失败计数在引擎内存（mutex map，重启清零）。relay 三条管线
-  （chat `relay()` / responses / completions-embeddings）以 `breakerView` 在
-  生成尝试计划前查询候选渠道熔断状态：熔断渠道整渠道跳过（不占预算，不做流量
-  试探——流量**长期稳定**走备用渠道，保持上游 prompt 缓存命中率）；**全部候选
-  熔断 → 旁路**（返回 nil view，行为与无熔断一致，可用性优先，旁路期间真实流量
-  成功同样关闭熔断）。失败记录按「渠道分段耗尽」粒度：一个请求把该渠道该模型
-  组合全部尝试耗尽 → `RecordFailure` 一次（连续 N 次达阈值 3 即熔断，行长期有效）；
-  请求以 2xx/3xx 收尾或探测成功（`probe.Result.Model` 记录判定健康的模型）→
-  `RecordSuccess` 关闭；404 与透传型管线的 401/403/429 直接计失败（404 为模型
-  维度故障形态），其余 4xx 不计。**切回只经两条路径**：后台探测成功自动关闭
-  ——矩阵覆盖渠道模型列表前 3 个（「测试渠道」按钮同源），熔断中的模型另做
-  **定向补测**（仅当矩阵存在健康组合时，每模型在首个健康组合补发一次最小探测，
-  每轮每渠道 ≤10 个、最久未测优先 LRU 轮转）——或前端手动恢复（FR-B6）；
-  不做流量试探，避免在渠道间弹跳重新拆散缓存。API：`GET /api/breakers`（本人
-  渠道熔断明细）、`POST /api/breakers/reset`（手动恢复，model 空 = 整渠道；
-  删除渠道联动清理）；前端渠道列表新增「熔断」列（红标 + Popover 明细 +
-  单个/全部恢复）。**探测默认周期 10 → 30 分钟**（探测承担熔断自动恢复职责，
-  以 30 分钟为节拍）。环境变量：`KEYWAY_BREAKER_FAIL_THRESHOLD`=3。测试：breaker
-  单测（阈值/成功关闭/手动恢复/模型隔离，注入时钟）+ e2e（跳过/模型维度/旁路/
-  探测恢复切回/手动恢复与越权/Responses 管线）+ 探测联动关闭）；
+- 版本：v1.42（与 PRD v1.5.45 对应；新增**渠道×模型熔断器**与**按需线路预热**
+  （移除定时探测循环）。熔断器 `internal/breaker`：`breaker_states` 表（复合主键
+  channel_id+model）只保存熔断中的行（无行 = 关闭），低于阈值的连续失败计数在
+  引擎内存（mutex map，重启清零）。relay 三条管线（chat `relay()` / responses /
+  completions-embeddings）以 `breakerView` 在生成尝试计划前查询候选渠道熔断状态：
+  熔断且冷却未到期 → 整渠道跳过；冷却到期（半开）→ 仅放行首个组合并标记
+  `trial`，执行时经 `ClaimHalfOpen` 原子认领（`UPDATE ... WHERE cooldown_until
+  <= now` 顺延一个周期，认领失败即跳过该渠道，保证半开单飞且不消耗高优先级
+  渠道持续成功时的试探窗口）；**全部候选熔断 → 旁路**（返回 nil view，行为与
+  无熔断一致，可用性优先，旁路期间真实流量成功同样关闭熔断）。失败记录按
+  「渠道分段耗尽」粒度：一个请求把该渠道该模型组合全部尝试耗尽 →
+  `RecordFailure` 一次（连续 N 次达阈值 3 即熔断，冷却 600s 失败指数退避 ×2
+  上限 3600s）；请求以 2xx/3xx 收尾、半开试探成功或「测试渠道」探测成功 →
+  `RecordSuccess` 关闭；404 与透传型管线的 401/403/429 直接计失败（404 为
+  模型维度故障形态），其余 4xx 不计。API：`GET /api/breakers`（本人渠道熔断
+  明细）、`POST /api/breakers/reset`（手动恢复，model 空 = 整渠道；删除渠道
+  联动清理）；前端渠道列表新增「熔断」列（红标 + Popover 明细 + 单个/全部
+  恢复）。**定时探测循环移除**：`probe.Engine` 不再有 Start/scanOnce，多线路
+  优选改为**按需预热**（`MaybeWarmup`，relay.plan 对参与尝试的渠道触发）：
+  line_stats 缺失或超过 3 个 `KEYWAY_PROBE_INTERVAL_MIN` 周期（默认 30 分钟，
+  0=关闭）时异步补一次线路质量探测——每线路×路径一个最小请求（渠道首个模型），
+  `probeOne` 新增 loose 语义：任意 <500 非 HTML 响应记通并取延迟（4xx 是模型/
+  密钥维度问题）；有流量渠道按流量节拍保鲜、无流量零成本，next map 节流防并发
+  重复；「测试渠道」按钮保留全矩阵诊断（模型回退 + 严格判定），成功联动关闭
+  熔断。环境变量：`KEYWAY_BREAKER_FAIL_THRESHOLD`=3、
+  `KEYWAY_BREAKER_COOLDOWN_S`=600、`KEYWAY_BREAKER_COOLDOWN_MAX_S`=3600。
+  测试：breaker 单测（阈值/退避封顶/半开认领单飞/手动恢复/模型隔离，注入
+  时钟）+ e2e（跳过/模型维度/旁路/半开单组合试探与切回/探测恢复/手动恢复
+  与越权/Responses 管线）+ 预热单测（宽松判定/节流与开关））；
   前版 v1.41：与 PRD v1.5.44 对应；统计**按令牌筛选**——`usage.QueryStats` 追加可选
   `tokenID` 参数，在基础条件上叠加 `token_id = ?`，汇总/分组（byChannel/byModel/byKey/
   byUser）/未定价补算（复用 base 闭包）/最近生效流量（recent 子查询单独追加）全部限定
@@ -166,7 +173,7 @@ Agent ──HTTPS 443──▶ 反代 ─▶│ gin Router                      
                              │  breaker   渠道×模型熔断（失败计数/探测·手动恢复）          │
                              │  convert   OpenAI ↔ Anthropic 双向转换（含流式）             │
                             │  proxyman  出站代理池（按代理复用连接、字节统计）             │
-                            │  probe     线路×路径后台探测器                                 │
+                            │  probe     按需线路预热 + 测试按钮矩阵（无定时循环）           │
                             │  fxrate    USD→CNY 汇率定时同步（auto 模式生效）              │
                             │  usage     异步日志批写 + 费用快照 + 保留期清理               │
                             │  store     GORM + SQLite(WAL)                                │
@@ -205,7 +212,7 @@ keyway/
 │       ├── convert/         # 转换器（见 §7）+ 金样本测试夹具
 │       ├── routing/         # 渠道模型路由、attempt plan、失败切换、缓存失效
 │       ├── breaker/         # 渠道×模型熔断器（失败计数/探测·手动恢复）
-│       ├── probe/           # 探测调度器（成功联动关闭熔断）
+│       ├── probe/           # 按需线路预热 + 测试按钮矩阵（成功联动关闭熔断）
 │       ├── proxyman/        # http.Client 池（按代理 URL）、流量计数
 │       ├── fxrate/          # USD→CNY 汇率定时同步（多源回退）
 │       ├── usage/           # 异步日志写、价目、聚合查询
@@ -297,9 +304,10 @@ CREATE TABLE breaker_states (              -- 渠道×模型熔断（v1.5.45；�
   channel_id INTEGER NOT NULL, model TEXT NOT NULL,  -- model = 入站请求模型名（路由键）
   fail_count INTEGER NOT NULL DEFAULT 0,   -- 连续失败次数（≥ 阈值才落行）
   opened_at INTEGER NOT NULL DEFAULT 0,    -- 首次熔断时间
+  cooldown_until INTEGER NOT NULL DEFAULT 0, -- 半开试探到期时间；认领时顺延一个周期
   last_error TEXT DEFAULT '', updated_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(channel_id, model)
-);                                         -- 行长期有效，探测成功/手动恢复/旁路流量成功才删除
+);
 
 CREATE TABLE proxies (                      -- 管理员公共代理池
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, url_enc BLOB NOT NULL,
@@ -513,8 +521,9 @@ graph LR
    多线路/多密钥组合不得挤占后续渠道的尝试机会（FR-K5/A9，v1.38 修正）
 6. **首字节保护**：一旦向客户端写出任何字节（含流式首包），不再做任何切换，错误透传
 7. **熔断过滤（v1.5.45，§5.4）**：生成尝试计划前按 `breakerView` 过滤候选渠道——
-   熔断的渠道整渠道跳过（不占预算、不做流量试探）；该模型全部候选渠道熔断时
-   旁路（视图置空，与无熔断行为一致）
+   熔断且冷却未到期的渠道整渠道跳过（不占预算）；冷却到期（半开）的渠道只放行
+   首个组合并在执行时原子认领；该模型全部候选渠道熔断时旁路（视图置空，与无
+   熔断行为一致）；参与尝试的渠道同时触发按需线路预热（§6）
 
 ### 5.3 转发管线
 
@@ -538,46 +547,46 @@ graph LR
 
 **动机**：失败切换按请求重放——首渠道挂掉后每个新请求先在它身上耗尽整组尝试再切
 备用渠道，浪费上游请求，且流量在渠道间反复振荡、拆散上游侧 prompt 缓存（命中率
-下降）。熔断器在「渠道 × 模型」维度记住失败，令切换**有粘性**：流量长期停留在
-备用渠道，直到主渠道被验证恢复才切回。
+下降）。熔断器在「渠道 × 模型」维度记住失败，令切换**有粘性**：冷却期内流量稳定
+停留在备用渠道，到期后以最小代价（单组合试探）验证恢复才切回。
 
 **状态机**（`internal/breaker`，单实例内共享、并发安全）：
 
 ```
 closed ──连续 N 个请求耗尽组合（N=KEYWAY_BREAKER_FAIL_THRESHOLD，默认 3）──▶ open
-open   ──探测成功 / 手动恢复 / 全候选旁路期间真实流量成功──▶ closed（行删除，流量切回）
+open   ──cooldown_until 到期──▶ half-open（认领制，单请求单组合试探）
+half-open ──试探成功 / 探测成功 / 手动恢复──▶ closed（行删除，流量切回）
+half-open ──试探失败──▶ open（冷却 ×2^n 指数退避，上限 KEYWAY_BREAKER_COOLDOWN_MAX_S）
 ```
 
 - **存储**：`breaker_states` 只保存熔断中的行（无行 = 关闭），复合主键
-  (channel_id, model)——model 为入站请求模型名（路由键）；行一经写入**长期有效**
-  （无冷却/退避），低于阈值的连续失败计数只在引擎内存（mutex map），重启清零
-  （代价：重启后最多多付 N-1 个请求的尝试成本）
+  (channel_id, model)——model 为入站请求模型名（路由键）；低于阈值的连续失败
+  计数只在引擎内存（mutex map），重启清零（代价：重启后最多多付 N-1 个请求的
+  尝试成本）
 - **失败记录粒度**：一个请求把某渠道某模型的组合**全部尝试耗尽**才计一次失败
   （chat 管线按渠道分段、段落切换时统一落账；responses / completions-embeddings
   管线在渠道循环后落账并以 seen 集合防 matched+defaults 重复命中双计）；404 与
   透传型管线的 401/403/429（这些码在 chat/responses 管线会继续换 key、由段落耗尽
   统一记录）直接计失败——404 即"模型/端点不存在"（model_not_found 类**模型维度**
   故障，正是按模型熔断要捕获的形态）；其余 4xx（400/413 等客户端问题）不计
-- **不做流量试探（设计决策）**：切回不经过真实流量——若在冷却/定时后放行试探
-  请求，主渠道假性恢复（限流抖动、间歇故障）会导致流量在渠道间反复弹跳，每次
-  弹跳都重新拆散两侧的 prompt 缓存，恰好违背熔断的初衷。因此熔断行没有时间维度，
-  流量长期稳定在备用渠道；关闭只由确定性信号触发（下条）
-- **恢复信号**：① 后台探测成功——`probe.Result.Model` 记录判定健康的模型，
-  探测矩阵返回后对 OK 组合逐模型 `RecordSuccess`（「测试渠道」按钮走同一矩阵，
-  点击即联动恢复）；矩阵只覆盖模型列表前 3 个，**熔断中的模型（含覆盖外）另做
-  定向补测**：仅当矩阵存在健康组合时（渠道整体不可用时补测必然失败，不发无谓
-  请求），`OpenModels` 按最久未测优先取 ≤10 个模型，在首个健康组合上并发补发
-  一次最小探测，成功 `RecordSuccess`、失败 `Touch` 排队后移（LRU 轮转，长期
-  死模型不阻塞同渠道其他模型）——渠道恢复后最长一个探测周期内全部熔断自动
-  恢复；② 前端手动恢复 `Reset(channelID, model)`（model 空 = 整渠道，删除行
-  并清零计数，删除渠道时联动清理）；③ 全候选旁路期间的真实流量成功
-  （`recordUpstreamOutcome` 对 2xx/3xx 调 `RecordSuccess`）——旁路是唯一会
-  命中熔断渠道的流量路径
+- **半开认领**（`ClaimHalfOpen`）：`UPDATE breaker_states SET cooldown_until =
+  now + cooldown WHERE channel_id = ? AND model = ? AND cooldown_until <= now`，
+  RowsAffected=1 即认领成功——原子性保证同一时刻仅一个试探在飞；认领把冷却顺延
+  一个周期，试探失败由 RecordFailure 以更大退避覆盖、成功则整行删除；认领发生在
+  试探**执行前**（chat 管线计划预生成、执行时认领），高优先级渠道持续成功时低优先级
+  熔断渠道的试探窗口不会被无谓消耗。失败试探只花 1 个组合（不是整组预算），该
+  请求自动切换到备用渠道完成，客户端无感
+- **恢复信号**：① 半开试探成功（上条）；② 「测试渠道」探测成功——
+  `probe.Result.Model` 记录判定健康的模型，矩阵返回后逐模型 `RecordSuccess`
+  （矩阵覆盖模型列表前 3 个）；③ 前端手动恢复 `Reset(channelID, model)`
+  （model 空 = 整渠道，删除行并清零计数，删除渠道时联动清理）；④ 全候选旁路
+  期间的真实流量成功（`recordUpstreamOutcome` 对 2xx/3xx 调 `RecordSuccess`）——
+  旁路是唯一绕过冷却直接命中熔断渠道的流量路径
 - **全候选熔断旁路**：`breakerView` 发现该模型全部候选渠道（matched+defaults，
   剔除协议不兼容的必然不尝试者）都熔断时返回空视图——旁路后行为与无熔断完全
   一致（可用性优先：此时无处可切），旁路尝试成功即自动关闭；chat 管线另有兜底：
   视图过滤后尝试计划为空（如其余渠道无密钥）时同样以空视图重建
-- **默认参数**：阈值 3（`KEYWAY_BREAKER_FAIL_THRESHOLD`，§12）
+- **默认参数**：阈值 3 / 冷却 600s / 退避上限 3600s（§12 环境变量可调）
 
 ### 5.5 出站代理管理（proxyman）
 
@@ -589,53 +598,57 @@ open   ──探测成功 / 手动恢复 / 全候选旁路期间真实流量成�
   累计到内存 `map[(user,proxy,day)]bytes`，每 30s 批量 UPSERT proxy_usage（仅公共代理）
 - 直连与个人代理不计流量（PRD 仅要求公共代理统计）
 
-## 6. 探测器（probe）
+## 6. 探测器（probe，v1.5.45 起无定时循环）
 
-- 单 goroutine 调度：每 30s 扫描到期渠道（`now ≥ next_probe_at`），带 ±20% jitter
-  防同步风暴；探测失败连续 ≥3 次 → 频率×2 指数退避，上限 60 分钟；成功恢复基准频率；
-- **基准周期默认 30 分钟**（`KEYWAY_PROBE_INTERVAL_MIN`，v1.5.45 起周期由 10 分钟
-  放宽——探测承担渠道×模型熔断的自动恢复职责（§5.4），以 30 分钟为节拍平衡恢复
-  速度与探测开销）
-- 每渠道探测矩阵：线路（≤5）× 路径（直连+个人+公共 ≤4）= ≤20 组合，
-  **组合间并发探测**（≤20 个独立 HTTP 请求，总耗时≈单组合而非串行叠加），每组合发
-  最小请求：openai 型 `POST /v1/chat/completions {model, max_tokens:8,
-  messages:[{role:user,content:"ping"}]}`；anthropic 型 `POST /v1/messages` 同理
-  （max_tokens:8）；2xx 却返回 text/html 视为线路无该端点（SPA 回退）而非健康
-- **探测端点形态判定与真实转发一致**（v1.5.22/24/25/27 修正）：
-  - 请求模型名先经渠道 model_mapping 映射为上游模型名（`routing.ApplyModelMapping`，
-    relay 与 probe 共用）；
-  - 形态 = 端点 + 鉴权 + 最小请求体，共三种：anthropic（`/v1/messages` + x-api-key）、
-    openai-responses（`/v1/responses` + Bearer，`{model, input, max_output_tokens:16}`，
-    Codex 客户端主力端点）、openai（`/v1/chat/completions` + Bearer，传统老客户端）；
-  - **responses/messages 优先、chat 靠后**（v1.5.27，agent 主力流量优先）：
-    `claude*` → messages → responses → chat；其余（gpt 等）→ responses → chat →
-    messages；convert 在显式协议族内排序（anthropic → 仅 messages；openai →
-    responses → chat）。passthrough 渠道 `type` 恒为空且不参与转发，探测不依赖它；
-  - **探测请求流式化**（v1.5.27）：所有形态 `stream:true` + `Accept:
-    text/event-stream`，读到响应头/首事件（response.created、message_start、首个
-    data 块）即判通并立即断开连接止损。非流式下 responses/messages 须等完整推理
-    （慢思考模型首 token 10s+，总超时内完不成会误判失败），流式化后耗时≈排队+鉴权
-    （实测 0.6~8s）且不消耗输出 token；失败路径仍读完整错误体摘要
-- **模型回退与错误摘要**（v1.5.23，oct-micu-vip2/oct-yescode 案例修正）：
-  - 探测模型不固定第一个，取渠道模型列表前 3 个非空项依序回退（中转站常见
-    "部分模型分组无渠道/provider 路由不命中"，如 new_api `model_not_found`、
-    team 网关 "no enabled provider"，固定首模型会把可用渠道整体误判为不健康）；
-  - 失败信息解析上游错误响应体 `error.message`（openai/anthropic/new_api 通用
-    结构，截断 120 rune）拼入摘要，按"模型（/端点: 错误；…）；…"逐条汇报；
-  - 单组合的模型 × 形态全部回退请求共享 `probeWait`（30s，覆盖 responses/messages
-    网关排队耗时）总超时，探测上限不因回退放大
-- 探测使用该渠道当前首选可用密钥（会消耗极少量上游额度，文档明示；矩阵上限×频率
-  约束见 PRD 非功能需求）
-- 结果 UPSERT line_stats（latency_ms / ok / last_error / last_probe_at）
-- **探测成功联动关闭熔断**（v1.5.45，FR-B2/B4）：`Result.Model` 记录判定健康的
-  模型（探测按渠道模型列表前 3 个依序回退，任一成功即组合健康），探测矩阵返回后
-  对 OK 组合逐模型调用 `breaker.RecordSuccess`——与真实转发完全一致的最小流式
-  请求已走通，足以证明渠道×模型可用；熔断中的模型（含矩阵覆盖外）另做**定向
-  补测**（见 §5.4 恢复信号）：矩阵存在健康组合时，每模型在首个健康组合补发一次
-  最小探测（并发、每轮每渠道 ≤ `breakerProbeCap`=10、最久未测优先），成功关闭、
-  失败 Touch 轮转——后台探测与「测试渠道」按钮共用该路径
-- 管理员"立即探测"与用户"测试渠道"按钮走同一矩阵，实时返回结果矩阵；前端点击后
-  立即打开结果弹窗进入探测中状态（矩阵并发，整体≈单组合 30s 超时上限）
+两条路径，共用同一套最小流式请求构造（`probeOne`）：
+
+### 6.1 按需线路预热（`MaybeWarmup`，FR-S1，取代定时探测）
+
+- **触发**：relay 生成尝试计划时（`plan` 内），对参与尝试的渠道调用——
+  line_stats 缺失或整体过期（> 3 个预热周期）时**异步**补一次线路质量探测，
+  本请求按现有数据继续路由（不阻塞）；已有新鲜数据（如刚点过「测试」）则
+  对齐到其过期时刻后跳过
+- **节拍与开关**：`KEYWAY_PROBE_INTERVAL_MIN`（默认 30 分钟）为预热新鲜度
+  周期；**0 = 关闭预热**（线路排序回退录入顺序）。next map（mutex）节流，
+  并发请求不会重复触发；**有流量的渠道按流量节拍保鲜，无流量渠道零成本**——
+  这是与定时循环的本质区别（定时循环对闲置渠道也持续付费）
+- **探测内容**：每条线路×路径组合发**一个**最小请求——渠道首个模型、其首选
+  端点形态；**宽松判定（loose）**：任意 <500 的非 HTML HTTP 响应都记线路通并取
+  其延迟（4xx 是模型/密钥维度问题，不代表线路质量差——任何模型的响应延迟都
+  代表线路质量）；网络错误、HTML 回退（SPA）、5xx 记为不通
+- 结果 UPSERT line_stats（latency_ms / ok / last_probe_at）供 `orderCombos`
+  路由排序；矩阵上限 = 5 线路 × 4 路径，超出截断（直连与个人代理优先保留）
+
+### 6.2 「测试渠道」/「逐密钥测试」按钮（诊断，用户主动触发）
+
+- 全矩阵：线路（≤5）× 路径（≤4）= ≤20 组合，**组合间并发探测**（总耗时≈单组合），
+  前端点击后立即打开结果弹窗进入探测中状态；管理员"立即探测"与用户按钮同源
+- **模型回退**（v1.5.23）：取渠道模型列表前 3 个非空项依序回退（中转站常见
+  "部分模型分组无渠道/provider 不命中"，固定首模型会把可用渠道整体误判为不健康），
+  任一模型成功即组合健康，`Result.Model` 记录判定健康的模型
+- 失败信息解析上游错误响应体 `error.message`（截断 120 rune），按
+  "模型（/端点: 错误；…）；…"逐条汇报；单组合的模型 × 形态回退共享 `probeWait`
+  （30s）总超时
+- **成功联动关闭熔断**（FR-B4）：矩阵返回后对 OK 组合逐模型
+  `breaker.RecordSuccess`——与真实转发完全一致的最小流式请求已走通，足以证明
+  渠道×模型可用，点击「测试」即顺带恢复矩阵覆盖到的熔断模型
+- 逐密钥测试（`ProbeKeys`）：首线路直连路径逐把密钥并发探测
+
+### 6.3 最小流式请求构造（`probeOne`，预热与按钮共用）
+
+- **端点形态与真实转发一致**（v1.5.22/24/25/27 修正）：请求模型名先经渠道
+  model_mapping 映射（`routing.ApplyModelMapping`，relay 与 probe 共用）；
+  三种形态：anthropic（`/v1/messages` + x-api-key）、openai-responses
+  （`/v1/responses` + Bearer，Codex 主力端点）、openai（`/v1/chat/completions`
+  + Bearer）；**responses/messages 优先、chat 靠后**（v1.5.27，agent 主力流量
+  优先）：`claude*` → messages → responses → chat；其余 → responses → chat →
+  messages；convert 在显式协议族内排序。passthrough 渠道 `type` 恒为空且不参与
+  转发，探测不依赖它
+- **流式化**（v1.5.26）：所有形态 `stream:true` + `Accept: text/event-stream`，
+  读到响应头/首事件即判通并立即断开止损——非流式下 responses/messages 须等完整
+  推理（慢思考模型首 token 10s+），流式化后耗时≈排队+鉴权（实测 0.6~8s）且不
+  消耗输出 token；失败路径仍读完整错误体摘要
+- 使用该渠道当前首选可用密钥（会消耗极少量上游额度，文档明示）
 - 探测不产生 logs 记录（PRD FR-S6）
 
 ## 7. 协议转换（PRD 开放问题 Q4 决策表）
@@ -1013,8 +1026,8 @@ text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无�
 
 | 层 | 内容 |
 |---|---|
-| 单元 | convert 金样本 round-trip（§7.5）；错误分类器；attempt plan 排序；**熔断器状态机（阈值/成功关闭/手动恢复/OpenModels·Touch 轮转/模型维度隔离，注入时钟）**；AES-GCM/bcrypt |
-| 集成 | httptest 模拟上游矩阵：透传/转换、流式分块边界、失败切换链（网络→换线、429→换 key+冷却、预算耗尽→换渠道→502 透传）、首字节保护、**熔断 e2e（跳过期间上游零命中/模型维度隔离/全候选旁路/探测恢复切回/手动恢复与越权 404）**、探测成功关闭熔断、定向补测关闭覆盖外模型（成功/失败保持） |
+| 单元 | convert 金样本 round-trip（§7.5）；错误分类器；attempt plan 排序；**熔断器状态机（阈值/指数退避封顶/半开认领单飞/手动恢复/模型维度隔离，注入时钟）**；AES-GCM/bcrypt |
+| 集成 | httptest 模拟上游矩阵：透传/转换、流式分块边界、失败切换链（网络→换线、429→换 key+冷却、预算耗尽→换渠道→502 透传）、首字节保护、**熔断 e2e（跳过期间上游零命中/模型维度隔离/全候选旁路/探测恢复切回/手动恢复与越权 404）**、半开单组合试探与切回/探测恢复切回/手动恢复与越权 404）**、按需线路预热（宽松判定含 4xx 记通、节流与 0=关闭开关） |
 | 端到端 | 本地起 keyway + mock 上游，真实 Claude Code（ANTHROPIC_BASE_URL 指向）跑工具调用多轮；Cline 会话内切模型；mihomo socks5 做公共代理打通假"墙外"上游 |
 | 探测 | 虚拟延迟注入验证优选排序与退避 |
 | 压力 | 50 并发流式 10 分钟（PRD A7）；日志批写在高压下的丢弃行为 |

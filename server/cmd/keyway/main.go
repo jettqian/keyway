@@ -46,26 +46,20 @@ func buildApp(cfg config.Config) (*app, error) {
 	routingSvc := routing.New(st, cfg.Secret)
 	logWriter := usage.NewWriter(st.DB())
 	pm := proxyman.New(st, cfg.Secret)
-	// 渠道×模型熔断器：relay 失败计数 + probe 成功/手动恢复关闭 + API 展示
-	breakerEngine := breaker.New(st.DB(), cfg.BreakerFailThreshold)
+	// 渠道×模型熔断器：relay 失败计数/半开试探恢复 + 探测/手动恢复关闭
+	breakerEngine := breaker.New(st.DB(), cfg.BreakerFailThreshold, cfg.BreakerCooldownSec, cfg.BreakerCooldownMaxSec)
+	// 探测器（v1.5.45 起无定时循环）：按需线路预热 + 测试按钮矩阵
 	probeEngine := probe.New(st, cfg.Secret, routingSvc, pm, cfg, breakerEngine)
 	// 汇率定时同步（USD→CNY，auto 模式下每 24h 覆盖，manual 保留固定值）
 	fxEngine := fxrate.New(st, cfg.FxSourceURL)
 	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm, fxEngine, breakerEngine, cfg.BaseURL)
-	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, pm, cfg, breakerEngine)
+	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, pm, cfg, breakerEngine, probeEngine)
 
 	stopWriter := make(chan struct{})
 	writerDone := make(chan struct{})
 	go func() {
 		logWriter.Start(stopWriter)
 		close(writerDone)
-	}()
-
-	probeStop := make(chan struct{})
-	probeDone := make(chan struct{})
-	go func() {
-		probeEngine.Start(probeStop)
-		close(probeDone)
 	}()
 
 	pmStop := make(chan struct{})
@@ -143,11 +137,6 @@ func buildApp(cfg config.Config) (*app, error) {
 			close(stopWriter)
 			select {
 			case <-writerDone:
-			case <-time.After(5 * time.Second):
-			}
-			close(probeStop)
-			select {
-			case <-probeDone:
 			case <-time.After(5 * time.Second):
 			}
 			close(pmStop)

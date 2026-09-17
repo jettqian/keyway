@@ -253,6 +253,8 @@ export interface BreakerInfo {
   model: string
   failCount: number
   openedAt: number
+  /** 冷却到期时间（Unix 秒）；到期后下一个请求放行单次试探 */
+  cooldownUntil: number
   lastError: string
   updatedAt: number
 }

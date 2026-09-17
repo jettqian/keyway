@@ -34,13 +34,14 @@ func (s *Server) handleListBreakers(c *gin.Context) {
 		for i := range rows {
 			r := &rows[i]
 			out = append(out, gin.H{
-				"channelId":   r.ChannelID,
-				"channelName": nameByID[r.ChannelID],
-				"model":       r.Model,
-				"failCount":   r.FailCount,
-				"openedAt":    r.OpenedAt,
-				"lastError":   r.LastError,
-				"updatedAt":   r.UpdatedAt,
+				"channelId":     r.ChannelID,
+				"channelName":   nameByID[r.ChannelID],
+				"model":         r.Model,
+				"failCount":     r.FailCount,
+				"openedAt":      r.OpenedAt,
+				"cooldownUntil": r.CooldownUntil,
+				"lastError":     r.LastError,
+				"updatedAt":     r.UpdatedAt,
 			})
 		}
 	}
