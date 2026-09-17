@@ -3,10 +3,11 @@ import { Button, Card, Col, DatePicker, Empty, Row, Select, Space, Statistic, Ta
 import { ReloadOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
-import { listTokens, myStats } from '../api'
-import type { GatewayToken, LatestUsage, StatsResponse, StatsGroup } from '../api/types'
+import { listTokens, myStats, myStatsLinks } from '../api'
+import type { GatewayToken, LatestUsage, LinkStat, StatsResponse, StatsGroup } from '../api/types'
 import Money from '../components/Money'
 import LineUrl from '../components/LineUrl'
+import LinksTable from '../components/LinksTable'
 import { formatDateTime, fmtInt, fmtTokens } from '../format'
 import { useI18n } from '../i18n'
 import type { DictKey } from '../i18n/zh'
@@ -31,12 +32,17 @@ const StatsPage: React.FC = () => {
   const [tokenId, setTokenId] = React.useState<number | undefined>(undefined)
   const [tokens, setTokens] = React.useState<GatewayToken[]>([])
   const [data, setData] = React.useState<StatsResponse | null>(null)
+  const [links, setLinks] = React.useState<LinkStat[]>([])
   const [loading, setLoading] = React.useState(true)
 
   const refresh = React.useCallback(() => {
     setLoading(true)
-    myStats({ start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD'), tokenId })
-      .then(setData)
+    const q = { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD'), tokenId }
+    Promise.all([myStats(q), myStatsLinks(q)])
+      .then(([st, lk]) => {
+        setData(st)
+        setLinks(lk.links)
+      })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
   }, [range, tokenId])
@@ -179,6 +185,18 @@ const StatsPage: React.FC = () => {
           />
         ) : (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('stats.emptyRecent')} />
+        )}
+      </Card>
+      <Card
+        title={t('stats.links')}
+        extra={<span className="text-tertiary" style={{ fontSize: 12 }}>{t('stats.linksHint')}</span>}
+        loading={loading}
+        style={{ marginBottom: 16 }}
+      >
+        {links.length ? (
+          <LinksTable links={links} />
+        ) : (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('stats.emptyLinks')} />
         )}
       </Card>
       <Row gutter={16}>

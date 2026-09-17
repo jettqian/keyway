@@ -25,4 +25,13 @@ export default {
   'stats.byKey': '按密钥（多账号分账）',
   'stats.key': '密钥',
   'stats.token': '令牌',
+  'stats.links': '链路状态（渠道 × 模型）',
+  'stats.linksHint': '聚合窗口内该组合的全部上游尝试（失败切换的中间尝试计入）；熔断中的组合即使窗口内零尝试也会展示。',
+  'stats.owner': '所有者',
+  'stats.avgLatency': '平均延迟',
+  'stats.lastAt': '最近请求',
+  'stats.breaker': '熔断',
+  'stats.breakerFailCount': '连续失败 {count} 次',
+  'stats.breakerNextTrial': '下次试探 {time}',
+  'stats.emptyLinks': '该时间范围内还没有链路数据',
 }

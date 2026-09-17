@@ -12,6 +12,7 @@ import type {
   LogEntry,
   LogQuery,
   StatsResponse,
+  LinkStat,
   ModelPricing,
   PricingListResponse,
   CatalogModel,
@@ -92,6 +93,9 @@ export interface StatsRange {
 }
 export const myStats = (q: StatsRange) =>
   get<StatsResponse>(`/api/stats?${qs(q as unknown as Record<string, unknown>)}`)
+// 渠道×模型链路状态（本人渠道；口径同统计——每次上游尝试各计一次）
+export const myStatsLinks = (q: StatsRange) =>
+  get<{ links: LinkStat[] }>(`/api/stats/links?${qs(q as unknown as Record<string, unknown>)}`)
 
 // ---------- 管理员 ----------
 export const adminUsers = () => get<{ users: User[] }>('/api/admin/users')
@@ -100,6 +104,9 @@ export const adminSetUserStatus = (id: number, status: number) =>
 export const adminResetPassword = (id: number) => post<{ password: string }>(`/api/admin/users/${id}/reset_password`)
 export const adminStats = (q: StatsRange) =>
   get<StatsResponse>(`/api/admin/stats?${qs(q as unknown as Record<string, unknown>)}`)
+// 管理端全局链路状态：聚合所有用户的请求，行含渠道所有者
+export const adminStatsLinks = (q: StatsRange) =>
+  get<{ links: LinkStat[] }>(`/api/admin/stats/links?${qs(q as unknown as Record<string, unknown>)}`)
 export const adminPricing = () => get<PricingListResponse>('/api/admin/pricing')
 export const adminUpdatePricing = (p: ModelPricing) =>
   put<{ pricing: ModelPricing }>(`/api/admin/pricing/${encodeURIComponent(p.model)}`, p)

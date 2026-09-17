@@ -1,6 +1,21 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.43（与 PRD v1.5.46 对应；熔断器与按需预热评审修复。① `RecordFailure`
+- 版本：v1.44（与 PRD v1.5.47 对应；新增**渠道×模型链路状态**（FR-B7）——统计页
+  「链路状态」与管理端全局视角。`usage.QueryLinks` 按（channel_id, model）GROUP BY
+  logs 聚合窗口内的全部**上游尝试**（v1.5.42 起逐次尝试各记一条，口径与统计一致：
+  失败切换的中间尝试计入），输出请求数/成功数/错误率/平均耗时/最近尝试；
+  API 层 `linksResponse` 补渠道名（管理端另补所有者用户名）并叠加
+  `breaker_states` 当前熔断快照——**熔断中的组合即使窗口内零尝试也补零行展示**
+  （熔断的本意就是无流量，状态可见性不依赖流量）；渠道已删的行剔除。
+  权限口径：`GET /api/stats/links`（本人渠道，统计页）与
+  `GET /api/admin/stats/links`（全量渠道 + 所有者列，管理端全局视角——多租户
+  BYOK 下渠道是租户私有资产，全量明细仅管理员可见）。前端共用
+  `LinksTable` 组件（渠道/模型/请求数/错误率/平均延迟/最近请求/熔断列，熔断列
+  Tooltip 含失败次数、下次试探时间与最近错误，管理端多一列所有者），随统计页
+  时间窗联动。测试：QueryLinks 聚合单测（尝试口径/错误率/平均耗时/用户隔离/
+  全员口径/时间窗）+ e2e（用户只见自己渠道、管理端全量含所有者、熔断叠加与
+  零尝试补行、渠道删除后不可见）；
+  前版 v1.43：与 PRD v1.5.46 对应；熔断器与按需预热评审修复。① `RecordFailure`
   退避进度以 DB 行 fail_count 为准推进（max(行+1, 本地计数)，乐观锁 + 重试防并发
   丢失更新，首次落行 OnConflict DoNothing）——重启后本地计数归零不降级已持久化
   的进度、不缩短既有冷却；② `ClaimHalfOpen` 先读行再原子认领，冷却顺延到**下一
@@ -958,6 +973,15 @@ new-api 的已知语义（仅参考行为，代码自研）。
   `MAX(id)`（每组最新一条），再 `ORDER BY id DESC LIMIT 5` 取最近 5 个组合，回传
   渠道名/模型/时间/**实际路由线路**（line_url + via，随该组最新一条取值，历史
   日志为空串）；不受统计窗口限制，API 层按 channel_id 批量补渠道名
+- 渠道×模型链路状态（`stats.links`，v1.44 / FR-B7）：按（channel_id, model）
+  GROUP BY 聚合窗口内全部**上游尝试**（口径同上——逐次尝试各计一条，失败切换的
+  中间尝试计入），输出 attempts / ok / errorRate / avg(total_ms) / MAX(created_at)，
+  LIMIT 500 按尝试数降序；API 层补渠道名并叠加 `breaker_states` 熔断快照——熔断
+  中的组合即使窗口内零尝试也**补零行展示**（熔断的本意就是无流量，可见性不依赖
+  流量），渠道已删的行剔除；用户视角限定本人渠道（`GET /api/stats/links`，
+  统计页「链路状态」），管理端全量并附渠道所有者（`GET /api/admin/stats/links`，
+  行含 owner——多租户 BYOK 下全量明细仅管理员可见）；与统计页时间窗（start/end/
+  days）同参联动
 - CSV：服务端流式生成 `text/csv` 下载
 - 若 v1.1 出现慢查询 → 增加 daily rollup 表（计划内，不在 MVP）
 
@@ -1080,10 +1104,11 @@ GET /oauth/feishu/callback?code&state
 | POST /api/tokens/:id/revoke | 吊销令牌（立即失效，保留记录） |
 | GET /api/logs | 自己的日志（分页/过滤） |
 | GET /api/stats | 自己的统计（含最近生效流量 recent：同渠道同模型去重后的最新 5 个组合，含实际线路 lineUrl/via；start/end 自定义时间窗，缺省 days） |
+| GET /api/stats/links | 本人渠道的渠道×模型链路状态（尝试口径聚合 + 熔断快照叠加，熔断中零尝试也展示；v1.44） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
   （模型目录 CRUD）、/api/admin/templates、
   /api/admin/proxies、/api/admin/pricing(+import、+sync_remote 远程同步)、
-  /api/admin/stats、/api/admin/invites、
+  /api/admin/stats、/api/admin/stats/links（全量渠道×模型链路状态，行含所有者）、/api/admin/invites、
   POST /api/admin/exchange-rate/sync（汇率手动同步，apply 写入/预览） | 见 PRD §5.9 |
 
 ### 11.2 中转 `/v1`（令牌鉴权）
@@ -1145,7 +1170,7 @@ text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无�
 | 层 | 内容 |
 |---|---|
 | 单元 | convert 金样本 round-trip（§7.5）；错误分类器；attempt plan 排序；**熔断器状态机（阈值/指数退避封顶/半开认领单飞/手动恢复/模型维度隔离，注入时钟）**；AES-GCM/bcrypt |
-| 集成 | httptest 模拟上游矩阵：透传/转换、流式分块边界、失败切换链（网络→换线、429→换 key+冷却、预算耗尽→换渠道→502 透传）、首字节保护、**熔断 e2e（跳过期间上游零命中/模型维度隔离/全候选旁路/探测恢复切回/手动恢复与越权 404）**、半开单组合试探与切回/探测恢复切回/手动恢复与越权 404）**、按需线路预热（宽松判定含 4xx 记通、节流与 0=关闭开关） |
+| 集成 | httptest 模拟上游矩阵：透传/转换、流式分块边界、失败切换链（网络→换线、429→换 key+冷却、预算耗尽→换渠道→502 透传）、首字节保护、**熔断 e2e（跳过期间上游零命中/模型维度隔离/全候选旁路/探测恢复切回/手动恢复与越权 404）**、半开单组合试探与切回/探测恢复切回/手动恢复与越权 404）**、按需线路预热（宽松判定含 4xx 记通、节流与 0=关闭开关）、**链路状态 e2e（用户隔离/管理端全量含所有者/熔断叠加与零尝试补行/渠道删除后不可见）** |
 | 端到端 | 本地起 keyway + mock 上游，真实 Claude Code（ANTHROPIC_BASE_URL 指向）跑工具调用多轮；Cline 会话内切模型；mihomo socks5 做公共代理打通假"墙外"上游 |
 | 探测 | 虚拟延迟注入验证优选排序与退避 |
 | 压力 | 50 并发流式 10 分钟（PRD A7）；日志批写在高压下的丢弃行为 |

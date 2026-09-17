@@ -192,6 +192,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/logs/export", s.handleLogsExport)
 	r.GET("/stats", s.handleStats)
 	r.GET("/stats/export", s.handleStatsExport)
+	r.GET("/stats/links", s.handleStatsLinks)
 
 	admin := r.Group("/admin", s.AdminAuth())
 	{
@@ -199,6 +200,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 		admin.PUT("/users/:id/status", s.handleAdminUserStatus)
 		admin.POST("/users/:id/reset_password", s.handleAdminResetPassword)
 		admin.GET("/stats", s.handleAdminStats)
+		admin.GET("/stats/links", s.handleAdminStatsLinks)
 		admin.GET("/pricing", s.handleAdminPricing)
 		admin.PUT("/pricing/:model", s.handleAdminUpdatePricing)
 		admin.DELETE("/pricing/:model", s.handleAdminDeletePricing)

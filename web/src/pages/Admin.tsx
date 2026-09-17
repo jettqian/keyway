@@ -27,11 +27,13 @@ import {
   adminUpdateSettings,
   adminSyncExchangeRate,
   adminStats,
+  adminStatsLinks,
 } from '../api'
-import type { User, ModelPricing, PricingSource, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings } from '../api/types'
+import type { User, ModelPricing, PricingSource, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings, LinkStat } from '../api/types'
 import { formatDateTime, fmtInt, fmtTokens } from '../format'
 import { useI18n } from '../i18n'
 import CatalogPrice from '../components/CatalogPrice'
+import LinksTable from '../components/LinksTable'
 import Money from '../components/Money'
 import ModelTags from '../components/ModelTags'
 import { rangePresets } from './Stats'
@@ -829,12 +831,17 @@ const StatsTab: React.FC = () => {
   const { t } = useI18n()
   const [range, setRange] = React.useState<[Dayjs, Dayjs]>([dayjs().subtract(6, 'day'), dayjs()])
   const [data, setData] = React.useState<StatsResponse | null>(null)
+  const [links, setLinks] = React.useState<LinkStat[]>([])
   const [loading, setLoading] = React.useState(true)
 
   const refresh = React.useCallback(() => {
     setLoading(true)
-    adminStats({ start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') })
-      .then(setData)
+    const q = { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') }
+    Promise.all([adminStats(q), adminStatsLinks(q)])
+      .then(([st, lk]) => {
+        setData(st)
+        setLinks(lk.links)
+      })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
   }, [range])
@@ -889,6 +896,14 @@ const StatsTab: React.FC = () => {
       </Card>
       <Card title={t('admin.byUser')} loading={loading} style={{ marginBottom: 16 }}>
         <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={data?.byUser ?? []} columns={groupColumns(t('common.user'))} />
+      </Card>
+      <Card
+        title={t('stats.links')}
+        extra={<span className="text-tertiary" style={{ fontSize: 12 }}>{t('stats.linksHint')}</span>}
+        loading={loading}
+        style={{ marginBottom: 16 }}
+      >
+        <LinksTable links={links} showOwner />
       </Card>
       <Card title={t('admin.byModel')} loading={loading}>
         <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={false} dataSource={data?.byModel ?? []} columns={groupColumns(t('common.model'))} />

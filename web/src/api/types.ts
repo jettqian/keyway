@@ -176,6 +176,24 @@ export interface LatestUsage {
   statusCode: number
 }
 
+/** 渠道×模型链路状态（统计页「链路状态」/ 管理端全局视角） */
+export interface LinkStat {
+  channelId: number
+  channelName?: string
+  owner?: string // 管理端：渠道所有者
+  model: string
+  attempts: number // 上游尝试次数（失败切换的中间尝试计入）
+  ok: number
+  errorRate: number // 0~100
+  avgMs: number
+  lastAt: number // 最近一次尝试（Unix 秒）
+  breaker?: {
+    failCount: number
+    cooldownUntil: number
+    lastError: string
+  }
+}
+
 export interface ModelPricing {
   model: string
   inputPerM: number

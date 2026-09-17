@@ -24,4 +24,13 @@ export default {
   'stats.byKey': 'By Key (multi-account cost split)',
   'stats.key': 'Key',
   'stats.token': 'Token',
+  'stats.links': 'Link Status (Channel × Model)',
+  'stats.linksHint': 'Aggregates all upstream attempts per combo in the window (intermediate failover attempts included); combos currently broken are shown even with zero attempts in the window.',
+  'stats.owner': 'Owner',
+  'stats.avgLatency': 'Avg Latency',
+  'stats.lastAt': 'Last Request',
+  'stats.breaker': 'Breaker',
+  'stats.breakerFailCount': '{count} consecutive failures',
+  'stats.breakerNextTrial': 'Next trial {time}',
+  'stats.emptyLinks': 'No link data in this time range',
 }

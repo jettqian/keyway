@@ -111,6 +111,119 @@ func (s *Server) handleAdminStats(c *gin.Context) {
 	s.ok(c, st)
 }
 
+// ---------- 渠道×模型链路状态（FR-B7） ----------
+
+// handleStatsLinks GET /api/stats/links：本人渠道的链路状态（统计页「链路状态」）
+func (s *Server) handleStatsLinks(c *gin.Context) {
+	u := currentUser(c)
+	since, until := statsRange(c)
+	links, err := s.linksResponse(&u.ID, since, until)
+	if err != nil {
+		s.fail(c, http.StatusInternalServerError, "查询失败")
+		return
+	}
+	s.ok(c, gin.H{"links": links})
+}
+
+// handleAdminStatsLinks GET /api/admin/stats/links：全量渠道的链路状态（管理端
+// 全局视角，聚合所有用户的请求；行含渠道所有者）
+func (s *Server) handleAdminStatsLinks(c *gin.Context) {
+	since, until := statsRange(c)
+	links, err := s.linksResponse(nil, since, until)
+	if err != nil {
+		s.fail(c, http.StatusInternalServerError, "查询失败")
+		return
+	}
+	s.ok(c, gin.H{"links": links})
+}
+
+// linksResponse 组装链路状态：聚合日志（userID nil = 全员）、补充渠道名/所有者、
+// 叠加当前熔断快照。渠道已删的行剔除；熔断中的组合即使窗口内零尝试（熔断的
+// 本意就是无流量）也补零行展示——状态可见性不依赖流量
+func (s *Server) linksResponse(userID *int64, since, until int64) ([]usage.LinkStat, error) {
+	links, err := usage.QueryLinks(s.Store.DB(), userID, since, until)
+	if err != nil {
+		return nil, err
+	}
+	var chans []store.Channel
+	q := s.Store.DB()
+	if userID != nil {
+		q = q.Where("user_id = ?", *userID)
+	}
+	if err := q.Find(&chans).Error; err != nil {
+		return nil, err
+	}
+	chByID := make(map[int64]*store.Channel, len(chans))
+	ids := make([]int64, 0, len(chans))
+	for i := range chans {
+		chByID[chans[i].ID] = &chans[i]
+		ids = append(ids, chans[i].ID)
+	}
+	// 管理端补所有者用户名
+	ownerByID := map[int64]string{}
+	if userID == nil && len(ids) > 0 {
+		var users []store.User
+		s.Store.DB().Find(&users)
+		for i := range users {
+			ownerByID[users[i].ID] = users[i].Username
+		}
+	}
+	// 当前熔断快照（本人/全量渠道）
+	type bkKey struct {
+		ch int64
+		m  string
+	}
+	brkBy := map[bkKey]*store.BreakerState{}
+	if len(ids) > 0 {
+		var rows []store.BreakerState
+		s.Store.DB().Where("channel_id IN ?", ids).Find(&rows)
+		for i := range rows {
+			brkBy[bkKey{rows[i].ChannelID, rows[i].Model}] = &rows[i]
+		}
+	}
+	snap := func(b *store.BreakerState) *usage.LinkBreaker {
+		if b == nil {
+			return nil
+		}
+		return &usage.LinkBreaker{FailCount: b.FailCount, CooldownUntil: b.CooldownUntil, LastError: b.LastError}
+	}
+	out := make([]usage.LinkStat, 0, len(links)+len(brkBy))
+	seen := make(map[bkKey]bool, len(links))
+	for _, l := range links {
+		ch, ok := chByID[l.ChannelID]
+		if !ok {
+			continue // 渠道已删
+		}
+		l.ChannelName = ch.Name
+		if userID == nil {
+			l.Owner = ownerByID[ch.UserID]
+		}
+		k := bkKey{l.ChannelID, l.Model}
+		l.Breaker = snap(brkBy[k])
+		seen[k] = true
+		out = append(out, l)
+	}
+	// 补零行：熔断中但窗口内零尝试
+	for k, b := range brkBy {
+		if seen[k] {
+			continue
+		}
+		ch, ok := chByID[k.ch]
+		if !ok {
+			continue
+		}
+		l := usage.LinkStat{
+			ChannelID: k.ch, Model: k.m, ChannelName: ch.Name,
+			LastAt: b.UpdatedAt, Breaker: snap(b),
+		}
+		if userID == nil {
+			l.Owner = ownerByID[ch.UserID]
+		}
+		out = append(out, l)
+	}
+	return out, nil
+}
+
 // queryTokenID 解析可选的令牌筛选参数（tokenId，数值 id；空或非法返回 nil）
 func queryTokenID(c *gin.Context) *int64 {
 	if v := c.Query("tokenId"); v != "" {
