@@ -25,7 +25,7 @@ export default {
   'stats.key': 'Key',
   'stats.token': 'Token',
   'stats.links': 'Link Status (Channel × Model)',
-  'stats.linksHint': 'Channels of the same model are ranked for comparison: Good = error rate <5% and latency ≤1.5× model best; Fair = error rate <20% and latency ≤3×; fewer than 5 attempts are not graded. Broken combos are shown even with zero attempts in the window.',
+  'stats.linksHint': 'Channels of the same model are ranked by error rate then latency; quality grading reflects reliability only (Good <5%, Fair <20%, Poor ≥20%, fewer than 5 attempts not graded) — check the latency column for speed. Broken combos are shown even with zero attempts in the window.',
   'stats.owner': 'Owner',
   'stats.avgLatency': 'Avg Latency',
   'stats.lastAt': 'Last Request',
@@ -40,4 +40,6 @@ export default {
   'stats.gradeBroken': 'Broken',
   'stats.insufficient': 'Low samples',
   'stats.best': 'Best',
+  'stats.groupMeta': '{channels} channels · {attempts} attempts · {rate}% error',
+  'stats.groupMetaNoRate': '{channels} channels',
 }

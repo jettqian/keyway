@@ -26,7 +26,7 @@ export default {
   'stats.key': '密钥',
   'stats.token': '令牌',
   'stats.links': '链路状态（渠道 × 模型）',
-  'stats.linksHint': '同模型渠道按质量排序对比：优 = 错误率 <5% 且延迟 ≤1.5× 模型内最优；良 = 错误率 <20% 且延迟 ≤3×；样本少于 5 次不评级。熔断中的组合即使窗口内零尝试也会展示。',
+  'stats.linksHint': '同模型渠道按 错误率 → 延迟 排序对比；质量分级只看错误率（优 <5%、良 <20%、差 ≥20%，样本 <5 次不评级），速度看延迟列的相对倍数。熔断中的组合即使窗口内零尝试也会展示。',
   'stats.owner': '所有者',
   'stats.avgLatency': '平均延迟',
   'stats.lastAt': '最近请求',
@@ -41,4 +41,6 @@ export default {
   'stats.gradeBroken': '熔断',
   'stats.insufficient': '样本不足',
   'stats.best': '最优',
+  'stats.groupMeta': '{channels} 个渠道 · {attempts} 次尝试 · 错误率 {rate}%',
+  'stats.groupMetaNoRate': '{channels} 个渠道',
 }

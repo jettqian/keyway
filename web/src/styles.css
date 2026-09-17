@@ -179,3 +179,15 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
   .stat-strip > .stat-cell { padding: 0; }
   .stat-strip .ant-statistic-content { font-size: 20px; }
 }
+
+/* 链路状态表：模型分组头行（表内二级标题，主题变量适配亮暗） */
+.links-group-header > td {
+  background: var(--kw-soft-bg) !important;
+  border-top: 1px solid var(--kw-border-strong) !important;
+  border-bottom: 1px solid var(--kw-border-strong) !important;
+  padding-top: 10px !important;
+  padding-bottom: 8px !important;
+}
+.links-group-header > td:first-child {
+  border-left: 3px solid var(--kw-primary);
+}
