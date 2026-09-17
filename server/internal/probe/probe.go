@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"keyway/internal/breaker"
 	"keyway/internal/config"
 	"keyway/internal/httpx"
 	"keyway/internal/proxyman"
@@ -31,11 +32,14 @@ const (
 	probeModelCap = 3
 )
 
-// Result 线路×路径探测结果
+// Result 线路×路径探测结果；OK 时 Model 记录判定健康的模型
+// （探测按渠道模型列表依序回退，任一模型成功即组合健康——该模型即恢复信号，
+// 用于联动关闭渠道×模型熔断，FR-B4）
 type Result struct {
 	LineURL   string `json:"lineUrl"`
 	Via       string `json:"via"`
 	OK        bool   `json:"ok"`
+	Model     string `json:"model,omitempty"`
 	LatencyMs int64  `json:"latencyMs"`
 	Error     string `json:"error"`
 }
@@ -51,22 +55,24 @@ type KeyResult struct {
 
 // Engine 后台探测器（DESIGN §6）
 type Engine struct {
-	store   *store.Store
-	secret  string
-	routing *routing.Service
-	pm      *proxyman.Manager
-	cfg     config.Config
-	pool    *httpx.Pool
+	store    *store.Store
+	secret   string
+	routing  *routing.Service
+	pm       *proxyman.Manager
+	cfg      config.Config
+	pool     *httpx.Pool
+	breakers *breaker.Engine // 探测成功联动关闭渠道×模型熔断（可空）
 
 	mu       sync.Mutex
 	next     map[int64]time.Time // 渠道 → 下次探测时间
 	failMult map[int64]int       // 连续失败退避倍数
 }
 
-func New(st *store.Store, secret string, r *routing.Service, pm *proxyman.Manager, cfg config.Config) *Engine {
+func New(st *store.Store, secret string, r *routing.Service, pm *proxyman.Manager, cfg config.Config, breakers *breaker.Engine) *Engine {
 	return &Engine{
 		store: st, secret: secret, routing: r, pm: pm, cfg: cfg,
 		pool:     httpx.NewPool(cfg.ResponseHeaderTimeoutSec),
+		breakers: breakers,
 		next:     map[int64]time.Time{},
 		failMult: map[int64]int{},
 	}
@@ -201,6 +207,16 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 	}
 	wg.Wait()
 	e.saveResults(ch.ID, results)
+	// 探测成功即关闭对应模型的熔断（FR-B4 恢复信号：与真实转发完全一致的
+	// 最小流式请求已走通，足以证明渠道×模型可用；探测覆盖渠道模型列表前 3 个，
+	// 未覆盖的模型由半开试探恢复）
+	if e.breakers != nil {
+		for _, r := range results {
+			if r.OK && r.Model != "" {
+				e.breakers.RecordSuccess(ch.ID, r.Model)
+			}
+		}
+	}
 	return results, nil
 }
 
@@ -295,6 +311,7 @@ func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, p
 		for _, shape := range probeShapes(ch, m) {
 			last = e.probeOne(ctx, ch, upstreamModel, keyPlain, line, proxyURL, via, shape)
 			if last.OK {
+				last.Model = m // 记录判定健康的模型（熔断恢复联动用）
 				return last
 			}
 			shapeErrs = append(shapeErrs, fmt.Sprintf("%s：%s", shapeLabel(shape), last.Error))

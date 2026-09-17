@@ -14,6 +14,7 @@ import (
 
 	"keyway/internal/api"
 	"keyway/internal/auth"
+	"keyway/internal/breaker"
 	"keyway/internal/config"
 	"keyway/internal/fxrate"
 	"keyway/internal/pricing"
@@ -45,11 +46,13 @@ func buildApp(cfg config.Config) (*app, error) {
 	routingSvc := routing.New(st, cfg.Secret)
 	logWriter := usage.NewWriter(st.DB())
 	pm := proxyman.New(st, cfg.Secret)
-	probeEngine := probe.New(st, cfg.Secret, routingSvc, pm, cfg)
+	// 渠道×模型熔断器：relay 失败计数/半开恢复 + probe 成功关闭 + API 展示与手动恢复
+	breakerEngine := breaker.New(st.DB(), cfg.BreakerFailThreshold, cfg.BreakerCooldownSec, cfg.BreakerCooldownMaxSec)
+	probeEngine := probe.New(st, cfg.Secret, routingSvc, pm, cfg, breakerEngine)
 	// 汇率定时同步（USD→CNY，auto 模式下每 24h 覆盖，manual 保留固定值）
 	fxEngine := fxrate.New(st, cfg.FxSourceURL)
-	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm, fxEngine, cfg.BaseURL)
-	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, pm, cfg)
+	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm, fxEngine, breakerEngine, cfg.BaseURL)
+	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, pm, cfg, breakerEngine)
 
 	stopWriter := make(chan struct{})
 	writerDone := make(chan struct{})

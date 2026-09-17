@@ -246,6 +246,19 @@ export interface PublicInfo {
   registerMode: 'open' | 'invite' | 'closed'
 }
 
+/** 渠道×模型熔断状态（仅熔断中的条目；无条目 = 关闭） */
+export interface BreakerInfo {
+  channelId: number
+  channelName: string
+  model: string
+  failCount: number
+  openedAt: number
+  /** 冷却到期时间（Unix 秒）；到期后下一个请求放行单次试探 */
+  cooldownUntil: number
+  lastError: string
+  updatedAt: number
+}
+
 export interface ProxyInput {
   name: string
   url: string

@@ -361,6 +361,8 @@ func (s *Server) handleDeleteChannel(c *gin.Context) {
 		s.fail(c, http.StatusNotFound, "渠道不存在")
 		return
 	}
+	// 渠道已删：清理其熔断状态（行与内存计数），避免残留
+	s.Breaker.Reset(id, "")
 	s.ok(c, gin.H{})
 }
 

@@ -23,15 +23,21 @@ type Config struct {
 	LogRetentionDays         int
 	PricingSyncHours         int
 	FxSourceURL              string
+	BreakerFailThreshold     int
+	BreakerCooldownSec       int
+	BreakerCooldownMaxSec    int
 }
 
 func Load() Config {
 	return Config{
-		Secret:               envStr("KEYWAY_SECRET", ""),
-		DataDir:              envStr("KEYWAY_DATA_DIR", "./data"),
-		Port:                 envInt("KEYWAY_PORT", 8080),
-		BaseURL:              envStr("KEYWAY_BASE_URL", ""),
-		ProbeIntervalMin:     envInt("KEYWAY_PROBE_INTERVAL_MIN", 10),
+		Secret:  envStr("KEYWAY_SECRET", ""),
+		DataDir: envStr("KEYWAY_DATA_DIR", "./data"),
+		Port:    envInt("KEYWAY_PORT", 8080),
+		BaseURL: envStr("KEYWAY_BASE_URL", ""),
+		// v1.5.45 起默认 30 分钟：渠道×模型熔断器接管请求路径的健康反馈
+		// （失败计数/半开恢复），探测退居线路排序与状态展示，频率下调降低
+		// 探测对上游额度的消耗（KEYWAY_PROBE_INTERVAL_MIN 可覆盖）
+		ProbeIntervalMin:     envInt("KEYWAY_PROBE_INTERVAL_MIN", 30),
 		AttemptBudget:        envInt("KEYWAY_ATTEMPT_BUDGET", 3),
 		KeyCooldownSec:       envInt("KEYWAY_KEY_COOLDOWN_S", 60),
 		DefaultMaxTokens:     envInt("KEYWAY_DEFAULT_MAX_TOKENS", 8192),
@@ -43,6 +49,11 @@ func Load() Config {
 		LogRetentionDays:         envInt("KEYWAY_LOG_RETENTION_DAYS", 30),
 		PricingSyncHours:         envInt("KEYWAY_PRICING_SYNC_HOURS", 24),
 		FxSourceURL:              envStr("KEYWAY_FX_SOURCE_URL", ""),
+		// 渠道×模型熔断器（v1.5.45）：连续 N 个请求耗尽该渠道该模型的组合
+		// 尝试后熔断，冷却 S 秒后半开试探，失败指数退避（上限 MAX 秒）
+		BreakerFailThreshold:  envInt("KEYWAY_BREAKER_FAIL_THRESHOLD", 3),
+		BreakerCooldownSec:    envInt("KEYWAY_BREAKER_COOLDOWN_S", 300),
+		BreakerCooldownMaxSec: envInt("KEYWAY_BREAKER_COOLDOWN_MAX_S", 3600),
 	}
 }
 

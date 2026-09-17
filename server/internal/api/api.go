@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/auth"
+	"keyway/internal/breaker"
 	"keyway/internal/fxrate"
 	"keyway/internal/probe"
 	"keyway/internal/proxyman"
@@ -23,11 +24,12 @@ type Server struct {
 	Probe   *probe.Engine
 	PM      *proxyman.Manager
 	Fx      *fxrate.Engine
+	Breaker *breaker.Engine
 	BaseURL string
 }
 
-func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *proxyman.Manager, fx *fxrate.Engine, baseURL string) *Server {
-	return &Server{Store: st, Secret: secret, Auth: a, Probe: p, PM: pm, Fx: fx, BaseURL: baseURL}
+func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *proxyman.Manager, fx *fxrate.Engine, bk *breaker.Engine, baseURL string) *Server {
+	return &Server{Store: st, Secret: secret, Auth: a, Probe: p, PM: pm, Fx: fx, Breaker: bk, BaseURL: baseURL}
 }
 
 const sessionCookie = "keyway_session"
@@ -175,6 +177,9 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/templates", s.handleListTemplates)
 	r.PUT("/models/bindings", s.handleUpdateModelBindings)
 	r.GET("/models/catalog", s.handleListCatalogModels)
+
+	r.GET("/breakers", s.handleListBreakers)
+	r.POST("/breakers/reset", s.handleResetBreaker)
 
 	r.GET("/tokens", s.handleListTokens)
 	r.POST("/tokens", s.handleCreateToken)

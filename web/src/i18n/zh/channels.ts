@@ -72,4 +72,13 @@ export default {
   'channels.testResultTitleWithName': '线路 × 路径 测试结果：{name}',
   'channels.probing': '正在并发探测全部线路 × 路径组合（每组合最长 {seconds} 秒）…',
   'channels.testDetail': '路径 {via}，延迟 {latency}',
+  'channels.breaker': '熔断',
+  'channels.breakerCount': '{count} 个模型熔断',
+  'channels.breakerDetailTitle': '熔断明细（渠道 × 模型）',
+  'channels.breakerHint': '熔断期间该渠道的对应模型不参与路由、流量走备用渠道；冷却到期后自动放行一次试探，成功即恢复。',
+  'channels.breakerFailCount': '连续失败 {count} 次',
+  'channels.breakerNextTrial': '下次试探 {time}',
+  'channels.breakerRecover': '恢复',
+  'channels.breakerRecoverAll': '全部恢复',
+  'channels.breakerRecovered': '已恢复，下一个请求生效',
 }

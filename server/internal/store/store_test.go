@@ -43,6 +43,7 @@ var expectedColumns = map[string][]string{
 	"logs":              {"id", "created_at", "user_id", "token_id", "channel_id", "template_source_id", "line_url", "via", "key_id", "protocol", "model", "upstream_model", "status_code", "ttft_ms", "total_ms", "prompt_tokens", "completion_tokens", "cached_tokens", "cache_write_tokens", "input_cost", "output_cost", "error"},
 	"invite_codes":      {"code", "created_by", "used_by", "used_at"},
 	"settings":          {"key", "value"},
+	"breaker_states":    {"channel_id", "model", "fail_count", "opened_at", "cooldown_until", "last_error", "updated_at"},
 }
 
 func TestSchemaAlignment(t *testing.T) {
@@ -84,8 +85,9 @@ func TestSchemaAlignment(t *testing.T) {
 
 	// 复合主键顺序
 	for table, want := range map[string][]string{
-		"line_stats":  {"channel_id", "line_url", "via"},
-		"proxy_usage": {"user_id", "proxy_id", "day"},
+		"line_stats":     {"channel_id", "line_url", "via"},
+		"proxy_usage":    {"user_id", "proxy_id", "day"},
+		"breaker_states": {"channel_id", "model"},
 	} {
 		var got []string
 		if err := st.db.Raw("SELECT name FROM pragma_table_info(?) WHERE pk > 0 ORDER BY pk", table).Scan(&got).Error; err != nil {

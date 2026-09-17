@@ -71,4 +71,13 @@ export default {
   'channels.testResultTitleWithName': 'Line × Path Test Results: {name}',
   'channels.probing': 'Probing all line × path combinations concurrently (up to {seconds}s each)…',
   'channels.testDetail': 'Path {via}, latency {latency}',
+  'channels.breaker': 'Breaker',
+  'channels.breakerCount': '{count} model(s) tripped',
+  'channels.breakerDetailTitle': 'Breaker Details (channel × model)',
+  'channels.breakerHint': 'While tripped, the model on this channel is excluded from routing and traffic stays on fallback channels; after the cooldown expires, one trial request is let through and the breaker closes on success.',
+  'channels.breakerFailCount': '{count} consecutive failure(s)',
+  'channels.breakerNextTrial': 'next trial {time}',
+  'channels.breakerRecover': 'Recover',
+  'channels.breakerRecoverAll': 'Recover All',
+  'channels.breakerRecovered': 'Recovered, effective from the next request',
 }

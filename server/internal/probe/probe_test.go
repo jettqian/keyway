@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"keyway/internal/breaker"
 	"keyway/internal/config"
 	"keyway/internal/crypto"
 	"keyway/internal/proxyman"
@@ -63,7 +64,21 @@ func newEngine(t *testing.T) (*store.Store, *Engine) {
 	t.Cleanup(func() { st.Close() })
 	r := routing.New(st, testSecret)
 	pm := proxyman.New(st, testSecret)
-	return st, New(st, testSecret, r, pm, config.Config{})
+	return st, New(st, testSecret, r, pm, config.Config{}, nil)
+}
+
+// newEngineWithBreaker 构造与熔断引擎共享同一存储的探测器（验证探测成功关闭熔断）
+func newEngineWithBreaker(t *testing.T) (*store.Store, *Engine, *breaker.Engine) {
+	t.Helper()
+	st, err := store.Open(store.Options{DataDir: ":memory:"})
+	if err != nil {
+		t.Fatalf("打开测试存储失败: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	bk := breaker.New(st.DB(), 1, 300, 3600)
+	r := routing.New(st, testSecret)
+	pm := proxyman.New(st, testSecret)
+	return st, New(st, testSecret, r, pm, config.Config{}, bk), bk
 }
 
 // seedChannel 落一把密钥并绑定到渠道（直连路径）
@@ -297,5 +312,34 @@ func TestUpstreamErrorSummary(t *testing.T) {
 	long := strings.Repeat("长", 200)
 	if got := UpstreamErrorSummary([]byte(`{"error":{"message":"` + long + `"}}`)); len([]rune(got)) != 121 {
 		t.Errorf("超长摘要应截断到 120 rune + 省略号，实际 %d rune", len([]rune(got)))
+	}
+}
+
+// 探测成功联动关闭熔断（FR-B4）：渠道×模型熔断中时，探测走通即关闭，
+// 且 Result.Model 记录判定健康的模型
+func TestProbeChannel成功关闭熔断(t *testing.T) {
+	srv := openAIOnly(t)
+	defer srv.Close()
+	st, e, bk := newEngineWithBreaker(t)
+	ch := seedChannel(t, st, &store.Channel{
+		Name: "recover", ForwardMode: "passthrough", Enabled: 1,
+		BaseURLsJSON: fmt.Sprintf(`["%s"]`, srv.URL), ModelsJSON: `["gpt-6-astra"]`,
+	})
+	bk.RecordFailure(ch.ID, "gpt-6-astra", "旧故障")
+	if v := bk.View([]int64{ch.ID}, "gpt-6-astra"); !v.Open(ch.ID) {
+		t.Fatal("前置条件：应处于熔断")
+	}
+	results, err := e.ProbeChannel(ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("应探测成功，实际 %+v", results)
+	}
+	if results[0].Model != "gpt-6-astra" {
+		t.Fatalf("成功结果应记录模型名，实际 %+v", results[0])
+	}
+	if v := bk.View([]int64{ch.ID}, "gpt-6-astra"); v != nil {
+		t.Fatalf("探测成功应关闭熔断: %v", v)
 	}
 }

@@ -20,6 +20,7 @@ import type {
   AdminSettings,
   ExchangeRateSyncResult,
   PublicInfo,
+  BreakerInfo,
 } from './types'
 
 // ---------- 认证 ----------
@@ -60,6 +61,12 @@ export interface ChannelTestResult {
 
 // ---------- 模板 ----------
 export const listTemplates = () => get<{ templates: ChannelTemplate[] }>('/api/templates')
+
+// ---------- 渠道×模型熔断 ----------
+export const listBreakers = () => get<{ breakers: BreakerInfo[] }>('/api/breakers')
+// 手动恢复：model 省略 = 恢复该渠道全部模型；下一个请求即恢复路由
+export const resetBreaker = (channelId: number, model?: string) =>
+  post<void>('/api/breakers/reset', { channelId, model: model || undefined })
 
 // ---------- 令牌 ----------
 export const listTokens = () => get<{ tokens: GatewayToken[] }>('/api/tokens')

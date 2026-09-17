@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"keyway/internal/breaker"
 	"keyway/internal/convert"
 	"keyway/internal/httpx"
 	"keyway/internal/probe"
@@ -61,17 +62,34 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			return
 		}
 		candidates := append(matched, defaults...)
-		reqStart := time.Now()
+		// 协议不兼容的渠道必然不会尝试，先剔除再算熔断视图
+		// （否则"唯一可用渠道熔断 + 其余渠道不兼容"会被误判为存在可用候选）
+		viable := make([]*routing.ResolvedChannel, 0, len(candidates))
 		for _, rc := range candidates {
 			if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
 				continue
+			}
+			viable = append(viable, rc)
+		}
+		view := s.breakerView(viable, probe.Model)
+		now := time.Now().Unix()
+		reqStart := time.Now()
+		recorded := map[int64]bool{} // 熔断失败只按渠道记一次（matched+defaults 可能重复命中）
+		for _, rc := range viable {
+			if view != nil && view.Open(rc.Channel.ID) && !view.Due(rc.Channel.ID, now) {
+				continue // 熔断冷却中：跳过该渠道
 			}
 			upstreamModel := mapModel(rc.Channel, probe.Model)
 			m := map[string]any{}
 			json.Unmarshal(body, &m)
 			m["model"] = upstreamModel
 			sendBody, _ := json.Marshal(m)
-			for _, a := range s.planFor(rc) {
+			tried := false
+			for _, a := range s.planFor(rc, probe.Model, view) {
+				if a.trial && !s.Breaker.ClaimHalfOpen(rc.Channel.ID, probe.Model) {
+					continue // 半开试探已被并发请求认领
+				}
+				tried = true
 				a.protocol = "openai"
 				a.request = c.Request
 				resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, path), sendBody, false)
@@ -93,9 +111,15 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, errBody), reqStart)
 					continue
 				}
+				s.recordUpstreamOutcome(rc.Channel.ID, probe.Model, resp.StatusCode)
+				recorded[rc.Channel.ID] = true
 				passthroughResponse(c, resp)
 				s.submitLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, convert.Usage{}, 0, 0)
 				return
+			}
+			if tried && !recorded[rc.Channel.ID] {
+				s.Breaker.RecordFailure(rc.Channel.ID, probe.Model, "全部组合尝试失败")
+				recorded[rc.Channel.ID] = true
 			}
 		}
 		respondOpenAIError(c, http.StatusBadGateway, "无可用上游（completions/embeddings 仅支持 openai 型渠道）")
@@ -134,15 +158,25 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 		return
 	}
 	reqStart := time.Now()
+	// 协议不兼容的渠道必然不会尝试，先剔除再算熔断视图（同 completions 管线）
+	var viable []*routing.ResolvedChannel
+	for _, rc := range append(matched, defaults...) {
+		if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
+			continue
+		}
+		viable = append(viable, rc)
+	}
+	view := s.breakerView(viable, probe.Model)
+	now := time.Now().Unix()
 	var (
 		lastStatus int
 		lastBody   []byte
 		lastErr    string
 	)
-	for _, rc := range append(matched, defaults...) {
-		// 跨协议转换渠道（目标非 openai）无法承接 Responses 协议
-		if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
-			continue
+	recorded := map[int64]bool{} // 熔断失败只按渠道记一次（matched+defaults 可能重复命中）
+	for _, rc := range viable {
+		if view != nil && view.Open(rc.Channel.ID) && !view.Due(rc.Channel.ID, now) {
+			continue // 熔断冷却中：跳过该渠道
 		}
 		upstreamModel := mapModel(rc.Channel, probe.Model)
 		m := map[string]any{}
@@ -152,7 +186,12 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 		}
 		m["model"] = upstreamModel
 		sendBody, _ := json.Marshal(m)
-		for _, a := range s.planFor(rc) {
+		tried := false
+		for _, a := range s.planFor(rc, probe.Model, view) {
+			if a.trial && !s.Breaker.ClaimHalfOpen(rc.Channel.ID, probe.Model) {
+				continue // 半开试探已被并发请求认领
+			}
+			tried = true
 			a.protocol = "openai"
 			a.request = c.Request
 			resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, "/responses"), sendBody, probe.Stream)
@@ -191,6 +230,8 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
 				continue
 			}
+			s.recordUpstreamOutcome(rc.Channel.ID, probe.Model, resp.StatusCode)
+			recorded[rc.Channel.ID] = true
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, resp.StatusCode < 400, "")
 			var u convert.Usage
 			ttft, total := int64(0), int64(0)
@@ -201,6 +242,10 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			}
 			s.submitLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, u, ttft, total)
 			return
+		}
+		if tried && !recorded[rc.Channel.ID] {
+			s.Breaker.RecordFailure(rc.Channel.ID, probe.Model, lastErr)
+			recorded[rc.Channel.ID] = true
 		}
 	}
 	// 全部组合耗尽：每次失败尝试已逐条落日志，这里透传最后一次上游错误
@@ -320,7 +365,12 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		return
 	}
 
-	attempts := s.plan(matched, defaults)
+	view := s.breakerView(append(matched, defaults...), model)
+	attempts := s.plan(matched, defaults, model, view)
+	if len(attempts) == 0 && view != nil {
+		// 过滤后无任何尝试（熔断渠道 + 其余渠道无密钥等）→ 旁路重试，可用性优先
+		attempts = s.plan(matched, defaults, model, nil)
+	}
 	reqStart := time.Now()
 	var (
 		lastStatus     int
@@ -328,7 +378,26 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		lastErr        string
 		lastCrossProto bool // 最后一次失败尝试是否跨协议（决定错误体是否需要转换）
 	)
+	// 熔断记录：按渠道分段，段落内全部尝试耗尽 → 记一次「渠道×模型」失败（FR-B1）
+	var (
+		segCh    int64
+		segTried bool
+		segErr   string
+	)
+	closeSeg := func() {
+		if segCh != 0 && segTried {
+			s.Breaker.RecordFailure(segCh, model, segErr)
+		}
+	}
 	for _, a := range attempts {
+		if a.rc.Channel.ID != segCh {
+			closeSeg()
+			segCh, segTried, segErr = a.rc.Channel.ID, false, ""
+		}
+		if a.trial && !s.Breaker.ClaimHalfOpen(a.rc.Channel.ID, model) {
+			continue // 半开试探已被并发请求认领，跳过该渠道
+		}
+		segTried = true
 		a.protocol = inbound
 		if a.rc.Channel.ForwardMode == "convert" {
 			a.protocol = a.rc.Channel.Type
@@ -346,6 +415,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		if err != nil {
 			lastErr = err.Error()
 			lastCrossProto = cross
+			segErr = err.Error()
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
 			s.submitFailureLog(c, a, inbound, model, upstreamModel, http.StatusBadGateway, err.Error(), reqStart)
 			continue // 网络错误 → 下一组合
@@ -357,6 +427,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			resp.Body.Close()
 			lastErr = "上游返回 HTML（端点不存在）"
 			lastCrossProto = cross
+			segErr = lastErr
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, lastErr)
 			s.submitFailureLog(c, a, inbound, model, upstreamModel, http.StatusBadGateway, lastErr, reqStart)
 			continue
@@ -372,6 +443,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastStatus = resp.StatusCode
 			lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 			lastCrossProto = cross
+			segErr = upstreamStatusError(resp.StatusCode, lastBody)
 			resp.Body.Close()
 			s.submitFailureLog(c, a, inbound, model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
 			continue
@@ -382,12 +454,15 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 			lastCrossProto = cross
 			resp.Body.Close()
+			segErr = upstreamStatusError(resp.StatusCode, lastBody)
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, fmt.Sprintf("上游 %d", resp.StatusCode))
 			s.submitFailureLog(c, a, inbound, model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
 			continue
 		}
 
-		// 成功（或其他 4xx 透传）
+		// 成功（或其他 4xx 透传）：按最终状态维护熔断（2xx/3xx 关闭；404 计为
+		// 模型维度失败，其余 4xx 是客户端侧问题不计）
+		s.recordUpstreamOutcome(a.rc.Channel.ID, model, resp.StatusCode)
 		s.Routing.MarkChannelStatus(a.rc.Channel.ID, resp.StatusCode < 400, "")
 		if len(dropped) > 0 {
 			c.Header("X-Keyway-Dropped", strings.Join(dropped, ","))
@@ -403,6 +478,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		s.submitLog(c, a, inbound, model, upstreamModel, resp.StatusCode, u, ttft, total)
 		return
 	}
+	closeSeg()
 
 	// 全部组合耗尽：每次失败尝试已逐条落日志，这里透传最后一次上游错误
 	if lastStatus > 0 {
@@ -787,8 +863,28 @@ func (s *Server) tokenUserOr401(c *gin.Context) (*store.Token, *store.User, bool
 	return tok, user, true
 }
 
-func (s *Server) planFor(rc *routing.ResolvedChannel) []attempt {
-	return s.plan([]*routing.ResolvedChannel{rc}, nil)
+func (s *Server) planFor(rc *routing.ResolvedChannel, model string, view breaker.View) []attempt {
+	return s.plan([]*routing.ResolvedChannel{rc}, nil, model, view)
+}
+
+// recordUpstreamOutcome 以请求的最终上游结果维护熔断（FR-B1/FR-B4）：
+// 2xx/3xx → 关闭熔断（流量切回）；404 与鉴权/限流类（401/403/429，仅出现在
+// 透传型管线——chat/responses 管线中这些码会继续换 key、由段落耗尽统一记录）
+// → 计一次失败；404 多为上游「模型/端点不存在」（如 new_api model_not_found、
+// 网关 provider 不命中），正是模型维度熔断要捕获的形态；其余 4xx
+// （400/413/422 等）是客户端侧问题，不计
+func (s *Server) recordUpstreamOutcome(channelID int64, model string, statusCode int) {
+	if s.Breaker == nil || model == "" {
+		return
+	}
+	switch {
+	case statusCode < 400:
+		s.Breaker.RecordSuccess(channelID, model)
+	case statusCode == http.StatusNotFound:
+		s.Breaker.RecordFailure(channelID, model, "上游 404（模型或端点不存在）")
+	case statusCode == 401 || statusCode == 403 || statusCode == 429:
+		s.Breaker.RecordFailure(channelID, model, fmt.Sprintf("上游 %d", statusCode))
+	}
 }
 
 // submitLog 异步记录日志（含费用快照与耗时）
