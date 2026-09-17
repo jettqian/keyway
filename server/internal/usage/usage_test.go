@@ -45,7 +45,7 @@ func TestQueryStatsRecent(t *testing.T) {
 	}
 
 	uid := int64(1)
-	st1, err := QueryStats(db, &uid, 1, 1<<40)
+	st1, err := QueryStats(db, &uid, 1, 1<<40, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestQueryStatsRecent(t *testing.T) {
 	}
 
 	uid2 := int64(2)
-	st2, err := QueryStats(db, &uid2, 1, 1<<40)
+	st2, err := QueryStats(db, &uid2, 1, 1<<40, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestQueryStatsNamesBackfillRange(t *testing.T) {
 		}
 	}
 
-	st1, err := QueryStats(db, &uid, 50, 500)
+	st1, err := QueryStats(db, &uid, 50, 500, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestQueryStatsNamesBackfillRange(t *testing.T) {
 	}
 
 	// 窄窗口（50~150）：仅日志 0 与 1，全部可定价 → 不再显示"部分未定价"
-	st2, err := QueryStats(db, &uid, 50, 150)
+	st2, err := QueryStats(db, &uid, 50, 150, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestQueryStatsAdminByUser(t *testing.T) {
 		}
 	}
 
-	stA, err := QueryStats(db, nil, 1, 1<<40)
+	stA, err := QueryStats(db, nil, 1, 1<<40, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,11 +300,121 @@ func TestQueryStatsAdminByUser(t *testing.T) {
 	}
 
 	// 用户视角不含 byUser（自己的统计里该维度无意义）
-	st1, err := QueryStats(db, &users[0].ID, 1, 1<<40)
+	st1, err := QueryStats(db, &users[0].ID, 1, 1<<40, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(st1.ByUser) != 0 {
 		t.Errorf("用户视角不应返回 byUser，实际 %+v", st1.ByUser)
+	}
+}
+
+// 按令牌筛选：汇总/分组/最近生效流量全部限定到该令牌；
+// 用户视角传他人令牌查不到数据（user_id 与 token_id 双条件天然隔离）
+func TestQueryStatsByToken(t *testing.T) {
+	st, err := store.Open(store.Options{DataDir: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	db := st.DB()
+
+	// 当前价目：m1 输入 $3/输出 $15 每百万
+	if err := db.Create(&store.ModelPricing{Model: "m1", InputPerM: 3, OutputPerM: 15, Currency: "USD"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	uid, uid2 := int64(1), int64(2)
+	tk1, tk2, tk3 := int64(11), int64(12), int64(21)
+	logs := []store.Log{
+		// 用户 1 / 令牌 11：2 条成功（渠道 1×m1 已定价快照 $2；渠道 2×m1 未定价补算 $18）
+		{CreatedAt: 100, UserID: uid, TokenID: &tk1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200), InputCost: f64p(2)},
+		{CreatedAt: 200, UserID: uid, TokenID: &tk1, ChannelID: i64p(2), Model: strp("m1"), StatusCode: intp(200), PromptTokens: i64p(1_000_000), CompletionTokens: i64p(1_000_000)},
+		// 用户 1 / 令牌 11：1 条失败（计入请求数与错误率，不进最近生效流量）
+		{CreatedAt: 300, UserID: uid, TokenID: &tk1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(500)},
+		// 用户 1 / 令牌 12：1 条成功
+		{CreatedAt: 400, UserID: uid, TokenID: &tk2, ChannelID: i64p(3), Model: strp("m1"), StatusCode: intp(200), InputCost: f64p(0.5)},
+		// 用户 2 / 令牌 21：1 条成功（隔离验证用）
+		{CreatedAt: 500, UserID: uid2, TokenID: &tk3, ChannelID: i64p(4), Model: strp("m1"), StatusCode: intp(200), InputCost: f64p(1)},
+	}
+	for i := range logs {
+		if err := db.Create(&logs[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 不筛令牌：用户 1 全部 4 条（含补算费用 18）
+	stAll, err := QueryStats(db, &uid, 1, 1<<40, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stAll.Summary.Requests; got != 4 {
+		t.Fatalf("不筛令牌期望 4 条请求，实际 %d", got)
+	}
+	if got := stAll.Summary.Cost; got != 20.5 {
+		t.Fatalf("不筛令牌期望费用 20.5（快照 2.5 + 补算 18），实际 %.4f", got)
+	}
+
+	// 筛令牌 11：3 条、费用 20（2 + 补算 18）、错误率 1/3
+	stT1, err := QueryStats(db, &uid, 1, 1<<40, &tk1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stT1.Summary.Requests; got != 3 {
+		t.Errorf("令牌 11 期望 3 条请求，实际 %d", got)
+	}
+	if got := stT1.Summary.ErrorRate; got < 33.33 || got > 33.34 {
+		t.Errorf("令牌 11 期望错误率 1/3≈33.33%%，实际 %.2f%%", got)
+	}
+	if got := stT1.Summary.Cost; got != 20 {
+		t.Errorf("令牌 11 期望费用 20（快照 2 + 补算 18），实际 %.4f", got)
+	}
+	// 分组只含令牌 11 的渠道 1/2，不含令牌 12 的渠道 3（渠道未建表，维度回退 #id）
+	dims := map[string]bool{}
+	for _, g := range stT1.ByChannel {
+		dims[g.Dim] = true
+	}
+	if !dims["#1"] || !dims["#2"] || dims["#3"] {
+		t.Errorf("令牌 11 按渠道分组期望仅渠道 #1/#2，实际 %+v", stT1.ByChannel)
+	}
+	// 最近生效流量也限定该令牌（(1,m1) 与 (2,m1) 两组，失败与令牌 12 的组合不进）
+	if len(stT1.Recent) != 2 || stT1.Recent[0].ChannelID != 2 || stT1.Recent[1].ChannelID != 1 {
+		t.Errorf("令牌 11 最近生效流量期望渠道 2 / 1 两组，实际 %+v", stT1.Recent)
+	}
+
+	// 筛令牌 12：1 条、费用 0.5
+	stT2, err := QueryStats(db, &uid, 1, 1<<40, &tk2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stT2.Summary.Requests; got != 1 {
+		t.Errorf("令牌 12 期望 1 条请求，实际 %d", got)
+	}
+	if got := stT2.Summary.Cost; got != 0.5 {
+		t.Errorf("令牌 12 期望费用 0.5，实际 %.4f", got)
+	}
+
+	// 用户 1 视角筛他人令牌：双条件叠加，查不到任何数据
+	stIso, err := QueryStats(db, &uid, 1, 1<<40, &tk3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stIso.Summary.Requests; got != 0 {
+		t.Errorf("用户 1 筛他人令牌期望 0 条请求，实际 %d", got)
+	}
+	if len(stIso.Recent) != 0 {
+		t.Errorf("用户 1 筛他人令牌期望最近生效流量为空，实际 %+v", stIso.Recent)
+	}
+
+	// 管理员视角筛令牌 21：能看到用户 2 的该令牌数据
+	stA, err := QueryStats(db, nil, 1, 1<<40, &tk3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stA.Summary.Requests; got != 1 {
+		t.Errorf("管理员筛令牌 21 期望 1 条请求，实际 %d", got)
+	}
+	if got := stA.Summary.Cost; got != 1 {
+		t.Errorf("管理员筛令牌 21 期望费用 1，实际 %.4f", got)
 	}
 }

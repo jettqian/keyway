@@ -90,6 +90,7 @@ func ensureLogsIndexes(db *gorm.DB) error {
 		"CREATE INDEX IF NOT EXISTS idx_logs_user ON logs(user_id, created_at)",
 		"CREATE INDEX IF NOT EXISTS idx_logs_channel ON logs(channel_id, created_at)",
 		"CREATE INDEX IF NOT EXISTS idx_logs_key ON logs(key_id, created_at)",
+		"CREATE INDEX IF NOT EXISTS idx_logs_token ON logs(token_id, created_at)",
 	} {
 		if err := db.Exec(ddl).Error; err != nil {
 			return fmt.Errorf("创建 logs 索引失败: %w", err)

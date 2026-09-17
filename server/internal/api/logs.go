@@ -91,7 +91,7 @@ func (s *Server) handleLogs(c *gin.Context) {
 func (s *Server) handleStats(c *gin.Context) {
 	u := currentUser(c)
 	since, until := statsRange(c)
-	st, err := usage.QueryStats(s.Store.DB(), &u.ID, since, until)
+	st, err := usage.QueryStats(s.Store.DB(), &u.ID, since, until, queryTokenID(c))
 	if err != nil {
 		s.fail(c, http.StatusInternalServerError, "查询失败")
 		return
@@ -102,13 +102,23 @@ func (s *Server) handleStats(c *gin.Context) {
 
 func (s *Server) handleAdminStats(c *gin.Context) {
 	since, until := statsRange(c)
-	st, err := usage.QueryStats(s.Store.DB(), nil, since, until)
+	st, err := usage.QueryStats(s.Store.DB(), nil, since, until, queryTokenID(c))
 	if err != nil {
 		s.fail(c, http.StatusInternalServerError, "查询失败")
 		return
 	}
 	s.fillRecentChannelNames(st)
 	s.ok(c, st)
+}
+
+// queryTokenID 解析可选的令牌筛选参数（tokenId，数值 id；空或非法返回 nil）
+func queryTokenID(c *gin.Context) *int64 {
+	if v := c.Query("tokenId"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
+			return &id
+		}
+	}
+	return nil
 }
 
 // statsRange 解析统计时间窗：优先 start/end（YYYY-MM-DD，end 含当天），

@@ -1,6 +1,17 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.40（与 PRD v1.5.43 对应；渠道/模板列表**直接展示模型列表**——新增共享
+- 版本：v1.41（与 PRD v1.5.44 对应；统计**按令牌筛选**——`usage.QueryStats` 追加可选
+  `tokenID` 参数，在基础条件上叠加 `token_id = ?`，汇总/分组（byChannel/byModel/byKey/
+  byUser）/未定价补算（复用 base 闭包）/最近生效流量（recent 子查询单独追加）全部限定
+  到该令牌；`logs` 表补建 `idx_logs_token(token_id, created_at)` 索引（store.go
+  `ensureLogsIndexes`，与 channel/key 同构）；API 层 `queryTokenID` 解析可选 `tokenId`
+  查询参数，`GET /api/stats`、`/api/stats/export`、`GET /api/admin/stats`、
+  `/api/admin/stats/export` 四端点生效（管理页 UI 一期未提供入口）；前端统计页
+  （`pages/Stats.tsx`）时间窗旁新增令牌下拉（`listTokens` 数据源，含已吊销令牌并标注），
+  选中后刷新查询；`StatsRange` 类型新增 `tokenId`；i18n 新增 `stats.token`；
+  用户视角 user_id 与 token_id 双条件叠加，传他人令牌 id 天然查不到数据；
+  测试覆盖「按令牌过滤汇总/分组/recent + 跨用户隔离 + 管理员按令牌下钻」）；
+  前版 v1.40：与 PRD v1.5.43 对应；渠道/模板列表**直接展示模型列表**——新增共享
   组件 `web/src/components/ModelTags.tsx`：行内平铺前 5 个模型 Tag，超出部分收进
   「+N」Tag 的 Popover（标题显示总数，内容区 maxWidth 360 / maxHeight 280 滚动
   浏览全部），适配模型较多的渠道；渠道列表（`pages/Channels.tsx`）新增「模型」列，
@@ -310,6 +321,7 @@ CREATE INDEX idx_logs_time ON logs(created_at);
 CREATE INDEX idx_logs_user ON logs(user_id, created_at);
 CREATE INDEX idx_logs_channel ON logs(channel_id, created_at);
 CREATE INDEX idx_logs_key ON logs(key_id, created_at);
+CREATE INDEX idx_logs_token ON logs(token_id, created_at);
 
 CREATE TABLE invite_codes (
   code TEXT PRIMARY KEY, created_by INTEGER, used_by INTEGER, used_at INTEGER
@@ -712,6 +724,14 @@ new-api 的已知语义（仅参考行为，代码自研）。
   （补算查询含 user_id 列）；用户视角不含该维度
 - 时间窗：`start` / `end`（YYYY-MM-DD，end 含当天）自定义起止（`GET /api/stats` 与
   管理端同参），未传时回退 `days`（默认 7，向后兼容）
+- 按令牌筛选（v1.5.44）：`QueryStats` 追加可选 `tokenID`，在基础条件（时间窗 +
+  `whereUser`）上叠加 `token_id = ?`——汇总、byChannel/byModel/byKey/byUser 分组、
+  未定价补算（复用 base 闭包）与最近生效流量（recent 子查询单独追加同一条件）全部
+  限定到该令牌；`GET /api/stats`、`/api/stats/export`、`GET /api/admin/stats`、
+  `/api/admin/stats/export` 均接受可选 `tokenId` 查询参数（管理页 UI 一期未提供入口）；
+  用户视角 user_id 与 token_id 双条件叠加，传他人令牌 id 天然查不到数据；
+  前端统计页时间窗旁提供令牌下拉（数据源本人令牌列表，含已吊销）；
+  索引 `idx_logs_token(token_id, created_at)` 与 channel/key 同构
 - 最近生效流量（`stats.recent`）：**同渠道同模型只占一行**——先按
   `GROUP BY channel_id, model` 对成功（status_code < 400 且 channel_id 非空）日志取
   `MAX(id)`（每组最新一条），再 `ORDER BY id DESC LIMIT 5` 取最近 5 个组合，回传

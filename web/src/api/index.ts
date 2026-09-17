@@ -75,11 +75,13 @@ export const revealToken = (id: number) => post<{ plaintext: string }>(`/api/tok
 export const listLogs = (q: LogQuery) =>
   get<{ logs: LogEntry[]; total: number }>(`/api/logs?${qs(q as unknown as Record<string, unknown>)}`)
 
-// 统计时间窗：start/end（YYYY-MM-DD，end 含当天）自定义起止；缺省回退 days
+// 统计时间窗：start/end（YYYY-MM-DD，end 含当天）自定义起止；缺省回退 days；
+// tokenId 可选，仅统计该令牌产生的请求
 export interface StatsRange {
   days?: number
   start?: string
   end?: string
+  tokenId?: number
 }
 export const myStats = (q: StatsRange) =>
   get<StatsResponse>(`/api/stats?${qs(q as unknown as Record<string, unknown>)}`)

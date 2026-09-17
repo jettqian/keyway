@@ -315,8 +315,9 @@ type Stats struct {
 	Recent    []LatestUsage `json:"recent"` // 最近生效流量（同渠道同模型去重，最新 5 个组合）
 }
 
-// QueryStats 用量/花费统计（userID 为 nil 时全员；since/until 为 Unix 秒，0 表示该侧不限）
-func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) {
+// QueryStats 用量/花费统计（userID 为 nil 时全员；since/until 为 Unix 秒，0 表示该侧不限；
+// tokenID 非 nil 时仅统计该令牌产生的请求）
+func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) (*Stats, error) {
 	if since <= 0 && until <= 0 {
 		since = time.Now().AddDate(0, 0, -7).Unix()
 	}
@@ -327,6 +328,9 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 		}
 		if until > 0 {
 			tx = tx.Where("created_at < ?", until)
+		}
+		if tokenID != nil {
+			tx = tx.Where("token_id = ?", *tokenID)
 		}
 		return tx.Scopes(whereUser(userID))
 	}
@@ -431,8 +435,11 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64) (*Stats, error) 
 	sub := db.Model(&store.Log{}).
 		Select("MAX(id) AS id").
 		Where("channel_id IS NOT NULL AND status_code < 400").
-		Scopes(whereUser(userID)).
-		Group("channel_id, model")
+		Scopes(whereUser(userID))
+	if tokenID != nil {
+		sub = sub.Where("token_id = ?", *tokenID)
+	}
+	sub = sub.Group("channel_id, model")
 	err := db.Model(&store.Log{}).
 		Where("id IN (?)", sub).
 		Select("id, created_at, channel_id, COALESCE(model,'') AS model, COALESCE(upstream_model,'') AS upstream_model, COALESCE(status_code,0) AS status_code, COALESCE(line_url,'') AS line_url, COALESCE(via,'') AS via").

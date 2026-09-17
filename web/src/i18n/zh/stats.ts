@@ -24,4 +24,5 @@ export default {
   'stats.byModel': '按模型',
   'stats.byKey': '按密钥（多账号分账）',
   'stats.key': '密钥',
+  'stats.token': '令牌',
 }

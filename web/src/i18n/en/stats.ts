@@ -23,4 +23,5 @@ export default {
   'stats.byModel': 'By Model',
   'stats.byKey': 'By Key (multi-account cost split)',
   'stats.key': 'Key',
+  'stats.token': 'Token',
 }

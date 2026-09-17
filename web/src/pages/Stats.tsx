@@ -1,10 +1,10 @@
 import React from 'react'
-import { Button, Card, Col, DatePicker, Empty, Row, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
+import { Button, Card, Col, DatePicker, Empty, Row, Select, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
-import { myStats } from '../api'
-import type { LatestUsage, StatsResponse, StatsGroup } from '../api/types'
+import { listTokens, myStats } from '../api'
+import type { GatewayToken, LatestUsage, StatsResponse, StatsGroup } from '../api/types'
 import Money from '../components/Money'
 import LineUrl from '../components/LineUrl'
 import { formatDateTime, fmtInt, fmtTokens } from '../format'
@@ -28,18 +28,27 @@ export const rangePresets: { label: React.ReactNode; value: [Dayjs, Dayjs] }[] =
 const StatsPage: React.FC = () => {
   const { t } = useI18n()
   const [range, setRange] = React.useState<[Dayjs, Dayjs]>([dayjs().subtract(6, 'day'), dayjs()])
+  const [tokenId, setTokenId] = React.useState<number | undefined>(undefined)
+  const [tokens, setTokens] = React.useState<GatewayToken[]>([])
   const [data, setData] = React.useState<StatsResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
 
   const refresh = React.useCallback(() => {
     setLoading(true)
-    myStats({ start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') })
+    myStats({ start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD'), tokenId })
       .then(setData)
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
-  }, [range])
+  }, [range, tokenId])
 
   React.useEffect(refresh, [refresh])
+
+  // 令牌下拉数据源（含已吊销令牌——吊销前可能已有历史用量）
+  React.useEffect(() => {
+    listTokens()
+      .then((r) => setTokens(r.tokens))
+      .catch(() => {})
+  }, [])
 
   const groupColumns = (dimName: string) => [
     { title: dimName, dataIndex: 'dim' },
@@ -78,6 +87,16 @@ const StatsPage: React.FC = () => {
       <div className="page-heading">
         <div><h2>{t('stats.title')}</h2><p>{t('stats.subtitle')}</p></div>
         <Space>
+          <Select
+            allowClear
+            placeholder={t('stats.token')}
+            style={{ width: 180 }}
+            options={tokens.map((tk) => ({
+              value: tk.id,
+              label: tk.revoked ? `${tk.name}（${t('tokens.revoked')}）` : tk.name,
+            }))}
+            onChange={(v) => setTokenId(v)}
+          />
           <DatePicker.RangePicker
             value={range}
             onChange={(v) => {
