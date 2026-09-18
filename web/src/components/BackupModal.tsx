@@ -1,6 +1,6 @@
 import React from 'react'
 import dayjs from 'dayjs'
-import { Modal, Tabs, Radio, Alert, Button, Upload, message, Row, Col, Statistic, Space, Typography } from 'antd'
+import { Modal, Tabs, Radio, Alert, Button, Upload, message, Space, Typography, Table } from 'antd'
 import { DownloadOutlined, InboxOutlined, ImportOutlined } from '@ant-design/icons'
 import { importConfig } from '../api'
 import type { ConfigImportResult } from '../api/types'
@@ -80,25 +80,51 @@ const BackupModal: React.FC<{ open: boolean; onClose: () => void }> = ({ open, o
     }
   }
 
-  const stats: Array<[string, number]> = result
+  // 结果表格：类别 × 新建/复用/草稿/跳过（null = 该类别无此状态，显示 —）
+  const dash = <span className="text-tertiary">—</span>
+  const resultRows: Array<{
+    key: string
+    category: string
+    created: number | null
+    reused: number | null
+    draft: number | null
+    skipped: number | null
+  }> = result
     ? [
-        [t('backup.keysCreated'), result.keysCreated],
-        [t('backup.keysReused'), result.keysReused],
-        [t('backup.channelsCreated'), result.channelsCreated],
-        [t('backup.channelsReused'), result.channelsReused],
-        [t('backup.channelsDrafted'), result.channelsDrafted],
-        [t('backup.tokensCreated'), result.tokensCreated],
+        {
+          key: 'keys',
+          category: t('backup.rowKeys'),
+          created: result.keysCreated,
+          reused: result.keysReused,
+          draft: null,
+          skipped: result.keysMissing,
+        },
+        {
+          key: 'channels',
+          category: t('backup.rowChannels'),
+          created: result.channelsCreated,
+          reused: result.channelsReused,
+          draft: result.channelsDrafted,
+          skipped: result.channelsSkipped,
+        },
+        {
+          key: 'tokens',
+          category: t('backup.rowTokens'),
+          created: result.tokensCreated,
+          reused: null,
+          draft: null,
+          skipped: result.tokensSkipped,
+        },
       ]
     : []
-  if (result) {
-    if (result.keysMissing > 0) {
-      stats.push([t('backup.keysMissing'), result.keysMissing])
-    }
-    const skipped = result.channelsSkipped + result.tokensSkipped
-    if (skipped > 0) {
-      stats.push([t('backup.skipped'), skipped])
-    }
-  }
+  const cell = (v: number | null) => (v === null ? dash : v)
+  const resultColumns = [
+    { title: t('backup.resultCategory'), dataIndex: 'category' },
+    { title: t('backup.resultNew'), dataIndex: 'created', align: 'right' as const, render: cell },
+    { title: t('backup.resultReused'), dataIndex: 'reused', align: 'right' as const, render: cell },
+    { title: t('backup.resultDraft'), dataIndex: 'draft', align: 'right' as const, render: cell },
+    { title: t('backup.resultSkipped'), dataIndex: 'skipped', align: 'right' as const, render: cell },
+  ]
 
   return (
     <Modal open={open} onCancel={onClose} footer={null} title={t('backup.title')} width={560}>
@@ -179,13 +205,14 @@ const BackupModal: React.FC<{ open: boolean; onClose: () => void }> = ({ open, o
                       showIcon
                       message={t('backup.importDone')}
                     />
-                    <Row gutter={[12, 12]}>
-                      {stats.map(([title, value]) => (
-                        <Col xs={12} sm={8} key={title}>
-                          <Statistic title={title} value={value} />
-                        </Col>
-                      ))}
-                    </Row>
+                    <Table
+                      rowKey="key"
+                      size="small"
+                      pagination={false}
+                      scroll={{ x: 'max-content' }}
+                      columns={resultColumns}
+                      dataSource={resultRows}
+                    />
                     {result.warnings.length > 0 && (
                       <Alert
                         type="warning"

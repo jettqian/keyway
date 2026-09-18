@@ -1204,7 +1204,8 @@ KeyHash 由明文派生，与实例主密钥无关；密钥与代理以目标实
 导出页签 = 模式单选（完整/纯结构，各带说明）+ 完整模式明文警示 + 原始 fetch
 blob 下载（GET 免 CSRF）；导入页签 = 合并语义说明 + Upload.Dragger 选文件
 （`beforeUpload` 读文本返回 false，本地 JSON.parse 预校验 + BOM 剥离）+ 结果
-计数（Statistic 网格）与 warnings 清单 + 「刷新页面查看」。
+**分类表格**（密钥/渠道/令牌 × 新建/复用/草稿/跳过，不适用显示 —）与
+warnings 清单 + 「刷新页面查看」。
 
 ## 12. 配置项（环境变量）
 
