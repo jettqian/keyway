@@ -40,6 +40,7 @@ type importResult struct {
 		KeysReused      int      `json:"keysReused"`
 		KeysMissing     int      `json:"keysMissing"`
 		ChannelsCreated int      `json:"channelsCreated"`
+		ChannelsReused  int      `json:"channelsReused"`
 		ChannelsDrafted int      `json:"channelsDrafted"`
 		ChannelsSkipped int      `json:"channelsSkipped"`
 		TokensCreated   int      `json:"tokensCreated"`
@@ -140,7 +141,8 @@ func TestE2E配置导入跨实例迁移(t *testing.T) {
 	}
 }
 
-// 同实例合并导入（FR-BK3）：同名密钥复用、渠道重建加后缀、令牌明文已存在跳过
+// 同实例合并导入（FR-BK3）：同名密钥/渠道复用、令牌同名跳过——重复导入幂等，
+// 不产生副本
 func TestE2E配置导入同实例合并(t *testing.T) {
 	c, upstream := setupApp(t)
 	defer upstream.Close()
@@ -156,17 +158,17 @@ func TestE2E配置导入同实例合并(t *testing.T) {
 	if r.Result.KeysCreated != 0 || r.Result.KeysReused != 1 {
 		t.Fatalf("同名密钥应复用: %+v", r.Result)
 	}
-	if r.Result.ChannelsCreated != 1 {
-		t.Fatalf("渠道应重建: %+v", r.Result)
+	if r.Result.ChannelsCreated != 0 || r.Result.ChannelsReused != 1 {
+		t.Fatalf("同名渠道应复用不建副本: %+v", r.Result)
 	}
 	if r.Result.TokensCreated != 0 || r.Result.TokensSkipped != 1 {
-		t.Fatalf("令牌明文已存在应跳过: %+v", r.Result)
+		t.Fatalf("同名令牌应跳过: %+v", r.Result)
 	}
 	if len(r.Result.Warnings) == 0 {
 		t.Fatalf("跳过项应有警告: %+v", r.Result)
 	}
 
-	// 渠道名冲突自动加序号后缀
+	// 重复导入后渠道数量不变（无副本堆积）
 	w = c.do("GET", "/api/channels", nil, true)
 	var chResp struct {
 		Channels []struct {
@@ -174,15 +176,8 @@ func TestE2E配置导入同实例合并(t *testing.T) {
 		} `json:"channels"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &chResp)
-	if len(chResp.Channels) != 2 {
-		t.Fatalf("应有两个渠道: %+v", chResp.Channels)
-	}
-	names := map[string]bool{}
-	for _, ch := range chResp.Channels {
-		names[ch.Name] = true
-	}
-	if !names["c1"] || !names["c1(2)"] {
-		t.Fatalf("渠道名后缀异常: %+v", names)
+	if len(chResp.Channels) != 1 || chResp.Channels[0].Name != "c1" {
+		t.Fatalf("重复导入不应产生渠道副本: %+v", chResp.Channels)
 	}
 }
 
@@ -237,6 +232,27 @@ func TestE2E配置导入纯结构(t *testing.T) {
 	}
 	if tokResp.Tokens[0].KeyPrefix == c.token[:16] {
 		t.Fatalf("纯结构导入的令牌不应沿用原明文")
+	}
+
+	// 重复导入纯结构文件：全部同名跳过，幂等无副本（密钥无明文仍无法创建）
+	w = c.do("POST", "/api/config/import", file, true)
+	if w.Code != 200 {
+		t.Fatalf("重复导入失败: %d %s", w.Code, w.Body.String())
+	}
+	json.Unmarshal(w.Body.Bytes(), &r)
+	if r.Result.KeysCreated != 0 || r.Result.KeysMissing != 1 {
+		t.Fatalf("重复导入密钥计数异常: %+v", r.Result)
+	}
+	if r.Result.ChannelsCreated != 0 || r.Result.ChannelsReused != 1 {
+		t.Fatalf("重复导入渠道应跳过复用: %+v", r.Result)
+	}
+	if r.Result.TokensCreated != 0 || r.Result.TokensSkipped != 1 {
+		t.Fatalf("重复导入令牌应跳过: %+v", r.Result)
+	}
+	w = c.do("GET", "/api/channels", nil, true)
+	json.Unmarshal(w.Body.Bytes(), &chResp)
+	if len(chResp.Channels) != 1 {
+		t.Fatalf("重复导入不应产生渠道副本: %+v", chResp.Channels)
 	}
 }
 

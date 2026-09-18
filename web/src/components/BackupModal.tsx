@@ -85,6 +85,7 @@ const BackupModal: React.FC<{ open: boolean; onClose: () => void }> = ({ open, o
         [t('backup.keysCreated'), result.keysCreated],
         [t('backup.keysReused'), result.keysReused],
         [t('backup.channelsCreated'), result.channelsCreated],
+        [t('backup.channelsReused'), result.channelsReused],
         [t('backup.channelsDrafted'), result.channelsDrafted],
         [t('backup.tokensCreated'), result.tokensCreated],
       ]

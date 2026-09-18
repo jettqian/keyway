@@ -82,6 +82,7 @@ type configImportResult struct {
 	KeysReused      int      `json:"keysReused"`
 	KeysMissing     int      `json:"keysMissing"`
 	ChannelsCreated int      `json:"channelsCreated"`
+	ChannelsReused  int      `json:"channelsReused"`
 	ChannelsDrafted int      `json:"channelsDrafted"`
 	ChannelsSkipped int      `json:"channelsSkipped"`
 	TokensCreated   int      `json:"tokensCreated"`
@@ -209,12 +210,12 @@ func channelToExport(ch *store.Channel, keyNameByID map[int64]string) configExpo
 	}
 }
 
-// handleConfigImport 导入用户配置（合并模式）：
+// handleConfigImport 导入用户配置（合并模式，重复导入幂等）：
 // - 密钥：同名复用现有（不覆盖值）；含明文值且无同名的创建；无值且无同名的悬空
-// - 渠道：一律新建（同名自动加序号后缀）；密钥绑定按名称重映射，全部悬空的渠道
-//   以草稿（停用）导入，绑定密钥后手动启用
-// - 令牌：一律新建；含明文的按明文重建（实例迁移后 Agent 零改配），key_hash 全局
-//   唯一，已存在（重复导入或他人持有同值令牌）则跳过；无明文的随机签发新值
+// - 渠道：同名跳过复用（不新建副本，令牌绑定重映射到现有渠道）；无同名的创建，
+//   密钥绑定按名称重映射，全部悬空的渠道以草稿（停用）导入，绑定密钥后手动启用
+// - 令牌：同名跳过；无同名的创建——含明文的按明文重建（实例迁移后 Agent 零改配，
+//   key_hash 全局唯一，他人持有同值令牌时跳过），无明文的随机签发新值
 // 整个导入在单事务内执行，任一硬错误整体回滚；条目级问题跳过并记入 warnings
 func (s *Server) handleConfigImport(c *gin.Context) {
 	u := currentUser(c)
@@ -308,30 +309,32 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 		res.warn("%d 个密钥条目不含明文值（纯结构导出），未创建", res.KeysMissing)
 	}
 
-	// 2. 渠道（同名后缀避让，序号从 2 起）
+	// 2. 渠道（同名跳过复用：重复导入幂等，不产生副本）
 	var existingChans []store.Channel
 	if err := tx.Where("user_id = ?", userID).Find(&existingChans).Error; err != nil {
 		return err
 	}
-	channelNames := map[string]bool{}
+	channelIDByName := map[string]int64{}
 	for i := range existingChans {
-		channelNames[existingChans[i].Name] = true
-	}
-	uniqName := func(name string) string {
-		if !channelNames[name] {
-			channelNames[name] = true
-			return name
-		}
-		for n := 2; ; n++ {
-			candidate := fmt.Sprintf("%s(%d)", name, n)
-			if !channelNames[candidate] {
-				channelNames[candidate] = true
-				return candidate
-			}
-		}
+		channelIDByName[existingChans[i].Name] = existingChans[i].ID
 	}
 	channelIDByOld := map[int64]int64{}
 	for _, ec := range in.Channels {
+		name := trimOrEmpty(ec.Name)
+		if name == "" {
+			res.ChannelsSkipped++
+			res.warn("跳过一个未命名渠道")
+			continue
+		}
+		if existingID, exists := channelIDByName[name]; exists {
+			// 同名渠道复用现有：不新建副本；仍建立 id 映射，
+			// 令牌的渠道绑定据此落到现有渠道
+			if ec.ID != 0 {
+				channelIDByOld[ec.ID] = existingID
+			}
+			res.ChannelsReused++
+			continue
+		}
 		// 密钥绑定按名称重映射：悬空引用（密钥未导入且本地无同名）丢弃
 		var keyIDs []int64
 		seen := map[int64]bool{}
@@ -363,7 +366,6 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 			ci.Enabled = false
 			drafted = true
 		}
-		name := trimOrEmpty(ec.Name)
 		if msg := s.validateChannel(&ci); msg != "" {
 			res.ChannelsSkipped++
 			res.warn("渠道「%s」校验失败已跳过：%s", name, msg)
@@ -378,10 +380,10 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 		if err := s.applyChannelInput(&ch, &ci, nil); err != nil {
 			return fmt.Errorf("处理渠道「%s」失败: %w", name, err)
 		}
-		ch.Name = uniqName(ch.Name)
 		if err := tx.Create(&ch).Error; err != nil {
 			return fmt.Errorf("创建渠道「%s」失败: %w", ch.Name, err)
 		}
+		channelIDByName[ch.Name] = ch.ID // 文件内同名渠道随后续条目跳过复用
 		if ec.ID != 0 {
 			channelIDByOld[ec.ID] = ch.ID
 		}
@@ -395,28 +397,18 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 			res.ChannelsDrafted++
 		}
 	}
+	if res.ChannelsReused > 0 {
+		res.warn("%d 个同名渠道已存在，跳过新建（复用现有配置）", res.ChannelsReused)
+	}
 
-	// 3. 令牌
+	// 3. 令牌（同名跳过复用，重复导入幂等）
 	var existingTokens []store.Token
 	if err := tx.Where("user_id = ?", userID).Find(&existingTokens).Error; err != nil {
 		return err
 	}
-	tokenNames := map[string]bool{}
+	tokenNameSet := map[string]bool{}
 	for i := range existingTokens {
-		tokenNames[existingTokens[i].Name] = true
-	}
-	uniqTokenName := func(name string) string {
-		if !tokenNames[name] {
-			tokenNames[name] = true
-			return name
-		}
-		for n := 2; ; n++ {
-			candidate := fmt.Sprintf("%s(%d)", name, n)
-			if !tokenNames[candidate] {
-				tokenNames[candidate] = true
-				return candidate
-			}
-		}
+		tokenNameSet[existingTokens[i].Name] = true
 	}
 	remapChannels := func(ids []int64, cap int) []int64 {
 		out := make([]int64, 0, len(ids))
@@ -440,6 +432,12 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 			res.warn("跳过一个未命名令牌")
 			continue
 		}
+		if tokenNameSet[name] {
+			// 同名令牌复用现有：不新建、不覆盖（纯结构导出重复导入亦幂等）
+			res.TokensSkipped++
+			res.warn("同名令牌「%s」已存在，跳过", name)
+			continue
+		}
 		plaintext := trimOrEmpty(et.Plaintext)
 		if plaintext != "" {
 			// 明文格式校验：前缀 + 足够长度（KeyPrefix 取前 16 字符）
@@ -459,7 +457,7 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 				return err
 			}
 			if count > 0 {
-				// 全局唯一冲突：本人重复导入或他人持有同值令牌，跳过
+				// 全局唯一冲突：他人持有同值令牌（本人重复导入已被同名拦截），跳过
 				res.TokensSkipped++
 				res.warn("令牌「%s」的明文已存在于本实例，跳过", name)
 				continue
@@ -479,7 +477,7 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 		filter := remapChannels(et.ChannelIDs, 20)
 		order := remapChannels(et.ChannelOrder, 20)
 		t := store.Token{
-			UserID: userID, Name: uniqTokenName(name),
+			UserID: userID, Name: name,
 			KeyEnc: enc, KeyPrefix: plaintext[:16], KeyHash: crypto.HashToken(plaintext),
 			ChannelIDsJSON: string(mustJSONStr(filter)), ChannelOrderJSON: string(mustJSONStr(order)),
 			Restricted: boolToInt(et.Restricted), CreatedAt: now,
@@ -491,6 +489,7 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 		if err := tx.Create(&t).Error; err != nil {
 			return fmt.Errorf("创建令牌「%s」失败: %w", t.Name, err)
 		}
+		tokenNameSet[name] = true // 文件内同名令牌随后续条目跳过
 		res.TokensCreated++
 	}
 	return nil

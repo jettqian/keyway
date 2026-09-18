@@ -303,6 +303,7 @@ export interface ConfigImportResult {
   keysReused: number
   keysMissing: number
   channelsCreated: number
+  channelsReused: number
   channelsDrafted: number
   channelsSkipped: number
   tokensCreated: number

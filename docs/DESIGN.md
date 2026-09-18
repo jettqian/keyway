@@ -10,12 +10,14 @@
   c1 → c1(2)）；密钥绑定按名称重映射（悬空丢弃）；全部密钥悬空的渠道以草稿
   （停用）导入；令牌含明文按明文重建（跨实例迁移 Agent 零改配，key_hash 全局
   唯一——重复导入或他人持有同值令牌跳过），无明文随机签发；渠道绑定按文件内
-  id 重映射；条目级问题跳过并计入 result.warnings；4MB 上限 + UTF-8 BOM 容错。
+  id 重映射（被跳过的渠道引用丢弃，≤20）。**同名一律跳过复用**（密钥/渠道/令牌），
+  重复导入幂等不产生副本；渠道同名跳过时仍建立 id 映射（令牌绑定落到现有渠道）。
+  条目级问题跳过并计入 result.warnings；4MB 上限 + UTF-8 BOM 容错。
   前端 `BackupModal`（用户菜单入口，i18n backup 模块）双页签：导出模式单选 +
-  明文警示 + blob 下载；导入上传 + 结果计数（密钥新建/复用、渠道新建/草稿、
+  明文警示 + blob 下载；导入上传 + 结果计数（密钥新建/复用、渠道新建/复用/草稿、
   令牌新建）与注意事项清单。测试：双模式导出、跨实例迁移（旧令牌零改配请求
-  成功）、同实例合并（复用/后缀/令牌跳过）、纯结构草稿导入、非法文件 400 的
-  e2e；
+  成功）、同实例合并（同名复用/跳过、幂等无副本）、纯结构草稿导入与重复导入
+  幂等、非法文件 400 的 e2e；
   前版 v1.46：与 PRD v1.5.49 对应；链路状态分级与分组视觉修订——①**质量分级
   只看错误率**（可靠性）：优 <5%、良 <20%、差 ≥20%，样本 <5 次不评级，熔断单独
   分级；原"优 = 错误率 <5% 且 ≤1.5× 模型内最优"令可靠性与速度互相拉踩
@@ -1184,14 +1186,15 @@ text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无�
 （PurposeToken）与个人代理（PurposeProxy）；缺省为纯结构（不含任何明文）。
 `mode` 字段仅作信息标注，导入按字段存在性自适应，同一文件允许混合。
 
-**导入**（`handleConfigImport`）为合并语义，整个流程在**单事务**内执行（硬错误
-整体回滚），条目级问题跳过并累计进 `result.warnings`：
+**导入**（`handleConfigImport`）为合并语义（**重复导入幂等，不产生副本**），
+整个流程在**单事务**内执行（硬错误整体回滚），条目级问题跳过并累计进
+`result.warnings`：
 
 | 对象 | 语义 |
 |---|---|
 | 密钥 | 同名复用现有（**不覆盖值**，绑定重映射到现有 id）；含明文且无同名 → 加密新建；无明文且无同名 → 悬空（KeysMissing，渠道绑定丢弃） |
-| 渠道 | 一律新建；同名加序号后缀（c1 → c1(2)，后缀名查重递增）；keyNames → keyIDs 重映射（去重、≤5）；全部悬空 → 强制草稿（enabled=0，ChannelsDrafted）；复用 `validateChannel`/`applyChannelInput`/`validatePersonalProxy` 与手工创建同规则；is_default 落库后清其他默认 |
-| 令牌 | 一律新建；含明文 → 校验 `sk-keyway-` 前缀后按明文重建（KeyEnc 重加密 + KeyPrefix + KeyHash），`key_hash` 全局唯一：文件内重复或库中已存在（本人重复导入 / 他人持有同值令牌）跳过；无明文 → `GenerateGatewayToken` 随机签发；channelIds/channelOrder 按文件内渠道 id 重映射（被跳过的渠道引用丢弃，≤20） |
+| 渠道 | **同名跳过复用**（不新建副本，`channelIDByOld` 映射到现有渠道 id，令牌绑定据此落位）；无同名 → 新建：keyNames → keyIDs 重映射（去重、≤5），全部悬空 → 强制草稿（enabled=0，ChannelsDrafted）；复用 `validateChannel`/`applyChannelInput`/`validatePersonalProxy` 与手工创建同规则；is_default 落库后清其他默认 |
+| 令牌 | **同名跳过**（不新建、不覆盖）；无同名 → 创建：含明文 → 校验 `sk-keyway-` 前缀后按明文重建（KeyEnc 重加密 + KeyPrefix + KeyHash），`key_hash` 全局唯一：文件内重复或库中已存在（他人持有同值令牌）跳过；无明文 → `GenerateGatewayToken` 随机签发；channelIds/channelOrder 按文件内渠道 id 重映射（被跳过的渠道引用丢弃，≤20） |
 
 请求体上限 4MB（`io.LimitReader`），容错 UTF-8 BOM；`app/format/version` 头不符
 即 400。跨实例迁移效果（A29）：完整备份导入新实例后原网关令牌直接可用——
