@@ -897,6 +897,9 @@ const StatsTab: React.FC = () => {
       <Card title={t('admin.byUser')} loading={loading} style={{ marginBottom: 16 }}>
         <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={data?.byUser ?? []} columns={groupColumns(t('common.user'))} />
       </Card>
+      <Card title={t('stats.byChannel')} loading={loading} style={{ marginBottom: 16 }}>
+        <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={data?.byChannel ?? []} columns={groupColumns(t('stats.channel'))} />
+      </Card>
       <Card
         title={t('stats.links')}
         extra={<span className="text-tertiary" style={{ fontSize: 12 }}>{t('stats.linksHint')}</span>}

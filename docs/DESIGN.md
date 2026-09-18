@@ -1,6 +1,13 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.48（与 PRD v1.5.51 对应；失败切换新增 **402 计费限额耗尽**（FR-K4
+- 版本：v1.49（与 PRD v1.5.52 对应；管理页统计**补齐按渠道维度表**——后端
+  `usage.QueryStats` 的 `byChannel` 分组（含价目补算 `mergeCost(st.ByChannel)` 与
+  `applyIDNames` 渠道名显示，已删除渠道回退 `#id`）与管理端 CSV 导出本就具备，
+  用户侧统计页（Stats.tsx）也已渲染；管理页 Admin.tsx StatsTab 此前只渲染
+  byUser/链路状态/byModel，全员渠道维度（含公共默认渠道）的费用分布不可见。
+  现在按用户表后新增「按渠道」Card，复用 groupColumns（请求数/tokens/费用/
+  错误，列可排序）与既有时间窗；无后端改动，纯前端补渲染；
+  前版 v1.48：与 PRD v1.5.51 对应；失败切换新增 **402 计费限额耗尽**（FR-K4
   扩展）——上游 402 是中转/聚合型网关的计费限额语义（OpenRouter insufficient
   credits、Team weekly spending limit 类；官方 API 配额耗尽走 429 不用 402），
   旧实现落入「其他 4xx 透传」：原样回客户端、不换 key、不计熔断，限额耗尽的
