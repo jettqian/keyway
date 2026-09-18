@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -258,4 +259,115 @@ func TestE2E失败切换多线路耗尽预算切下一渠道(t *testing.T) {
 	}
 	// 逐次尝试落日志：渠道1 三条线路各一条失败 + 渠道2 成功一条（FR-L1）
 	assertAttemptLogs(t, c.waitLogs(t, "gpt-multi", 4), 3, 1, 503)
+}
+
+// TestE2E失败切换402计费限额换key 上游 402（计费限额耗尽，FR-K4）：key1 被 402
+// 后进入长冷却并记录错误，同线路换 key2 完成，客户端无感
+func TestE2E失败切换402计费限额换key(t *testing.T) {
+	c, _ := setupApp(t)
+	var aliveHits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("Authorization") == "Bearer sk-dead" {
+			w.WriteHeader(402)
+			fmt.Fprintf(w, `{"error":{"message":"Team weekly spending limit would be exceeded: $8000.04 + $0.03 / $8000.00"}}`)
+			return
+		}
+		atomic.AddInt32(&aliveHits, 1)
+		fmt.Fprintf(w, `{"id":"x","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+	}))
+	defer up.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "fo402a", "password": "password123"}, false); w.Code != 200 {
+		t.Fatalf("注册失败: %d %s", w.Code, w.Body.String())
+	}
+	mkKey := func(name, value string) int64 {
+		w := c.do("POST", "/api/keys", map[string]any{"name": name, "value": value}, true)
+		if w.Code != 200 {
+			t.Fatalf("建密钥 %s 失败: %d %s", name, w.Code, w.Body.String())
+		}
+		var resp struct {
+			Key struct {
+				ID int64 `json:"id"`
+			} `json:"key"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		return resp.Key.ID
+	}
+	deadID, aliveID := mkKey("k-dead", "sk-dead"), mkKey("k-alive", "sk-alive")
+	if w := c.do("POST", "/api/channels", map[string]any{
+		"name": "ch-402", "type": "openai", "baseUrls": []string{up.URL},
+		"keyIds": []int64{deadID, aliveID}, "models": []string{"gpt-402"},
+		"priority": 100, "enabled": true,
+	}, true); w.Code != 200 {
+		t.Fatalf("建渠道失败: %d %s", w.Code, w.Body.String())
+	}
+	w := c.do("POST", "/api/tokens", map[string]any{"name": "t"}, true)
+	if w.Code != 200 {
+		t.Fatalf("建令牌失败: %d %s", w.Code, w.Body.String())
+	}
+	var tokResp struct {
+		Plaintext string `json:"plaintext"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &tokResp)
+	c.token = tokResp.Plaintext
+
+	w = c.do("POST", "/v1/chat/completions", map[string]any{
+		"model": "gpt-402", "messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, false)
+	if w.Code != 200 {
+		t.Fatalf("402 应换 key 后成功，得到 %d %s", w.Code, w.Body.String())
+	}
+	if atomic.LoadInt32(&aliveHits) != 1 {
+		t.Fatalf("key2 应恰好承接一次（hits=%d）", aliveHits)
+	}
+	var dead store.Key
+	c.store.DB().First(&dead, deadID)
+	if dead.CooldownUntil <= time.Now().Unix() {
+		t.Fatalf("402 的密钥应进入长冷却，cooldown_until=%d", dead.CooldownUntil)
+	}
+	if dead.LastError == nil || !strings.Contains(*dead.LastError, "上游 402") {
+		t.Fatalf("402 的密钥应记录最近错误，实际: %v", dead.LastError)
+	}
+	var alive store.Key
+	c.store.DB().First(&alive, aliveID)
+	if alive.CooldownUntil != 0 {
+		t.Fatalf("成功密钥不应有冷却，cooldown_until=%d", alive.CooldownUntil)
+	}
+	// 逐次尝试落日志：key1 一条 402 失败 + key2 一条成功（FR-L1）
+	assertAttemptLogs(t, c.waitLogs(t, "gpt-402", 2), 1, 1, 402)
+}
+
+// TestE2E失败切换Responses402计费限额切渠道 /v1/responses 上游 402（用户场景：
+// Team weekly spending limit）：渠道1 密钥被 402 长冷却、组合耗尽后计熔断失败，
+// 切渠道2 承接，客户端拿到 200 而非 402
+func TestE2E失败切换Responses402计费限额切渠道(t *testing.T) {
+	c, _ := setupApp(t)
+	up1 := newFailoverUpstream(402)
+	up2 := newFailoverUpstream(200)
+	defer up1.srv.Close()
+	defer up2.srv.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "fo402b", "password": "password123"}, false); w.Code != 200 {
+		t.Fatalf("注册失败: %d %s", w.Code, w.Body.String())
+	}
+	setupFailover(t, c, []string{up1.srv.URL, up2.srv.URL}, "gpt-402r")
+
+	w := c.do("POST", "/v1/responses", map[string]any{
+		"model": "gpt-402r", "input": "hi",
+	}, false)
+	if w.Code != 200 {
+		t.Fatalf("responses 渠道1 被 402 后应切渠道2 成功，得到 %d %s", w.Code, w.Body.String())
+	}
+	if up1.hitCount() != 1 || up2.hitCount() != 1 {
+		t.Fatalf("两渠道各应被尝试一次（ch1=%d ch2=%d）", up1.hitCount(), up2.hitCount())
+	}
+	// 被 402 的密钥进入长冷却（密钥为两渠道共用，冷却不影响渠道2 已放行的组合）
+	var key store.Key
+	c.store.DB().Where("name = ?", "k-failover").First(&key)
+	if key.CooldownUntil <= time.Now().Unix() {
+		t.Fatalf("402 的密钥应进入长冷却，cooldown_until=%d", key.CooldownUntil)
+	}
+	// 逐次尝试落日志：渠道1 一条 402 失败 + 渠道2 一条成功（FR-L1）
+	assertAttemptLogs(t, c.waitLogs(t, "gpt-402r", 2), 1, 1, 402)
 }

@@ -16,6 +16,7 @@ type Config struct {
 	ProbeIntervalMin         int
 	AttemptBudget            int
 	KeyCooldownSec           int
+	QuotaCooldownSec         int
 	DefaultMaxTokens         int
 	BodyLimitMB              int
 	IdleStreamTimeoutSec     int
@@ -41,6 +42,7 @@ func Load() Config {
 		ProbeIntervalMin:     envInt("KEYWAY_PROBE_INTERVAL_MIN", 30),
 		AttemptBudget:        envInt("KEYWAY_ATTEMPT_BUDGET", 3),
 		KeyCooldownSec:       envInt("KEYWAY_KEY_COOLDOWN_S", 60),
+		QuotaCooldownSec:     envInt("KEYWAY_QUOTA_COOLDOWN_S", 3600),
 		DefaultMaxTokens:     envInt("KEYWAY_DEFAULT_MAX_TOKENS", 8192),
 		BodyLimitMB:          envInt("KEYWAY_BODY_LIMIT_MB", 50),
 		IdleStreamTimeoutSec: envInt("KEYWAY_IDLE_STREAM_TIMEOUT_S", 300),

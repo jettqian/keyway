@@ -134,7 +134,8 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 
 // HandleOpenAIResponses POST /v1/responses（OpenAI Responses API，Codex 默认协议）
 // 仅 openai 型渠道：模型名映射后透传到上游 /responses；流式逐块回写。
-// 失败切换与 chat 管线同策略：网络错误/5xx 换线路组合，401/403/429 换 key（429 冷却）。
+// 失败切换与 chat 管线同策略：网络错误/5xx 换线路组合，401/402/403/429 换 key
+// （429/402 冷却）。
 func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 	body := readBody(c, s.Cfg.BodyLimitMB)
 	if body == nil {
@@ -216,24 +217,25 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, lastErr, reqStart)
 				continue
 			}
-			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 429 {
-				if resp.StatusCode == 429 {
-					cool := parseRetryAfter(resp.Header.Get("Retry-After"))
-					s.Routing.UpdateKeyCooldown(a.key.ID, int64(cool))
+			if keyLevelStatus(resp.StatusCode) {
+				if cool := s.keyErrorCooldown(resp); cool > 0 {
+					s.Routing.UpdateKeyCooldown(a.key.ID, cool)
 				}
 				s.Routing.MarkKeyError(a.key.ID, fmt.Sprintf("上游 %d", resp.StatusCode))
 				lastStatus = resp.StatusCode
 				lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				resp.Body.Close()
-				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
+				lastErr = upstreamStatusError(resp.StatusCode, lastBody)
+				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, lastErr, reqStart)
 				continue
 			}
 			if resp.StatusCode >= 500 {
 				lastStatus = resp.StatusCode
 				lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				resp.Body.Close()
+				lastErr = upstreamStatusError(resp.StatusCode, lastBody)
 				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, fmt.Sprintf("上游 %d", resp.StatusCode))
-				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
+				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, lastErr, reqStart)
 				continue
 			}
 			s.recordUpstreamOutcome(rc.Channel.ID, probe.Model, resp.StatusCode)
@@ -439,11 +441,10 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			continue
 		}
 
-		// 鉴权/限流 → 换 key；429 设置冷却
-		if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 429 {
-			if resp.StatusCode == 429 {
-				cool := parseRetryAfter(resp.Header.Get("Retry-After"))
-				s.Routing.UpdateKeyCooldown(a.key.ID, int64(cool))
+		// 密钥级错误（鉴权/限流/计费限额）→ 换 key；429/402 设置冷却
+		if keyLevelStatus(resp.StatusCode) {
+			if cool := s.keyErrorCooldown(resp); cool > 0 {
+				s.Routing.UpdateKeyCooldown(a.key.ID, cool)
 			}
 			s.Routing.MarkKeyError(a.key.ID, fmt.Sprintf("上游 %d", resp.StatusCode))
 			lastStatus = resp.StatusCode
@@ -874,7 +875,7 @@ func (s *Server) planFor(rc *routing.ResolvedChannel, model string, view breaker
 }
 
 // recordUpstreamOutcome 以请求的最终上游结果维护熔断（FR-B1/FR-B4）：
-// 2xx/3xx → 关闭熔断（流量切回）；404 与鉴权/限流类（401/403/429，仅出现在
+// 2xx/3xx → 关闭熔断（流量切回）；404 与密钥级错误（401/402/403/429，仅出现在
 // 透传型管线——chat/responses 管线中这些码会继续换 key、由段落耗尽统一记录）
 // → 计一次失败；404 多为上游「模型/端点不存在」（如 new_api model_not_found、
 // 网关 provider 不命中），正是模型维度熔断要捕获的形态；其余 4xx
@@ -888,7 +889,7 @@ func (s *Server) recordUpstreamOutcome(channelID int64, model string, statusCode
 		s.Breaker.RecordSuccess(channelID, model)
 	case statusCode == http.StatusNotFound:
 		s.Breaker.RecordFailure(channelID, model, "上游 404（模型或端点不存在）")
-	case statusCode == 401 || statusCode == 403 || statusCode == 429:
+	case keyLevelStatus(statusCode):
 		s.Breaker.RecordFailure(channelID, model, fmt.Sprintf("上游 %d", statusCode))
 	}
 }
@@ -984,6 +985,32 @@ func readBody(c *gin.Context, limitMB int) []byte {
 
 func mapModel(ch *store.Channel, model string) string {
 	return routing.ApplyModelMapping(ch, model)
+}
+
+// keyLevelStatus 是否密钥级错误：401/403 鉴权失败、429 限流、402 计费限额
+// 耗尽（中转/聚合型网关以 402 表达余额或团队消费上限，如 OpenRouter
+// insufficient credits、Team weekly spending limit；官方 API 的配额耗尽走 429）。
+// 这类错误重试同一把 key 不会成功，应换 key 继续尝试
+func keyLevelStatus(code int) bool {
+	return code == 401 || code == 402 || code == 403 || code == 429
+}
+
+// keyErrorCooldown 密钥级错误的冷却秒数：429 按 Retry-After 头（缺省
+// KEYWAY_KEY_COOLDOWN_S）；402 计费限额耗尽为长冷却 KEYWAY_QUOTA_COOLDOWN_S
+// （限额多为天/周级，短期内重试同一把 key 必然失败；≤0 回落 3600）；
+// 401/403 不冷却（换 key 即可）
+func (s *Server) keyErrorCooldown(resp *http.Response) int64 {
+	switch resp.StatusCode {
+	case http.StatusTooManyRequests:
+		return int64(parseRetryAfter(resp.Header.Get("Retry-After")))
+	case http.StatusPaymentRequired:
+		cool := s.Cfg.QuotaCooldownSec
+		if cool <= 0 {
+			cool = 3600
+		}
+		return int64(cool)
+	}
+	return 0
 }
 
 func parseRetryAfter(v string) int {

@@ -1,6 +1,22 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.47（与 PRD v1.5.50 对应；新增**用户配置导出/导入**（FR-BK1~BK5）——
+- 版本：v1.48（与 PRD v1.5.51 对应；失败切换新增 **402 计费限额耗尽**（FR-K4
+  扩展）——上游 402 是中转/聚合型网关的计费限额语义（OpenRouter insufficient
+  credits、Team weekly spending limit 类；官方 API 配额耗尽走 429 不用 402），
+  旧实现落入「其他 4xx 透传」：原样回客户端、不换 key、不计熔断，限额耗尽的
+  渠道被持续打到。现提取 `keyLevelStatus`（401/402/403/429）为密钥级错误：
+  chat/responses 管线换 key 重试并对该 key 设长冷却（`keyErrorCooldown`：
+  429 按 Retry-After 缺省 `KEYWAY_KEY_COOLDOWN_S`，402 按
+  `KEYWAY_QUOTA_COOLDOWN_S` 默认 3600s、≤0 回落 3600——限额多为天/周级，
+  短期重试同一把 key 必然失败），渠道组合耗尽由段落统一计熔断失败后换下一
+  渠道；透传型管线（completions/embeddings）402 经 `recordUpstreamOutcome`
+  计熔断失败（同 401/403/429 口径）。顺带修复 responses 管线熔断 last_error：
+  密钥级错误/5xx 分支此前不写 lastErr，段落耗尽时错误摘要缺失或沿用网络错误
+  旧值，现统一记录末次失败摘要（对齐 chat 管线 segErr 与 v1.5.46 ⑤）。
+  测试：402 换 key（chat，单渠道双 key 同上游按 Authorization 区分）+ 402 切
+  渠道（responses，Team weekly spending limit 场景复现）e2e，断言密钥长冷却/
+  最近错误与逐次尝试日志（failover_test.go）；
+  前版 v1.47：与 PRD v1.5.50 对应；新增**用户配置导出/导入**（FR-BK1~BK5）——
   `internal/api/backup.go`：`GET /api/config/export?secrets=1|0` 导出本人密钥池/
   渠道/令牌快照为明文 JSON 附件（完整模式解密包含密钥值/令牌明文/个人代理地址，
   纯结构不含任何明文）；文件契约 version=1：`app/format/version` 头自描述，密钥以
@@ -212,7 +228,7 @@
   v1.15：令牌渠道顺序与启用集合分离；v1.14：统计页名称化/补算/时间窗/最近流量；
   v1.13：限定渠道面板交互优化；
   历史变更见文档各节与 PRD 变更记录）
-- 日期：2026-09-15
+- 日期：2026-09-18
 - 关联文档：docs/PRD.md
 - 本文档解决：架构、技术选型、数据模型落地、核心机制设计、协议转换决策表（PRD 开放
   问题 Q4）、API 设计、部署、测试与实施计划
@@ -541,7 +557,7 @@ flowchart TD
         OUT -->|"404"| P404["计熔断失败 + 透传 404（请求结束，不切换）"]
         OUT -->|"其他 4xx"| P4XX["透传（请求结束，不计熔断——客户端侧问题）"]
         OUT -->|"网络错误 / HTML / 5xx"| N1["落失败日志 → 换下一组合"]
-        OUT -->|"401 / 403 / 429"| N2["换密钥（429 按 Retry-After 冷却），密钥耗尽换组合"]
+        OUT -->|"401 / 402 / 403 / 429"| N2["换密钥（429 按 Retry-After、402 按配额长冷却），密钥耗尽换组合"]
         N1 --> SEG{"本渠道组合耗尽？"}
         N2 --> SEG
         SEG -->|"否"| C0
@@ -590,8 +606,10 @@ graph LR
 3. 密钥选择：ordered → 首个未冷却密钥；round_robin → 原子计数取模（跳过冷却者）
 4. 错误分类驱动下一跳：
    - 连接失败 / TLS 错误 / 拨号超时 → **换路径/线路**（同 key）
-   - 401 / 403 / 429 → **换密钥**（同线路）；429 时对该 key 设冷却 =
-     `Retry-After` 头（缺省 `KEYWAY_KEY_COOLDOWN_DEFAULT=60s`）
+   - 401 / 402 / 403 / 429 → **换密钥**（同线路）；429 时对该 key 设冷却 =
+     `Retry-After` 头（缺省 `KEYWAY_KEY_COOLDOWN_DEFAULT=60s`）；402（计费限额
+     耗尽——中转/聚合型网关的余额或团队消费上限，官方 API 配额耗尽走 429）设
+     长冷却 = `KEYWAY_QUOTA_COOLDOWN_S`（默认 3600s，限额多为天/周级）
    - 5xx 及其他 4xx → 换下一组合（先线路后渠道）
 5. 预算：**按渠道粒度**——单个渠道最多尝试 budget（`KEYWAY_ATTEMPT_BUDGET`，
    默认 3）个组合，组合耗尽 → 换下一候选渠道；全部渠道耗尽 → 透传最后一次
@@ -647,8 +665,8 @@ stateDiagram-v2
     open --> closed : 探测成功 / 手动恢复 / 旁路流量成功
 ```
 
-> 计入失败的上游形态：网络错误、HTML 回退、5xx、鉴权限流（401/403/429，含换
-> key 后仍耗尽）、404（模型或端点不存在）；其余 4xx（400/413 等客户端侧问题）
+> 计入失败的上游形态：网络错误、HTML 回退、5xx、密钥级错误（401/402/403/429，
+> 含换 key 后仍耗尽）、404（模型或端点不存在）；其余 4xx（400/413 等客户端侧问题）
 > 不计。触发阈值的 N 与各冷却时长见 §12 环境变量。
 
 **恢复时间线示例**（渠道 1 priority 100 故障，渠道 2 priority 50 健康）：
@@ -700,9 +718,10 @@ sequenceDiagram
 - **失败记录粒度**：一个请求把某渠道某模型的组合**全部尝试耗尽**才计一次失败
   （chat 管线按渠道分段、段落切换时统一落账；responses / completions-embeddings
   管线在渠道循环后落账并以 seen 集合防 matched+defaults 重复命中双计）；404 与
-  透传型管线的 401/403/429（这些码在 chat/responses 管线会继续换 key、由段落耗尽
-  统一记录）直接计失败——404 即"模型/端点不存在"（model_not_found 类**模型维度**
-  故障，正是按模型熔断要捕获的形态）；其余 4xx（400/413 等客户端问题）不计
+  透传型管线的密钥级错误 401/402/403/429（这些码在 chat/responses 管线会继续
+  换 key、由段落耗尽统一记录）直接计失败——404 即"模型/端点不存在"
+  （model_not_found 类**模型维度**故障，正是按模型熔断要捕获的形态）；
+  其余 4xx（400/413 等客户端问题）不计
 - **半开认领**（`ClaimHalfOpen`）：读行后以 `UPDATE breaker_states SET
   cooldown_until = :now + backoff(fail_count+1) WHERE channel_id = ? AND model = ?
   AND cooldown_until <= :now`，RowsAffected=1 即认领成功——原子性保证同一时刻仅一
@@ -1172,7 +1191,7 @@ text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无�
 `/responses`（`HandleOpenAIResponses`）为纯透传端点：请求体嗅探 model/stream →
 路由解析（跳过 convert→anthropic 渠道）→ 模型映射后透传到上游 `/v1/responses`，
 流式逐块回写；失败切换与 chat 管线同策略（网络错误/5xx/HTML 回退换组合、
-401/403/429 换 key 并冷却）；usage 从 `response.completed` 事件的
+401/402/403/429 换 key 并冷却）；usage 从 `response.completed` 事件的
 `response.usage`（input/output_tokens 命名）嗅探归一化，协议转换的 Responses
 版本留待 v2。
 
@@ -1219,6 +1238,7 @@ warnings 清单 + 「刷新页面查看」。
 | KEYWAY_BREAKER_FAIL_THRESHOLD | 3 | 渠道×模型熔断阈值：连续 N 个请求耗尽该渠道该模型的组合尝试后熔断、流量长期走备用渠道；探测成功或手动恢复后切回（v1.5.45） |
 | KEYWAY_ATTEMPT_BUDGET | 3 | 单请求组合尝试上限 |
 | KEYWAY_KEY_COOLDOWN_S | 60 | 429 默认冷却 |
+| KEYWAY_QUOTA_COOLDOWN_S | 3600 | 402 计费限额耗尽的密钥长冷却（秒，≤0 回落 3600）：限额多为天/周级，冷却期内该密钥不再首选（v1.48） |
 | KEYWAY_DEFAULT_MAX_TOKENS | 8192 | OI→AN 缺省 max_tokens |
 | KEYWAY_BODY_LIMIT_MB | 50 | 请求体上限 |
 | KEYWAY_RESPONSE_HEADER_TIMEOUT_S | 1800 | 上游响应头等待超时（秒），0=不限制；对齐 new-api `RELAY_RESPONSE_HEADER_TIMEOUT`。仅覆盖响应头阶段，流式 body 不受影响（不用 Client.Timeout 整体超时，避免切断长流式） |
@@ -1242,7 +1262,7 @@ warnings 清单 + 「刷新页面查看」。
 | 层 | 内容 |
 |---|---|
 | 单元 | convert 金样本 round-trip（§7.5）；错误分类器；attempt plan 排序；**熔断器状态机（阈值/指数退避封顶/半开认领单飞/手动恢复/模型维度隔离，注入时钟）**；AES-GCM/bcrypt |
-| 集成 | httptest 模拟上游矩阵：透传/转换、流式分块边界、失败切换链（网络→换线、429→换 key+冷却、预算耗尽→换渠道→502 透传）、首字节保护、**熔断 e2e（跳过期间上游零命中/模型维度隔离/全候选旁路/探测恢复切回/手动恢复与越权 404）**、半开单组合试探与切回/探测恢复切回/手动恢复与越权 404）**、按需线路预热（宽松判定含 4xx 记通、节流与 0=关闭开关）、**链路状态 e2e（用户隔离/管理端全量含所有者/熔断叠加与零尝试补行/渠道删除后不可见）** |
+| 集成 | httptest 模拟上游矩阵：透传/转换、流式分块边界、失败切换链（网络→换线、429→换 key+冷却、402 计费限额→换 key+长冷却+密钥耗尽切渠道、预算耗尽→换渠道→502 透传）、首字节保护、**熔断 e2e（跳过期间上游零命中/模型维度隔离/全候选旁路/探测恢复切回/手动恢复与越权 404）**、半开单组合试探与切回/探测恢复切回/手动恢复与越权 404）**、按需线路预热（宽松判定含 4xx 记通、节流与 0=关闭开关）、**链路状态 e2e（用户隔离/管理端全量含所有者/熔断叠加与零尝试补行/渠道删除后不可见）** |
 | 端到端 | 本地起 keyway + mock 上游，真实 Claude Code（ANTHROPIC_BASE_URL 指向）跑工具调用多轮；Cline 会话内切模型；mihomo socks5 做公共代理打通假"墙外"上游 |
 | 探测 | 虚拟延迟注入验证优选排序与退避 |
 | 压力 | 50 并发流式 10 分钟（PRD A7）；日志批写在高压下的丢弃行为 |
