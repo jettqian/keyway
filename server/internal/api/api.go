@@ -194,6 +194,9 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/stats/export", s.handleStatsExport)
 	r.GET("/stats/links", s.handleStatsLinks)
 
+	r.GET("/config/export", s.handleConfigExport)
+	r.POST("/config/import", s.handleConfigImport)
+
 	admin := r.Group("/admin", s.AdminAuth())
 	{
 		admin.GET("/users", s.handleAdminUsers)

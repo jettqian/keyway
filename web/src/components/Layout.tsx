@@ -16,6 +16,7 @@ import {
   MoonOutlined,
   TranslationOutlined,
   GithubOutlined,
+  SaveOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { logout, me } from '../api'
@@ -23,6 +24,7 @@ import type { User } from '../api/types'
 import { useI18n } from '../i18n'
 import { useTheme } from '../theme'
 import { GITHUB_URL } from '../constants'
+import BackupModal from './BackupModal'
 
 const { Sider, Header, Content } = AntLayout
 
@@ -37,6 +39,7 @@ export const ConsoleLayout: React.FC = () => {
   const screens = Grid.useBreakpoint()
   const isMobile = screens.lg === false
   const [navOpen, setNavOpen] = React.useState(false)
+  const [backupOpen, setBackupOpen] = React.useState(false)
 
   React.useEffect(() => {
     me()
@@ -138,9 +141,15 @@ export const ConsoleLayout: React.FC = () => {
           <Dropdown
             menu={{
               items: [
+                { key: 'backup', icon: <SaveOutlined />, label: t('layout.backup') },
+                { type: 'divider' },
                 { key: 'logout', icon: <LogoutOutlined />, label: t('layout.logout') },
               ],
               onClick: async ({ key }) => {
+                if (key === 'backup') {
+                  setBackupOpen(true)
+                  return
+                }
                 if (key === 'logout') {
                   await logout()
                   message.success(t('layout.loggedOut'))
@@ -174,6 +183,7 @@ export const ConsoleLayout: React.FC = () => {
         {brand}
         {menuEl}
       </Drawer>
+      <BackupModal open={backupOpen} onClose={() => setBackupOpen(false)} />
     </AntLayout>
   )
 }

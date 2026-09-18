@@ -11,8 +11,9 @@ import guide from './guide'
 import logs from './logs'
 import stats from './stats'
 import admin from './admin'
+import backup from './backup'
 
-const zh = Object.assign({}, common, layout, login, register, keys, channels, models, tokens, guide, logs, stats, admin)
+const zh = Object.assign({}, common, layout, login, register, keys, channels, models, tokens, guide, logs, stats, admin, backup)
 
 export type DictKey = keyof typeof zh
 

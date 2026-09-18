@@ -22,6 +22,7 @@ import type {
   ExchangeRateSyncResult,
   PublicInfo,
   BreakerInfo,
+  ConfigImportResult,
 } from './types'
 
 // ---------- 认证 ----------
@@ -158,3 +159,8 @@ export const adminCreateCatalogModel = (input: { name: string; note?: string }) 
 export const adminUpdateCatalogModel = (id: number, input: { name?: string; note?: string; enabled?: boolean }) =>
   put<{ model: CatalogModel }>(`/api/admin/models/${id}`, input)
 export const adminDeleteCatalogModel = (id: number) => del<void>(`/api/admin/models/${id}`)
+
+// ---------- 用户配置备份 ----------
+// 导出为文件下载（raw fetch + blob，见 BackupModal）；导入直接 POST 文件内容
+export const importConfig = (file: unknown) =>
+  post<{ result: ConfigImportResult }>('/api/config/import', file)

@@ -9,6 +9,7 @@ export default {
   'layout.stats': 'Stats',
   'layout.admin': 'Admin',
   'layout.openNav': 'Open navigation menu',
+  'layout.backup': 'Config Backup',
   'layout.logout': 'Log Out',
   'layout.loggedOut': 'Logged out',
   'layout.adminTag': 'Admin',

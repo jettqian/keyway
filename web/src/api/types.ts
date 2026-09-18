@@ -296,3 +296,16 @@ export interface TemplateInput {
   note?: string
   enabled: boolean
 }
+
+/** 用户配置导入结果（合并模式摘要） */
+export interface ConfigImportResult {
+  keysCreated: number
+  keysReused: number
+  keysMissing: number
+  channelsCreated: number
+  channelsDrafted: number
+  channelsSkipped: number
+  tokensCreated: number
+  tokensSkipped: number
+  warnings: string[]
+}

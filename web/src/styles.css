@@ -191,3 +191,9 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
 .links-group-header > td:first-child {
   border-left: 3px solid var(--kw-primary);
 }
+
+/* 配置备份弹窗：模式选项说明与结果区布局 */
+.backup-pane { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
+.backup-opt { display: flex; flex-direction: column; gap: 2px; padding-block: 2px; }
+.backup-opt-desc { font-size: 12px; line-height: 1.5; white-space: normal; }
+.backup-result { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; border-top: 1px dashed var(--kw-border-strong); margin-top: 4px; }

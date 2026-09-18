@@ -10,6 +10,7 @@ export default {
   'layout.stats': '统计',
   'layout.admin': '管理',
   'layout.openNav': '打开导航菜单',
+  'layout.backup': '配置备份',
   'layout.logout': '退出登录',
   'layout.loggedOut': '已退出',
   'layout.adminTag': '管理员',

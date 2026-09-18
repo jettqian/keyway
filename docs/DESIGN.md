@@ -1,8 +1,24 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.46（与 PRD v1.5.49 对应；链路状态分级与分组视觉修订——①**质量分级
+- 版本：v1.47（与 PRD v1.5.50 对应；新增**用户配置导出/导入**（FR-BK1~BK5）——
+  `internal/api/backup.go`：`GET /api/config/export?secrets=1|0` 导出本人密钥池/
+  渠道/令牌快照为明文 JSON 附件（完整模式解密包含密钥值/令牌明文/个人代理地址，
+  纯结构不含任何明文）；文件契约 version=1：`app/format/version` 头自描述，密钥以
+  **名称**为引用键（每用户内唯一、跨实例可读），渠道以**文件内 id**（导出时 DB id）
+  为引用键，已吊销令牌不导出。`POST /api/config/import` **合并导入**（单事务，
+  硬错误整体回滚）：同名密钥复用不覆盖值；渠道/令牌一律新建（同名加序号后缀
+  c1 → c1(2)）；密钥绑定按名称重映射（悬空丢弃）；全部密钥悬空的渠道以草稿
+  （停用）导入；令牌含明文按明文重建（跨实例迁移 Agent 零改配，key_hash 全局
+  唯一——重复导入或他人持有同值令牌跳过），无明文随机签发；渠道绑定按文件内
+  id 重映射；条目级问题跳过并计入 result.warnings；4MB 上限 + UTF-8 BOM 容错。
+  前端 `BackupModal`（用户菜单入口，i18n backup 模块）双页签：导出模式单选 +
+  明文警示 + blob 下载；导入上传 + 结果计数（密钥新建/复用、渠道新建/草稿、
+  令牌新建）与注意事项清单。测试：双模式导出、跨实例迁移（旧令牌零改配请求
+  成功）、同实例合并（复用/后缀/令牌跳过）、纯结构草稿导入、非法文件 400 的
+  e2e；
+  前版 v1.46：与 PRD v1.5.49 对应；链路状态分级与分组视觉修订——①**质量分级
   只看错误率**（可靠性）：优 <5%、良 <20%、差 ≥20%，样本 <5 次不评级，熔断单独
-  分级；原"优 = 错误率 <5% 且延迟 ≤1.5× 模型内最优"令可靠性与速度互相拉踩
+  分级；原"优 = 错误率 <5% 且 ≤1.5× 模型内最优"令可靠性与速度互相拉踩
   （0% 错误率高延迟会低于 1% 错误率低延迟），现速度对比独立放在延迟列（相对
   模型内最优的倍数 ×N.N 与着色，基准仍排除快速失败渠道）；②模型分组改为
   **分组头行**（首列 colSpan 横跨整行：模型名 + 渠道数/尝试数/组内错误率，
@@ -1126,6 +1142,8 @@ GET /oauth/feishu/callback?code&state
 | GET /api/logs | 自己的日志（分页/过滤） |
 | GET /api/stats | 自己的统计（含最近生效流量 recent：同渠道同模型去重后的最新 5 个组合，含实际线路 lineUrl/via；start/end 自定义时间窗，缺省 days） |
 | GET /api/stats/links | 本人渠道的渠道×模型链路状态（尝试口径聚合 + 熔断快照叠加，熔断中零尝试也展示；v1.44） |
+| GET /api/config/export?secrets=1 | 导出本人用户配置（密钥池/渠道/令牌）为 JSON 附件：secrets=1 完整备份（含密钥值/令牌明文/代理明文），缺省纯结构；已吊销令牌不导出（v1.5.50，见 §11.3） |
+| POST /api/config/import | 合并导入用户配置文件（同名密钥复用、渠道/令牌新建加后缀、令牌按明文重建；单事务，返回计数与 warnings；4MB 上限） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models
   （模型目录 CRUD）、/api/admin/templates、
   /api/admin/proxies、/api/admin/pricing(+import、+sync_remote 远程同步)、
@@ -1155,6 +1173,35 @@ text/html**（网关型站点对未知路径的 SPA 回退）视为该线路无�
 401/403/429 换 key 并冷却）；usage 从 `response.completed` 事件的
 `response.usage`（input/output_tokens 命名）嗅探归一化，协议转换的 Responses
 版本留待 v2。
+
+### 11.3 用户配置导出/导入（backup.go，v1.5.50）
+
+**导出**（`handleConfigExport`）一次读出本人全部 keys / channels / 非吊销 tokens，
+组装 `configExportFile`（version=1）后以 JSON 附件返回。跨实例可移植的关键是
+**引用键选择**：渠道的密钥绑定导出为 `keyNames`（密钥名每用户内唯一），令牌的
+渠道绑定保留原 DB id（文件内引用键）——导入侧统一重映射，ID 不跨实例生效。
+`secrets=1` 时逐条 `crypto.Decrypt` 解出密钥值（PurposeKey）、令牌明文
+（PurposeToken）与个人代理（PurposeProxy）；缺省为纯结构（不含任何明文）。
+`mode` 字段仅作信息标注，导入按字段存在性自适应，同一文件允许混合。
+
+**导入**（`handleConfigImport`）为合并语义，整个流程在**单事务**内执行（硬错误
+整体回滚），条目级问题跳过并累计进 `result.warnings`：
+
+| 对象 | 语义 |
+|---|---|
+| 密钥 | 同名复用现有（**不覆盖值**，绑定重映射到现有 id）；含明文且无同名 → 加密新建；无明文且无同名 → 悬空（KeysMissing，渠道绑定丢弃） |
+| 渠道 | 一律新建；同名加序号后缀（c1 → c1(2)，后缀名查重递增）；keyNames → keyIDs 重映射（去重、≤5）；全部悬空 → 强制草稿（enabled=0，ChannelsDrafted）；复用 `validateChannel`/`applyChannelInput`/`validatePersonalProxy` 与手工创建同规则；is_default 落库后清其他默认 |
+| 令牌 | 一律新建；含明文 → 校验 `sk-keyway-` 前缀后按明文重建（KeyEnc 重加密 + KeyPrefix + KeyHash），`key_hash` 全局唯一：文件内重复或库中已存在（本人重复导入 / 他人持有同值令牌）跳过；无明文 → `GenerateGatewayToken` 随机签发；channelIds/channelOrder 按文件内渠道 id 重映射（被跳过的渠道引用丢弃，≤20） |
+
+请求体上限 4MB（`io.LimitReader`），容错 UTF-8 BOM；`app/format/version` 头不符
+即 400。跨实例迁移效果（A29）：完整备份导入新实例后原网关令牌直接可用——
+KeyHash 由明文派生，与实例主密钥无关；密钥与代理以目标实例主密钥重新加密。
+
+前端 `BackupModal`（`web/src/components/BackupModal.tsx`，Layout 用户菜单入口）：
+导出页签 = 模式单选（完整/纯结构，各带说明）+ 完整模式明文警示 + 原始 fetch
+blob 下载（GET 免 CSRF）；导入页签 = 合并语义说明 + Upload.Dragger 选文件
+（`beforeUpload` 读文本返回 false，本地 JSON.parse 预校验 + BOM 剥离）+ 结果
+计数（Statistic 网格）与 warnings 清单 + 「刷新页面查看」。
 
 ## 12. 配置项（环境变量）
 
