@@ -980,8 +980,14 @@ const ctxEffortKey = "kw_effort"
 //   - openai（chat / responses）：顶层 reasoning_effort，或 reasoning.effort
 //     （Responses API 嵌套结构），取原值（minimal/low/medium/high/…）
 //   - anthropic：thinking.budget_tokens → 归一为 thinking:N
+//
+// 先做子串预检（O(n) 无分配扫描）再解析：正文可能恰好含这些词，误命中只是
+// 多付一次解析，不损正确性；绝大多数未开启推理的请求免掉整包 JSON 解析
 func reasoningEffortOf(inbound string, rawBody []byte) string {
 	if inbound == "anthropic" {
+		if !bytes.Contains(rawBody, []byte("thinking")) {
+			return ""
+		}
 		var probe struct {
 			Thinking *struct {
 				BudgetTokens int64 `json:"budget_tokens"`
@@ -991,6 +997,9 @@ func reasoningEffortOf(inbound string, rawBody []byte) string {
 			probe.Thinking != nil && probe.Thinking.BudgetTokens > 0 {
 			return "thinking:" + strconv.FormatInt(probe.Thinking.BudgetTokens, 10)
 		}
+		return ""
+	}
+	if !bytes.Contains(rawBody, []byte("reasoning")) {
 		return ""
 	}
 	var probe struct {
