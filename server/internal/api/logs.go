@@ -75,7 +75,8 @@ func (s *Server) handleLogs(c *gin.Context) {
 			"statusCode": l.StatusCode, "ttftMs": l.TtftMs, "totalMs": l.TotalMs,
 			"promptTokens": l.PromptTokens, "completionTokens": l.CompletionTokens,
 			"cachedTokens": l.CachedTokens, "cacheWriteTokens": l.CacheWriteTokens,
-			"inputCost": l.InputCost, "outputCost": l.OutputCost,
+			"reasoningEffort": l.ReasoningEffort,
+			"inputCost":       l.InputCost, "outputCost": l.OutputCost,
 			"error": l.Error,
 		}
 		if l.ChannelID != nil {

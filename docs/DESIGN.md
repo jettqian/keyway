@@ -1,6 +1,16 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.49（与 PRD v1.5.52 对应；管理页统计**补齐按渠道维度表**——后端
+- 版本：v1.50（与 PRD v1.5.53 对应；新增**推理强度维度**——`relay/handlers.go`
+  `reasoningEffortOf` 在三管线入站解析：chat 顶层 `reasoning_effort`、Responses
+  `reasoning.effort` 取原值、anthropic `thinking.budget_tokens` 归一 `thinking:N`，
+  经 `gin.Context`（kw_effort）传递，`submitLogWithError` 落 `logs.reasoning_effort`
+  列（AutoMigrate，未开启 NULL，历史行统计归 `-`）；失败尝试日志同样携带。统计
+  `QueryStats` 新增 `byEffort` 分组（group("reasoning_effort")，价目补算
+  recompute 同步按维度合入）；`GET /api/logs` DTO、日志/统计 CSV 导出、前端
+  日志页列（Tag 展示，NULL 显示 -）与统计页/管理页「按推理强度」分组表（用户页
+  与按密钥并排两列布局）同步；i18n 新增 logs.reasoningEffort、stats.byEffort、
+  stats.effort 中英文案；
+  前版 v1.49：与 PRD v1.5.52 对应；管理页统计**补齐按渠道维度表**——后端
   `usage.QueryStats` 的 `byChannel` 分组（含价目补算 `mergeCost(st.ByChannel)` 与
   `applyIDNames` 渠道名显示，已删除渠道回退 `#id`）与管理端 CSV 导出本就具备，
   用户侧统计页（Stats.tsx）也已渲染；管理页 Admin.tsx StatsTab 此前只渲染
@@ -440,6 +450,8 @@ CREATE TABLE logs (
   prompt_tokens INTEGER, completion_tokens INTEGER,
   cached_tokens INTEGER,                   -- 缓存读 token（归一化）
   cache_write_tokens INTEGER,              -- 缓存写 token（归一化，anthropic 专有）
+  reasoning_effort TEXT,                   -- 推理强度（v1.5.53）：openai 原值 /
+                                           --   anthropic thinking:N；NULL = 未开启
   input_cost REAL, output_cost REAL,       -- 写入时快照；未定价为 NULL
   error TEXT                               -- 截断 512B
 );

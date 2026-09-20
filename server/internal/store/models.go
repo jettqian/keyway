@@ -216,6 +216,7 @@ type Log struct {
 	CompletionTokens *int64   `gorm:"column:completion_tokens"`
 	CachedTokens     *int64   `gorm:"column:cached_tokens"`      // 缓存读 token（归一化）
 	CacheWriteTokens *int64   `gorm:"column:cache_write_tokens"` // 缓存写 token（归一化）
+	ReasoningEffort  *string  `gorm:"column:reasoning_effort"`   // 推理强度：openai reasoning_effort（chat）/reasoning.effort（responses）原值；anthropic thinking.budget_tokens 归一为 thinking:N；NULL = 未开启或历史数据
 	InputCost        *float64 `gorm:"column:input_cost"`         // 写入时快照；未定价为 NULL
 	OutputCost       *float64 `gorm:"column:output_cost"`
 	Error            *string  `gorm:"column:error"` // 截断 512B

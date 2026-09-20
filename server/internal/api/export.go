@@ -53,6 +53,7 @@ func (s *Server) handleLogsExport(c *gin.Context) {
 			channelName,
 			derefStr(l.LineURL), derefStr(l.Via),
 			derefStr(l.Protocol), derefStr(l.Model), derefStr(l.UpstreamModel),
+			derefStr(l.ReasoningEffort),
 			strconv.Itoa(derefInt(l.StatusCode)),
 			strconv.FormatInt(derefI64(l.PromptTokens), 10),
 			strconv.FormatInt(derefI64(l.CompletionTokens), 10),
@@ -62,7 +63,7 @@ func (s *Server) handleLogsExport(c *gin.Context) {
 		})
 	}
 	writeCSV(c, "keyway-logs.csv",
-		[]string{"时间", "渠道", "线路", "路径", "协议", "模型", "上游模型", "状态码",
+		[]string{"时间", "渠道", "线路", "路径", "协议", "模型", "上游模型", "推理强度", "状态码",
 			"输入tokens", "输出tokens", "缓存tokens", "费用USD", "错误"},
 		rows)
 }
@@ -103,6 +104,7 @@ func exportStatsCSV(c *gin.Context, s *Server, userID int64) {
 	rows = append(rows, group("渠道", st.ByChannel)...)
 	rows = append(rows, group("模型", st.ByModel)...)
 	rows = append(rows, group("密钥", st.ByKey)...)
+	rows = append(rows, group("推理强度", st.ByEffort)...)
 	writeCSV(c, "keyway-stats.csv",
 		[]string{"维度", "分组", "请求数", "输入tokens", "输出tokens", "费用USD", "错误数"},
 		rows)

@@ -312,7 +312,8 @@ type Stats struct {
 	ByChannel []StatsGroup  `json:"byChannel"`
 	ByModel   []StatsGroup  `json:"byModel"`
 	ByKey     []StatsGroup  `json:"byKey"`
-	Recent    []LatestUsage `json:"recent"` // 最近生效流量（同渠道同模型去重，最新 5 个组合）
+	ByEffort  []StatsGroup  `json:"byEffort"` // 按推理强度分组（未开启/历史数据归 '-' 行）
+	Recent    []LatestUsage `json:"recent"`   // 最近生效流量（同渠道同模型去重，最新 5 个组合）
 }
 
 // QueryStats 用量/花费统计（userID 为 nil 时全员；since/until 为 Unix 秒，0 表示该侧不限；
@@ -383,6 +384,7 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) 
 	st.ByChannel = group("channel_id")
 	st.ByModel = group("model")
 	st.ByKey = group("key_id")
+	st.ByEffort = group("reasoning_effort")
 
 	// 管理员全员统计（FR-M3）：按用户分组，并补齐零用量用户
 	// （GROUP BY logs 不会为没产生过日志的成员产生行，从 users 表回填保证全员可见）
@@ -414,6 +416,7 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) 
 	mergeCost(st.ByModel, extra.byModel)
 	mergeCost(st.ByKey, extra.byKey)
 	mergeCost(st.ByUser, extra.byUser)
+	mergeCost(st.ByEffort, extra.byEffort)
 
 	// 分组维度显示名称：渠道/密钥/用户 id → 名称（已删除的回退 #id）
 	applyIDNames(st.ByChannel, chNames)
@@ -473,6 +476,7 @@ type recomputeCosts struct {
 	byModel   map[string]float64
 	byKey     map[string]float64
 	byUser    map[string]float64
+	byEffort  map[string]float64
 }
 
 // recomputeUnpricedCost 用当前价目补算窗口内成功但未定价的行；返回补算费用与仍未定价行数。
@@ -483,10 +487,11 @@ func recomputeUnpricedCost(db *gorm.DB, base func() *gorm.DB, chParams map[int64
 		byModel:   map[string]float64{},
 		byKey:     map[string]float64{},
 		byUser:    map[string]float64{},
+		byEffort:  map[string]float64{},
 	}
 	var rows []store.Log
 	if err := base().
-		Select("user_id, channel_id, key_id, model, upstream_model, prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens").
+		Select("user_id, channel_id, key_id, model, upstream_model, reasoning_effort, prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens").
 		Where("input_cost IS NULL AND status_code IS NOT NULL AND status_code < 400").
 		Find(&rows).Error; err != nil {
 		return res, 0
@@ -526,6 +531,7 @@ func recomputeUnpricedCost(db *gorm.DB, base func() *gorm.DB, chParams map[int64
 		res.byModel[dimOfStr(l.Model)] += cost
 		res.byKey[dimOfID(l.KeyID)] += cost
 		res.byUser[strconv.FormatInt(l.UserID, 10)] += cost
+		res.byEffort[dimOfStr(l.ReasoningEffort)] += cost
 	}
 	return res, unpriced
 }

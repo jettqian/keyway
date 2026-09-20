@@ -165,6 +165,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 		return
 	}
 	reqStart := time.Now()
+	c.Set(ctxEffortKey, reasoningEffortOf("openai", body))
 	// 协议不兼容的渠道必然不会尝试，先剔除再算熔断视图（同 completions 管线）
 	var viable []*routing.ResolvedChannel
 	for _, rc := range append(matched, defaults...) {
@@ -380,6 +381,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		attempts = s.plan(matched, defaults, model, nil)
 	}
 	reqStart := time.Now()
+	c.Set(ctxEffortKey, reasoningEffortOf(inbound, rawBody))
 	var (
 		lastStatus     int
 		lastBody       []byte
@@ -955,6 +957,11 @@ func (s *Server) submitLogWithError(c *gin.Context, a attempt, inbound, model, u
 		}
 		l.Error = &message
 	}
+	if v, ok := c.Get(ctxEffortKey); ok {
+		if effort, ok := v.(string); ok && effort != "" {
+			l.ReasoningEffort = &effort
+		}
+	}
 	s.Logs.Submit(l)
 }
 
@@ -964,6 +971,44 @@ func (s *Server) requestWantsStream(inbound string, rawBody []byte) bool {
 	}
 	json.Unmarshal(rawBody, &probe)
 	return probe.Stream
+}
+
+// ctxEffortKey 请求解析出的推理强度暂存于 gin.Context（submitLogWithError 统一取用）
+const ctxEffortKey = "kw_effort"
+
+// reasoningEffortOf 解析入站请求的推理强度（未开启返回空串）：
+//   - openai（chat / responses）：顶层 reasoning_effort，或 reasoning.effort
+//     （Responses API 嵌套结构），取原值（minimal/low/medium/high/…）
+//   - anthropic：thinking.budget_tokens → 归一为 thinking:N
+func reasoningEffortOf(inbound string, rawBody []byte) string {
+	if inbound == "anthropic" {
+		var probe struct {
+			Thinking *struct {
+				BudgetTokens int64 `json:"budget_tokens"`
+			} `json:"thinking"`
+		}
+		if err := json.Unmarshal(rawBody, &probe); err == nil &&
+			probe.Thinking != nil && probe.Thinking.BudgetTokens > 0 {
+			return "thinking:" + strconv.FormatInt(probe.Thinking.BudgetTokens, 10)
+		}
+		return ""
+	}
+	var probe struct {
+		ReasoningEffort string `json:"reasoning_effort"`
+		Reasoning       *struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+	}
+	if err := json.Unmarshal(rawBody, &probe); err != nil {
+		return ""
+	}
+	if probe.ReasoningEffort != "" {
+		return probe.ReasoningEffort
+	}
+	if probe.Reasoning != nil && probe.Reasoning.Effort != "" {
+		return probe.Reasoning.Effort
+	}
+	return ""
 }
 
 func readBody(c *gin.Context, limitMB int) []byte {

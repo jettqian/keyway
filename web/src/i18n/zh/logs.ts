@@ -9,6 +9,7 @@ export default {
   'logs.protocol': '协议',
   'logs.ttft': '首字节',
   'logs.totalTime': '总耗时',
+  'logs.reasoningEffort': '推理强度',
   'logs.cost': '费用',
   'logs.error': '错误',
   'logs.cachedTokens': '（缓存 {count}）',

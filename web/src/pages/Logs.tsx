@@ -1,5 +1,5 @@
 import React from 'react'
-import { Table, Select, Input, InputNumber, Popover, Typography, message } from 'antd'
+import { Table, Select, Input, InputNumber, Popover, Tag, Typography, message } from 'antd'
 import { listLogs, listChannels } from '../api'
 import type { LogEntry, Channel } from '../api/types'
 import Money from '../components/Money'
@@ -75,6 +75,12 @@ const LogsPage: React.FC = () => {
           { title: t('logs.path'), dataIndex: 'via', width: 110 },
           { title: t('logs.protocol'), dataIndex: 'protocol', width: 90 },
           { title: t('common.model'), dataIndex: 'model', ellipsis: true },
+          {
+            title: t('logs.reasoningEffort'),
+            dataIndex: 'reasoningEffort',
+            width: 110,
+            render: (v?: string | null) => (v ? <Tag color="purple">{v}</Tag> : <span className="text-tertiary">-</span>),
+          },
           {
             title: t('common.status'),
             dataIndex: 'statusCode',

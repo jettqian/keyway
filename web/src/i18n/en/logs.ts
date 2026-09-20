@@ -8,6 +8,7 @@ export default {
   'logs.protocol': 'Protocol',
   'logs.ttft': 'First Byte',
   'logs.totalTime': 'Total Time',
+  'logs.reasoningEffort': 'Reasoning',
   'logs.cost': 'Cost',
   'logs.error': 'Error',
   'logs.cachedTokens': '(cached {count})',

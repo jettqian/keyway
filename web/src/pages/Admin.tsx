@@ -908,8 +908,11 @@ const StatsTab: React.FC = () => {
       >
         <LinksTable links={links} showOwner />
       </Card>
-      <Card title={t('admin.byModel')} loading={loading}>
+      <Card title={t('admin.byModel')} loading={loading} style={{ marginBottom: 16 }}>
         <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={false} dataSource={data?.byModel ?? []} columns={groupColumns(t('common.model'))} />
+      </Card>
+      <Card title={t('stats.byEffort')} loading={loading}>
+        <Table<StatsGroup> rowKey="dim" size="small" scroll={{ x: 'max-content' }} pagination={false} dataSource={data?.byEffort ?? []} columns={groupColumns(t('stats.effort'))} />
       </Card>
     </div>
   )

@@ -123,6 +123,8 @@ export interface LogEntry {
   completionTokens: number
   cachedTokens: number
   cacheWriteTokens: number
+  /** 推理强度：openai reasoning_effort 原值 / anthropic thinking:N；null = 未开启 */
+  reasoningEffort?: string | null
   inputCost: number | null
   outputCost: number | null
   error: string
@@ -162,6 +164,7 @@ export interface StatsResponse {
   byChannel: StatsGroup[]
   byModel: StatsGroup[]
   byKey: StatsGroup[]
+  byEffort?: StatsGroup[]
   recent?: LatestUsage[]
 }
 
