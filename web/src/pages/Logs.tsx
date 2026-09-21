@@ -14,18 +14,19 @@ const LogsPage: React.FC = () => {
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [loading, setLoading] = React.useState(false)
   const [page, setPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(20)
   const [filter, setFilter] = React.useState<{ channelId?: number; model?: string; statusCode?: number }>({})
 
   const refresh = React.useCallback(() => {
     setLoading(true)
-    listLogs({ page, pageSize: 20, ...filter })
+    listLogs({ page, pageSize, ...filter })
       .then((r) => {
         setLogs(r.logs)
         setTotal(r.total)
       })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
-  }, [page, filter])
+  }, [page, pageSize, filter])
 
   React.useEffect(refresh, [refresh])
 
@@ -64,7 +65,22 @@ const LogsPage: React.FC = () => {
         loading={loading}
         dataSource={logs}
         scroll={{ x: 'max-content' }}
-        pagination={{ current: page, total, pageSize: 20, onChange: setPage }}
+        pagination={{
+          current: page,
+          total,
+          pageSize,
+          showSizeChanger: true,
+          pageSizeOptions: [20, 50, 100],
+          // 条数变化回到第 1 页（原实现忽略 size 参数，选择器形同虚设）
+          onChange: (p, s) => {
+            if (s !== pageSize) {
+              setPageSize(s)
+              setPage(1)
+            } else {
+              setPage(p)
+            }
+          },
+        }}
         columns={[
           { title: t('common.time'), dataIndex: 'createdAt', width: 170, render: (v: number | string) => formatDateTime(v) },
           {
@@ -85,7 +101,9 @@ const LogsPage: React.FC = () => {
             title: t('common.status'),
             dataIndex: 'statusCode',
             width: 80,
-            render: (s: number) => (s >= 400 ? <span className="status-error">{s}</span> : s),
+            // 200 但带错误摘要（流内失败，v1.5.54）同样标红——状态码如实反映
+            // 上游 200，失败信号在错误列与状态红染上呈现
+            render: (s: number, l) => (s >= 400 || l.error ? <span className="status-error">{s}</span> : s),
           },
           { title: t('logs.ttft'), dataIndex: 'ttftMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
           { title: t('logs.totalTime'), dataIndex: 'totalMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
