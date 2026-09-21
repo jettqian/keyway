@@ -418,3 +418,59 @@ func TestQueryStatsByToken(t *testing.T) {
 		t.Errorf("管理员筛令牌 21 期望费用 1，实际 %.4f", got)
 	}
 }
+
+// 错误率口径（v1.5.55）：200 但带错误摘要（流内失败）计入错误数，
+// 且不进入最近生效流量；纯 200 成功行不受影响
+func TestQueryStats流内失败计错误(t *testing.T) {
+	st, err := store.Open(store.Options{DataDir: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	db := st.DB()
+
+	logs := []store.Log{
+		{CreatedAt: 100, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200), TotalMs: i64p(10)},
+		{CreatedAt: 200, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200), Error: strp("流异常终止（未见终止标记）"), TotalMs: i64p(20)},
+		{CreatedAt: 300, UserID: 1, ChannelID: i64p(2), Model: strp("m2"), StatusCode: intp(200), TotalMs: i64p(30)},
+	}
+	for i := range logs {
+		if err := db.Create(&logs[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	uid := int64(1)
+	stats, err := QueryStats(db, &uid, 1, 1<<40, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Summary.Requests != 3 {
+		t.Fatalf("期望 3 个请求，实际 %d", stats.Summary.Requests)
+	}
+	if stats.Summary.ErrorRate != 33.333333333333336 && stats.Summary.ErrorRate < 33 || stats.Summary.ErrorRate > 34 {
+		t.Fatalf("期望错误率 ~33%%（1/3 流内失败），实际 %v", stats.Summary.ErrorRate)
+	}
+	// 分组错误数：渠道 1 应 1 错 1 成，渠道 2 应 0 错（测试库无渠道表数据，
+	// 维度回退 #id 显示）
+	byChannel := map[string]StatsGroup{}
+	for _, g := range stats.ByChannel {
+		byChannel[g.Dim] = g
+	}
+	if byChannel["#1"].Errors != 1 || byChannel["#1"].Requests != 2 {
+		t.Errorf("渠道 1 期望 2 请求 1 错误，实际 %+v", byChannel["#1"])
+	}
+	if byChannel["#2"].Errors != 0 {
+		t.Errorf("渠道 2 期望 0 错误，实际 %+v", byChannel["#2"])
+	}
+	// 最近生效流量：流内失败行不进最近生效流量——m1 应取 100 时刻的成功行，
+	// m2 正常进入
+	if len(stats.Recent) != 2 {
+		t.Fatalf("期望 2 个最近生效组合，实际 %d: %+v", len(stats.Recent), stats.Recent)
+	}
+	for _, r := range stats.Recent {
+		if r.Model == "m1" && r.CreatedAt != 100 {
+			t.Errorf("m1 最近生效行应回退到成功行（CreatedAt=100），实际 %d", r.CreatedAt)
+		}
+	}
+}

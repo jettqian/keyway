@@ -345,7 +345,7 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) 
 	}
 	if err := base().Select(`
 		COUNT(*) AS requests,
-		SUM(CASE WHEN status_code >= 400 OR status_code IS NULL THEN 1 ELSE 0 END) AS errors,
+		SUM(CASE WHEN status_code >= 400 OR status_code IS NULL OR error IS NOT NULL THEN 1 ELSE 0 END) AS errors,
 		COALESCE(SUM(prompt_tokens),0) AS prompt,
 		COALESCE(SUM(completion_tokens),0) AS completion,
 		COALESCE(SUM(input_cost),0)+COALESCE(SUM(output_cost),0) AS cost
@@ -373,7 +373,7 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) 
 			COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
 			COALESCE(SUM(completion_tokens),0) AS completion_tokens,
 			COALESCE(SUM(input_cost),0)+COALESCE(SUM(output_cost),0) AS cost,
-			SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors
+			SUM(CASE WHEN status_code >= 400 OR error IS NOT NULL THEN 1 ELSE 0 END) AS errors
 		`, col)).
 			Group(col).
 			Order("requests DESC").
@@ -424,7 +424,8 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) 
 	applyIDNames(st.ByUser, userNames)
 
 	// 最近生效流量（不受统计窗口限制）：同渠道同模型只占一行——按（渠道, 模型）
-	// 分组取最新一条成功日志，展示最近 5 个组合（含实际路由线路与连接路径）
+	// 分组取最新一条成功日志，展示最近 5 个组合（含实际路由线路与连接路径）。
+	// 成功口径与错误率一致（v1.5.55）：200 但带错误摘要（流内失败）不算成功
 	var recent []struct {
 		ID            int64
 		CreatedAt     int64
@@ -437,7 +438,7 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) 
 	}
 	sub := db.Model(&store.Log{}).
 		Select("MAX(id) AS id").
-		Where("channel_id IS NOT NULL AND status_code < 400").
+		Where("channel_id IS NOT NULL AND status_code < 400 AND error IS NULL").
 		Scopes(whereUser(userID))
 	if tokenID != nil {
 		sub = sub.Where("token_id = ?", *tokenID)

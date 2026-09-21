@@ -15,7 +15,7 @@ type LinkStat struct {
 	ChannelID   int64        `json:"channelId"`
 	Model       string       `json:"model"`
 	Attempts    int64        `json:"attempts"` // 上游尝试次数（含失败切换的中间尝试）
-	OK          int64        `json:"ok"`       // 2xx/3xx 尝试次数
+	OK          int64        `json:"ok"`       // 成功尝试次数（2xx/3xx 且无错误摘要；200+流内错误按失败计，v1.5.55）
 	ErrorRate   int64        `json:"errorRate"`
 	AvgMs       int64        `json:"avgMs"`  // 尝试平均耗时（失败尝试也计时）
 	LastAt      int64        `json:"lastAt"` // 最近一次尝试（Unix 秒）
@@ -59,7 +59,7 @@ func QueryLinks(db *gorm.DB, userID *int64, since, until int64) ([]LinkStat, err
 		channel_id,
 		model,
 		COUNT(*) AS attempts,
-		SUM(CASE WHEN status_code IS NOT NULL AND status_code < 400 THEN 1 ELSE 0 END) AS ok,
+		SUM(CASE WHEN status_code IS NOT NULL AND status_code < 400 AND error IS NULL THEN 1 ELSE 0 END) AS ok,
 		CAST(AVG(total_ms) AS INTEGER) AS avg_ms,
 		MAX(created_at) AS last_at
 	`).Group("channel_id, model").Order("attempts DESC").Limit(500).Scan(&rows).Error; err != nil {

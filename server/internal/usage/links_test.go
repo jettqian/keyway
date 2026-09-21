@@ -86,3 +86,41 @@ func TestQueryLinks(t *testing.T) {
 		t.Errorf("窄窗口 (1,m1) 期望只剩 1 次尝试，实际 %+v", narrow[0])
 	}
 }
+
+// 流内失败的成功口径（v1.5.55）：200 但带错误摘要（流内错误事件）按失败计，
+// 不再被算进 ok——否则链路状态错误率 0% 与熔断状态自相矛盾
+func TestQueryLinks流内失败按失败计(t *testing.T) {
+	st, err := store.Open(store.Options{DataDir: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	db := st.DB()
+
+	logs := []store.Log{
+		// 渠道 1：一次正常成功 + 一次 200 带错误摘要（流内失败）
+		{CreatedAt: 100, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200), TotalMs: i64p(100)},
+		{CreatedAt: 200, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200), Error: strp("流内错误事件 type=overloaded_error"), TotalMs: i64p(200)},
+	}
+	for i := range logs {
+		if err := db.Create(&logs[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	uid := int64(1)
+	links, err := QueryLinks(db, &uid, 50, 1<<40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("期望 1 个链路组合，实际 %d", len(links))
+	}
+	l := links[0]
+	if l.Attempts != 2 || l.OK != 1 {
+		t.Errorf("期望 2 次尝试 1 次成功（流内失败不算成功），实际 %d/%d", l.Attempts, l.OK)
+	}
+	if l.ErrorRate != 50 {
+		t.Errorf("期望错误率 50%%，实际 %d", l.ErrorRate)
+	}
+}

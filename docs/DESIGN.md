@@ -1,6 +1,12 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.51（与 PRD v1.5.54 对应；新增**流式失败检测与切换**——`relay/streamguard.go`
+- 版本：v1.52（与 PRD v1.5.55 对应；**错误率统计口径修正**——流内失败（v1.5.54 起记
+  200 + error 摘要）原被 `status_code < 400` 判成功，错误率 0% 与熔断开闸自相矛盾；
+  现三处同口径改为 `status_code >= 400 OR error IS NOT NULL` 计错误
+  （`usage.QueryStats` 汇总与分组、`usage.QueryLinks` 的 ok 判定——links.go 的 ok
+  另加 `AND error IS NULL`），最近生效流量取 `status_code < 400 AND error IS NULL`
+  （同组合回退最近成功行）；CSV 导出复用 QueryStats 自动生效；
+  前版 v1.51：与 PRD v1.5.54 对应；新增**流式失败检测与切换**——`relay/streamguard.go`
   帧分类器（错误帧=JSON 带 `error` 对象 / `type=="error"`；终止标记=chat `[DONE]`、
   anthropic `message_stop`、responses `response.completed/failed/incomplete/cancelled`）
   + `streamTracker` 透传结局追踪 + `peekFirstData` 首帧窥探（提交 200 头前读首帧，
@@ -1092,6 +1098,11 @@ new-api 的已知语义（仅参考行为，代码自研）。
 ### 8.3 聚合查询
 
 - 用户页/管理员页均直接 `GROUP BY` logs（30 天 × ≤百用户 ≈ 10^6 行，命中索引足够）
+- **错误判定口径（v1.5.55）**：`status_code >= 400 OR error IS NOT NULL` 计错误
+  ——流内失败（v1.5.54 起记 200 + error 摘要）不再被算进成功；链路状态的 ok 判定
+  为 `status_code < 400 AND error IS NULL`；最近生效流量取成功行同口径（流内失败
+  行不进最近流量，同组合回退最近真实成功行）；费用补算口径不变（token 实际
+  已消耗）；CSV 导出复用 `QueryStats` 自动生效
 - 维度：user / model / channel / key / 天；管理员追加全员与公共代理流量（proxy_usage）；
   channel / key / user 分组查询后把 id 维度映射为**名称**（渠道表/密钥表/用户表 id→name，
   查询一次载入；已删除的回退 `#id`）。**user 分组仅管理员模式（userID=nil）返回
