@@ -94,34 +94,64 @@ const LogsPage: React.FC = () => {
           },
         }}
         columns={[
-          { title: t('common.time'), dataIndex: 'createdAt', width: 170, render: (v: number | string) => formatDateTime(v) },
+          { title: t('common.time'), dataIndex: 'createdAt', width: 150, render: (v: number | string) => formatDateTime(v) },
           {
             title: t('logs.channel'),
             dataIndex: 'channelName',
           },
-          { title: t('logs.line'), dataIndex: 'lineUrl', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <LineUrl url={v} /> },
-          { title: t('logs.path'), dataIndex: 'via', width: 110 },
-          { title: t('logs.protocol'), dataIndex: 'protocol', width: 90 },
-          { title: t('common.model'), dataIndex: 'model', ellipsis: true },
           {
-            title: t('logs.reasoningEffort'),
-            dataIndex: 'reasoningEffort',
-            width: 110,
-            render: (v?: string | null) => (v ? <Tag color="purple">{v}</Tag> : <span className="text-tertiary">-</span>),
+            // 线路 + 连接路径合并（via 弱色追加，v1.5.57）：列数瘦身免横向滚动
+            title: t('logs.line'),
+            dataIndex: 'lineUrl',
+            width: 200,
+            ellipsis: { showTitle: false },
+            render: (v: string, l) => <LineUrl url={v} via={l.via} />,
+          },
+          {
+            // 模型 + 协议/推理强度合并：元数据以弱化小标签垫在模型名下
+            title: t('common.model'),
+            dataIndex: 'model',
+            ellipsis: true,
+            render: (v: string, l) => (
+              <div style={{ minWidth: 0 }}>
+                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v || '—'}</div>
+                {l.protocol || l.reasoningEffort ? (
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {l.protocol ? <span className="text-tertiary" style={{ fontSize: 12 }}>{l.protocol}</span> : null}
+                    {l.reasoningEffort ? (
+                      <Tag color="purple" style={{ marginInlineEnd: 0, fontSize: 12, lineHeight: '16px', padding: '0 4px' }}>
+                        {l.reasoningEffort}
+                      </Tag>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ),
           },
           {
             title: t('common.status'),
             dataIndex: 'statusCode',
-            width: 80,
+            width: 70,
             // 200 但带错误摘要（流内失败，v1.5.54）同样标红——状态码如实反映
             // 上游 200，失败信号在错误列与状态红染上呈现
             render: (s: number, l) => (s >= 400 || l.error ? <span className="status-error">{s}</span> : s),
           },
-          { title: t('logs.ttft'), dataIndex: 'ttftMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
-          { title: t('logs.totalTime'), dataIndex: 'totalMs', width: 90, align: 'right', render: (v: number) => fmtMs(v) },
+          {
+            // 首字节/总耗时合并一列
+            title: t('logs.timing'),
+            width: 130,
+            render: (_, l) => (
+              <span>
+                <span className="text-tertiary">{t('logs.ttftShort')}</span>
+                {l.ttftMs ? fmtMs(l.ttftMs) : '—'}
+                <span className="text-tertiary"> · {t('logs.totalShort')}</span>
+                {l.totalMs ? fmtMs(l.totalMs) : '—'}
+              </span>
+            ),
+          },
           {
             title: 'Tokens',
-            width: 160,
+            width: 150,
             align: 'right',
             render: (_, l) => (
               <span>

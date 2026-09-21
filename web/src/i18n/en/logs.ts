@@ -13,6 +13,9 @@ export default {
   'logs.error': 'Error',
   'logs.cachedTokens': '(cached {count})',
   'logs.viewFullError': 'Click to view the full error',
+  'logs.timing': 'Time',
+  'logs.ttftShort': 'FB ',
+  'logs.totalShort': '· T ',
   'logs.allLogs': 'All',
   'logs.failuresOnly': 'Failures only',
 }

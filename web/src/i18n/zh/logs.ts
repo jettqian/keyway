@@ -14,6 +14,9 @@ export default {
   'logs.error': '错误',
   'logs.cachedTokens': '（缓存 {count}）',
   'logs.viewFullError': '点击查看完整错误',
+  'logs.timing': '耗时',
+  'logs.ttftShort': '首 ',
+  'logs.totalShort': '总 ',
   'logs.allLogs': '全部',
   'logs.failuresOnly': '仅失败',
 }
