@@ -1,6 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.55（与 PRD v1.5.58 对应；① 日志页行展开——主表 8 列，线路/via、上游
+- 版本：v1.56（与 PRD v1.5.59 对应；① 日志页展开图标重做——`expandable.expandIcon`
+  自定义旋转 chevron（边框方块 + `--kw-*` 主题变量，展开旋转 90° 着主题色）；
+  ② `stats.recent` 补 `reasoningEffort`（LatestUsage 增字段 + SQL COALESCE
+  reasoning_effort），统计页最近生效流量模型旁紫色小标签展示）；
+  前版 v1.55：与 PRD v1.5.58 对应；① 日志页行展开——主表 8 列，线路/via、上游
   模型、协议、推理强度、密钥名（listKeys 映射）、完整错误（copyable）移入
   `expandable.expandedRowRender`；② 渠道页熔断显示区分半开——`cooldownUntil ≤
   now` 的行（半开派生态）标签换橙色「待试探」，明细时间行改「冷却已到期，

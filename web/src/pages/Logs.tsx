@@ -1,5 +1,6 @@
 import React from 'react'
 import { Table, Select, Input, InputNumber, Popover, Segmented, Typography, message } from 'antd'
+import { RightOutlined } from '@ant-design/icons'
 import { listLogs, listChannels, listKeys } from '../api'
 import type { LogEntry, Channel, ApiKey } from '../api/types'
 import Money from '../components/Money'
@@ -103,8 +104,34 @@ const LogsPage: React.FC = () => {
             }
           },
         }}
-        // 行展开（v1.5.58）：路由与元数据移入展开区，主表 8 列免横向滚动
+        // 行展开（v1.5.58）：路由与元数据移入展开区，主表 8 列免横向滚动。
+        // 展开图标用旋转 chevron（带边框方块 + 方向感 + 展开着色），比默认 +
+        // 更像"可展开"（v1.5.59）
         expandable={{
+          expandIcon: ({ expanded, onExpand, record }) => (
+            <span
+              role="button"
+              aria-label={expanded ? t('common.collapse') : t('common.expand')}
+              onClick={(e) => onExpand(record, e)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 18,
+                height: 18,
+                borderRadius: 4,
+                border: `1px solid ${expanded ? 'var(--kw-primary, #176b87)' : 'var(--kw-border, #e3e9eb)'}`,
+                color: expanded ? 'var(--kw-primary, #176b87)' : 'var(--kw-tertiary, #8a979d)',
+                cursor: 'pointer',
+                fontSize: 10,
+                userSelect: 'none',
+                transform: expanded ? 'rotate(90deg)' : 'none',
+                transition: 'all .15s',
+              }}
+            >
+              <RightOutlined />
+            </span>
+          ),
           expandedRowRender: (l) => {
             const items: React.ReactNode[] = []
             const meta = (label: string, value: React.ReactNode) => items.push(

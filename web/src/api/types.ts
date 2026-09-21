@@ -177,6 +177,7 @@ export interface LatestUsage {
   via?: string
   model: string
   upstreamModel?: string
+  reasoningEffort?: string
   statusCode: number
 }
 

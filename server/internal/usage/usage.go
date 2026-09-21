@@ -298,15 +298,16 @@ type StatsSummary struct {
 
 // LatestUsage 最近生效流量（成功请求命中的渠道、线路与模型）
 type LatestUsage struct {
-	ID            int64  `json:"id"`
-	CreatedAt     int64  `json:"createdAt"`
-	ChannelID     int64  `json:"channelId"`
-	ChannelName   string `json:"channelName,omitempty"`
-	LineURL       string `json:"lineUrl,omitempty"` // 实际路由线路（base_url）
-	Via           string `json:"via,omitempty"`     // 连接路径：direct | personal | proxy:{id}
-	Model         string `json:"model"`
-	UpstreamModel string `json:"upstreamModel,omitempty"`
-	StatusCode    int    `json:"statusCode"`
+	ID              int64  `json:"id"`
+	CreatedAt       int64  `json:"createdAt"`
+	ChannelID       int64  `json:"channelId"`
+	ChannelName     string `json:"channelName,omitempty"`
+	LineURL         string `json:"lineUrl,omitempty"` // 实际路由线路（base_url）
+	Via             string `json:"via,omitempty"`     // 连接路径：direct | personal | proxy:{id}
+	Model           string `json:"model"`
+	UpstreamModel   string `json:"upstreamModel,omitempty"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"` // 推理强度（v1.5.58，未开启为空）
+	StatusCode      int    `json:"statusCode"`
 }
 
 // Stats 完整统计响应
@@ -431,14 +432,15 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) 
 	// 分组取最新一条成功日志，展示最近 5 个组合（含实际路由线路与连接路径）。
 	// 成功口径与错误率一致（v1.5.55）：200 但带错误摘要（流内失败）不算成功
 	var recent []struct {
-		ID            int64
-		CreatedAt     int64
-		ChannelID     int64
-		Model         string
-		UpstreamModel string
-		StatusCode    int
-		LineURL       string
-		Via           string
+		ID              int64
+		CreatedAt       int64
+		ChannelID       int64
+		Model           string
+		UpstreamModel   string
+		ReasoningEffort string
+		StatusCode      int
+		LineURL         string
+		Via             string
 	}
 	sub := db.Model(&store.Log{}).
 		Select("MAX(id) AS id").
@@ -450,7 +452,7 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) 
 	sub = sub.Group("channel_id, model")
 	err := db.Model(&store.Log{}).
 		Where("id IN (?)", sub).
-		Select("id, created_at, channel_id, COALESCE(model,'') AS model, COALESCE(upstream_model,'') AS upstream_model, COALESCE(status_code,0) AS status_code, COALESCE(line_url,'') AS line_url, COALESCE(via,'') AS via").
+		Select("id, created_at, channel_id, COALESCE(model,'') AS model, COALESCE(upstream_model,'') AS upstream_model, COALESCE(reasoning_effort,'') AS reasoning_effort, COALESCE(status_code,0) AS status_code, COALESCE(line_url,'') AS line_url, COALESCE(via,'') AS via").
 		Order("id DESC").Limit(5).
 		Scan(&recent).Error
 	if err != nil {
@@ -461,14 +463,15 @@ func QueryStats(db *gorm.DB, userID *int64, since, until int64, tokenID *int64) 
 			continue
 		}
 		st.Recent = append(st.Recent, LatestUsage{
-			ID:            recent[i].ID,
-			CreatedAt:     recent[i].CreatedAt,
-			ChannelID:     recent[i].ChannelID,
-			LineURL:       recent[i].LineURL,
-			Via:           recent[i].Via,
-			Model:         recent[i].Model,
-			UpstreamModel: recent[i].UpstreamModel,
-			StatusCode:    recent[i].StatusCode,
+			ID:              recent[i].ID,
+			CreatedAt:       recent[i].CreatedAt,
+			ChannelID:       recent[i].ChannelID,
+			LineURL:         recent[i].LineURL,
+			Via:             recent[i].Via,
+			Model:           recent[i].Model,
+			UpstreamModel:   recent[i].UpstreamModel,
+			ReasoningEffort: recent[i].ReasoningEffort,
+			StatusCode:      recent[i].StatusCode,
 		})
 	}
 	return st, nil

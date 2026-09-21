@@ -7,6 +7,8 @@ export default {
   'common.note': '备注',
   'common.createdAt': '创建时间',
   'common.edit': '编辑',
+  'common.expand': '展开',
+  'common.collapse': '收起',
   'common.delete': '删除',
   'common.cancel': '取消',
   'common.ok': '确定',

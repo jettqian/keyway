@@ -169,6 +169,7 @@ const StatsPage: React.FC = () => {
                 render: (_, r: LatestUsage) => (
                   <span>
                     <b>{r.model}</b>
+                    {r.reasoningEffort ? <Tag color="purple" style={{ marginInlineStart: 6, fontSize: 12, lineHeight: '16px', padding: '0 4px' }}>{r.reasoningEffort}</Tag> : null}
                     {r.upstreamModel && r.upstreamModel !== r.model ? (
                       <span className="text-tertiary">{t('stats.upstreamSuffix', { model: r.upstreamModel })}</span>
                     ) : null}

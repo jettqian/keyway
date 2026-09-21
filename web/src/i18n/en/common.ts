@@ -6,6 +6,8 @@ export default {
   'common.note': 'Note',
   'common.createdAt': 'Created At',
   'common.edit': 'Edit',
+  'common.expand': 'Expand',
+  'common.collapse': 'Collapse',
   'common.delete': 'Delete',
   'common.cancel': 'Cancel',
   'common.ok': 'OK',
