@@ -73,6 +73,8 @@ export default {
   'channels.testDetail': 'Path {via}, latency {latency}',
   'channels.breaker': 'Breaker',
   'channels.breakerCount': '{count} model(s) tripped',
+  'channels.breakerDueCount': '{count} model(s) half-open',
+  'channels.breakerTrialReady': 'cooldown expired, next request runs a trial',
   'channels.breakerDetailTitle': 'Breaker Details (channel × model)',
   'channels.breakerHint': 'While tripped, the model on this channel is excluded from routing and traffic stays on fallback channels; after the cooldown expires, the next request runs a single trial and the breaker closes on success. Manual recovery is also available.',
   'channels.breakerFailCount': '{count} consecutive failure(s)',

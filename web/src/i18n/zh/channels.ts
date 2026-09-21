@@ -74,6 +74,8 @@ export default {
   'channels.testDetail': '路径 {via}，延迟 {latency}',
   'channels.breaker': '熔断',
   'channels.breakerCount': '{count} 个模型熔断',
+  'channels.breakerDueCount': '{count} 个模型待试探',
+  'channels.breakerTrialReady': '冷却已到期，下一请求放行试探',
   'channels.breakerDetailTitle': '熔断明细（渠道 × 模型）',
   'channels.breakerHint': '熔断期间该渠道的对应模型不参与路由、流量稳定走备用渠道；冷却到期后下一个请求放行一次试探，成功即切回，亦可手动恢复。',
   'channels.breakerFailCount': '连续失败 {count} 次',

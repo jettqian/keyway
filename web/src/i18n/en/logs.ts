@@ -16,6 +16,8 @@ export default {
   'logs.timing': 'Time',
   'logs.ttftShort': 'FB ',
   'logs.totalShort': '· T ',
+  'logs.upstreamModel': 'Upstream Model',
+  'logs.key': 'Key',
   'logs.allLogs': 'All',
   'logs.failuresOnly': 'Failures only',
 }

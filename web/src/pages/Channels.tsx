@@ -268,33 +268,39 @@ const ChannelsPage: React.FC = () => {
     }
   }
 
-  // 熔断明细弹层（FR-B5）：模型、失败次数、下次试探时间、最近错误与逐项恢复
+  // 熔断明细弹层（FR-B5）：模型、失败次数、下次试探时间、最近错误与逐项恢复。
+  // 冷却已到期的行进入半开（v1.5.58）：流量实际已在恢复（下一请求放行单组合
+  // 试探），标签换橙色「待试探」，不再误导为仍在熔断
   const breakerPopover = (list: BreakerInfo[]) => (
     <div style={{ maxWidth: 480 }}>
       <div className="text-secondary" style={{ marginBottom: 8, whiteSpace: 'normal' }}>
         {t('channels.breakerHint')}
       </div>
-      {list.map((b) => (
-        <div
-          key={`${b.channelId}-${b.model}`}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderTop: '1px solid var(--kw-border, #eee)' }}
-        >
-          <Tag color="red">{b.model}</Tag>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span className="text-secondary">
-              {t('channels.breakerFailCount', { count: b.failCount })} · {t('channels.breakerNextTrial', { time: dayjs.unix(b.cooldownUntil).format('MM-DD HH:mm') })}
+      {list.map((b) => {
+        const due = b.cooldownUntil <= Date.now() / 1000
+        return (
+          <div
+            key={`${b.channelId}-${b.model}`}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderTop: '1px solid var(--kw-border, #eee)' }}
+          >
+            <Tag color={due ? 'orange' : 'red'}>{b.model}</Tag>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span className="text-secondary">
+                {t('channels.breakerFailCount', { count: b.failCount })} ·{' '}
+                {due ? t('channels.breakerTrialReady') : t('channels.breakerNextTrial', { time: dayjs.unix(b.cooldownUntil).format('MM-DD HH:mm') })}
+              </span>
+              {b.lastError ? (
+                <div className="text-secondary" style={{ fontSize: 12, whiteSpace: 'normal', wordBreak: 'break-all' }}>
+                  {b.lastError}
+                </div>
+              ) : null}
             </span>
-            {b.lastError ? (
-              <div className="text-secondary" style={{ fontSize: 12, whiteSpace: 'normal', wordBreak: 'break-all' }}>
-                {b.lastError}
-              </div>
-            ) : null}
-          </span>
-          <Button size="small" onClick={() => recoverBreaker(b.channelId, b.model)}>
-            {t('channels.breakerRecover')}
-          </Button>
-        </div>
-      ))}
+            <Button size="small" onClick={() => recoverBreaker(b.channelId, b.model)}>
+              {t('channels.breakerRecover')}
+            </Button>
+          </div>
+        )
+      })}
       <Button size="small" block style={{ marginTop: 8 }} onClick={() => recoverBreaker(list[0].channelId)}>
         {t('channels.breakerRecoverAll')}
       </Button>
@@ -377,10 +383,12 @@ const ChannelsPage: React.FC = () => {
             render: (_, c: Channel) => {
               const list = breakers.filter((b) => b.channelId === c.id)
               if (!list.length) return <span className="text-secondary">—</span>
+              // 全部行冷却已到期 → 橙色「待试探」（半开）；仍有冷却中的 → 红色熔断
+              const allDue = list.every((b) => b.cooldownUntil <= Date.now() / 1000)
               return (
                 <Popover trigger="click" placement="left" title={t('channels.breakerDetailTitle')} content={breakerPopover(list)}>
-                  <Tag color="red" style={{ cursor: 'pointer' }}>
-                    {t('channels.breakerCount', { count: list.length })}
+                  <Tag color={allDue ? 'orange' : 'red'} style={{ cursor: 'pointer' }}>
+                    {allDue ? t('channels.breakerDueCount', { count: list.length }) : t('channels.breakerCount', { count: list.length })}
                   </Tag>
                 </Popover>
               )

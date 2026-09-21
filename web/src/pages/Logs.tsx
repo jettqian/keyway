@@ -1,7 +1,7 @@
 import React from 'react'
-import { Table, Select, Input, InputNumber, Popover, Segmented, Tag, Typography, message } from 'antd'
-import { listLogs, listChannels } from '../api'
-import type { LogEntry, Channel } from '../api/types'
+import { Table, Select, Input, InputNumber, Popover, Segmented, Typography, message } from 'antd'
+import { listLogs, listChannels, listKeys } from '../api'
+import type { LogEntry, Channel, ApiKey } from '../api/types'
 import Money from '../components/Money'
 import LineUrl from '../components/LineUrl'
 import { formatDateTime, fmtInt, fmtMs } from '../format'
@@ -12,6 +12,7 @@ const LogsPage: React.FC = () => {
   const [logs, setLogs] = React.useState<LogEntry[]>([])
   const [total, setTotal] = React.useState(0)
   const [channels, setChannels] = React.useState<Channel[]>([])
+  const [keys, setKeys] = React.useState<ApiKey[]>([])
   const [loading, setLoading] = React.useState(false)
   const [page, setPage] = React.useState(1)
   const [pageSize, setPageSize] = React.useState(20)
@@ -35,7 +36,16 @@ const LogsPage: React.FC = () => {
     listChannels()
       .then((r) => setChannels(r.channels))
       .catch(() => {})
+    listKeys()
+      .then((r) => setKeys(r.keys))
+      .catch(() => {})
   }, [])
+
+  const keyName = (id?: number | null) => {
+    if (!id) return null
+    const k = keys.find((x) => x.id === id)
+    return k ? k.name : `#${id}`
+  }
 
   return (
     <div>
@@ -93,6 +103,34 @@ const LogsPage: React.FC = () => {
             }
           },
         }}
+        // 行展开（v1.5.58）：路由与元数据移入展开区，主表 8 列免横向滚动
+        expandable={{
+          expandedRowRender: (l) => {
+            const items: React.ReactNode[] = []
+            const meta = (label: string, value: React.ReactNode) => items.push(
+              <span key={label} style={{ whiteSpace: 'nowrap' }}>
+                <span className="text-tertiary">{label}：</span>
+                {value}
+              </span>,
+            )
+            meta(t('logs.line'), <LineUrl url={l.lineUrl} via={l.via} />)
+            if (l.upstreamModel && l.upstreamModel !== l.model) meta(t('logs.upstreamModel'), l.upstreamModel)
+            if (l.protocol) meta(t('logs.protocol'), l.protocol)
+            if (l.reasoningEffort) meta(t('logs.reasoningEffort'), l.reasoningEffort)
+            const kn = keyName(l.keyId)
+            if (kn) meta(t('logs.key'), kn)
+            return (
+              <div style={{ padding: '2px 0 6px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 24px' }}>{items}</div>
+                {l.error ? (
+                  <Typography.Paragraph copyable={{ text: l.error }} className="log-error-detail" style={{ marginBottom: 0, marginTop: 6 }}>
+                    {l.error}
+                  </Typography.Paragraph>
+                ) : null}
+              </div>
+            )
+          },
+        }}
         columns={[
           { title: t('common.time'), dataIndex: 'createdAt', width: 150, render: (v: number | string) => formatDateTime(v) },
           {
@@ -100,33 +138,10 @@ const LogsPage: React.FC = () => {
             dataIndex: 'channelName',
           },
           {
-            // 线路 + 连接路径合并（via 弱色追加，v1.5.57）：列数瘦身免横向滚动
-            title: t('logs.line'),
-            dataIndex: 'lineUrl',
-            width: 200,
-            ellipsis: { showTitle: false },
-            render: (v: string, l) => <LineUrl url={v} via={l.via} />,
-          },
-          {
-            // 模型 + 协议/推理强度合并：元数据以弱化小标签垫在模型名下
             title: t('common.model'),
             dataIndex: 'model',
             ellipsis: true,
-            render: (v: string, l) => (
-              <div style={{ minWidth: 0 }}>
-                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v || '—'}</div>
-                {l.protocol || l.reasoningEffort ? (
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {l.protocol ? <span className="text-tertiary" style={{ fontSize: 12 }}>{l.protocol}</span> : null}
-                    {l.reasoningEffort ? (
-                      <Tag color="purple" style={{ marginInlineEnd: 0, fontSize: 12, lineHeight: '16px', padding: '0 4px' }}>
-                        {l.reasoningEffort}
-                      </Tag>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ),
+            render: (v: string) => v || '—',
           },
           {
             title: t('common.status'),

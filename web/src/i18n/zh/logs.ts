@@ -17,6 +17,8 @@ export default {
   'logs.timing': '耗时',
   'logs.ttftShort': '首 ',
   'logs.totalShort': '总 ',
+  'logs.upstreamModel': '上游模型',
+  'logs.key': '密钥',
   'logs.allLogs': '全部',
   'logs.failuresOnly': '仅失败',
 }
