@@ -138,6 +138,7 @@ export interface LogQuery {
   channelId?: number
   model?: string
   statusCode?: number
+  failed?: boolean
 }
 
 export interface StatsSummary {

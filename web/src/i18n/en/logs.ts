@@ -13,4 +13,6 @@ export default {
   'logs.error': 'Error',
   'logs.cachedTokens': '(cached {count})',
   'logs.viewFullError': 'Click to view the full error',
+  'logs.allLogs': 'All',
+  'logs.failuresOnly': 'Failures only',
 }

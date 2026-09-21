@@ -1,5 +1,5 @@
 import React from 'react'
-import { Table, Select, Input, InputNumber, Popover, Tag, Typography, message } from 'antd'
+import { Table, Select, Input, InputNumber, Popover, Segmented, Tag, Typography, message } from 'antd'
 import { listLogs, listChannels } from '../api'
 import type { LogEntry, Channel } from '../api/types'
 import Money from '../components/Money'
@@ -15,18 +15,19 @@ const LogsPage: React.FC = () => {
   const [loading, setLoading] = React.useState(false)
   const [page, setPage] = React.useState(1)
   const [pageSize, setPageSize] = React.useState(20)
+  const [failedOnly, setFailedOnly] = React.useState(false)
   const [filter, setFilter] = React.useState<{ channelId?: number; model?: string; statusCode?: number }>({})
 
   const refresh = React.useCallback(() => {
     setLoading(true)
-    listLogs({ page, pageSize, ...filter })
+    listLogs({ page, pageSize, failed: failedOnly || undefined, ...filter })
       .then((r) => {
         setLogs(r.logs)
         setTotal(r.total)
       })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
-  }, [page, pageSize, filter])
+  }, [page, pageSize, failedOnly, filter])
 
   React.useEffect(refresh, [refresh])
 
@@ -39,7 +40,18 @@ const LogsPage: React.FC = () => {
   return (
     <div>
       <div className="page-heading"><div><h2>{t('logs.title')}</h2><p>{t('logs.subtitle')}</p></div></div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Segmented
+          value={failedOnly ? 'failed' : 'all'}
+          options={[
+            { value: 'all', label: t('logs.allLogs') },
+            { value: 'failed', label: t('logs.failuresOnly') },
+          ]}
+          onChange={(v) => {
+            setFailedOnly(v === 'failed')
+            setPage(1)
+          }}
+        />
         <Select
           allowClear
           placeholder={t('logs.channel')}

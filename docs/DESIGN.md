@@ -1,6 +1,13 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.52（与 PRD v1.5.55 对应；**错误率统计口径修正**——流内失败（v1.5.54 起记
+- 版本：v1.53（与 PRD v1.5.56 对应；日志页三处修正——① 每页条数选择器生效：
+  `Logs.tsx` 的 pageSize 原硬编码 20、antd onChange(page,size) 的 size 被忽略，
+  现为状态随选择器更新（20/50/100）并回第 1 页；② 状态列对 200+错误摘要
+  （流内失败）红染；③ 「仅失败」快捷筛选：`usage.LogQuery.FailedOnly`
+  （`WHERE error IS NOT NULL AND error != ''`，跨状态码），`GET /api/logs?
+  failed=1`，与渠道/模型/状态码筛选叠加，切换回第 1 页；中英文案
+  logs.allLogs/failuresOnly 同步）；
+  前版 v1.52：与 PRD v1.5.55 对应；**错误率统计口径修正**——流内失败（v1.5.54 起记
   200 + error 摘要）原被 `status_code < 400` 判成功，错误率 0% 与熔断开闸自相矛盾；
   现三处同口径改为 `status_code >= 400 OR error IS NOT NULL` 计错误
   （`usage.QueryStats` 汇总与分组、`usage.QueryLinks` 的 ok 判定——links.go 的 ok
@@ -1258,7 +1265,7 @@ GET /oauth/feishu/callback?code&state
 | PUT /api/tokens/:id | 更新令牌（名称 / 限定渠道；`channelIds` 启用集合（顺序即路由优先级）、`channelOrder` 面板顺序（含已关闭渠道，纯 UI）、`restricted` 限定标志三者分离——限定 + 空启用集合 = 全部临时停用（路由零候选），开关渠道不改变顺序） |
 | POST /api/tokens/:id/reveal | 所属用户回看完整令牌（复制密钥按钮数据源） |
 | POST /api/tokens/:id/revoke | 吊销令牌（立即失效，保留记录） |
-| GET /api/logs | 自己的日志（分页/过滤） |
+| GET /api/logs | 自己的日志（分页/过滤；`failed=1` 仅看失败——error 非空跨状态码，含流内失败行，v1.5.56） |
 | GET /api/stats | 自己的统计（含最近生效流量 recent：同渠道同模型去重后的最新 5 个组合，含实际线路 lineUrl/via；start/end 自定义时间窗，缺省 days） |
 | GET /api/stats/links | 本人渠道的渠道×模型链路状态（尝试口径聚合 + 熔断快照叠加，熔断中零尝试也展示；v1.44） |
 | GET /api/config/export?secrets=1 | 导出本人用户配置（密钥池/渠道/令牌）为 JSON 附件：secrets=1 完整备份（含密钥值/令牌明文/代理明文），缺省纯结构；已吊销令牌不导出（v1.5.50，见 §11.3） |

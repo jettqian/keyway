@@ -14,4 +14,6 @@ export default {
   'logs.error': '错误',
   'logs.cachedTokens': '（缓存 {count}）',
   'logs.viewFullError': '点击查看完整错误',
+  'logs.allLogs': '全部',
+  'logs.failuresOnly': '仅失败',
 }

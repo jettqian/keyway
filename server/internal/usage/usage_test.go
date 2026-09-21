@@ -474,3 +474,39 @@ func TestQueryStats流内失败计错误(t *testing.T) {
 		}
 	}
 }
+
+// 仅看失败过滤（v1.5.56）：error 非空跨状态码筛选——含 200+错误摘要的
+// 流内失败行，与状态码筛选可叠加
+func TestQueryLogs仅看失败(t *testing.T) {
+	st, err := store.Open(store.Options{DataDir: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	db := st.DB()
+
+	logs := []store.Log{
+		{CreatedAt: 100, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200)},
+		{CreatedAt: 200, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(200), Error: strp("流内错误事件 type=overloaded_error")},
+		{CreatedAt: 300, UserID: 1, ChannelID: i64p(1), Model: strp("m1"), StatusCode: intp(503), Error: strp("上游 503")},
+	}
+	for i := range logs {
+		if err := db.Create(&logs[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	uid := int64(1)
+	got, total, err := QueryLogs(db, &uid, LogQuery{FailedOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("期望 2 条失败行（503 与流内失败），实际 %d", total)
+	}
+	for _, l := range got {
+		if l.Error == nil {
+			t.Errorf("仅看失败不应返回无错误行: %+v", l)
+		}
+	}
+}

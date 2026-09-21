@@ -232,6 +232,7 @@ type LogQuery struct {
 	ChannelID  *int64
 	Model      string
 	StatusCode *int
+	FailedOnly bool // 仅看失败：error 非空（跨状态码——含 200+错误摘要的流内失败）
 }
 
 // QueryLogs 查询日志（userID 为 nil 时管理员查全部）
@@ -254,6 +255,9 @@ func QueryLogs(db *gorm.DB, userID *int64, q LogQuery) ([]store.Log, int64, erro
 	}
 	if q.StatusCode != nil {
 		tx = tx.Where("status_code = ?", *q.StatusCode)
+	}
+	if q.FailedOnly {
+		tx = tx.Where("error IS NOT NULL AND error != ''")
 	}
 	var total int64
 	if err := tx.Count(&total).Error; err != nil {

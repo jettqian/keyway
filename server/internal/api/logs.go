@@ -57,6 +57,10 @@ func (s *Server) handleLogs(c *gin.Context) {
 		code, _ := strconv.Atoi(v)
 		q.StatusCode = &code
 	}
+	// 仅看失败（v1.5.56）：error 非空，跨状态码（含 200+错误摘要的流内失败）
+	if v := c.Query("failed"); v == "1" || v == "true" {
+		q.FailedOnly = true
+	}
 	logs, total, err := usage.QueryLogs(s.Store.DB(), &u.ID, q)
 	if err != nil {
 		s.fail(c, http.StatusInternalServerError, "查询失败")
