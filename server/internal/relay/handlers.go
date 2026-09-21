@@ -239,16 +239,29 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, lastErr, reqStart)
 				continue
 			}
+			// 流式：先窥探首帧再提交（FR-SG2，与 chat 管线同策略；oct-yescode 案例）
+			if probe.Stream {
+				u, ttft, total, fate, summary, committed := s.streamResponse(c, a, "openai", resp, reqStart, 0, dialectResponses)
+				if !committed {
+					lastErr = summary
+					s.Routing.MarkChannelStatus(rc.Channel.ID, false, summary)
+					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, summary, reqStart)
+					continue
+				}
+				recorded[rc.Channel.ID] = true // 结局记账已完成，渠道段落不再重复计
+				mark := ""
+				if fate == fateErrFrame || fate == fateAborted {
+					mark = summary
+				}
+				s.Routing.MarkChannelStatus(rc.Channel.ID, mark == "", mark)
+				s.recordStreamOutcome(rc.Channel.ID, probe.Model, fate, summary)
+				s.submitLogWithError(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, u, ttft, total, mark)
+				return
+			}
 			s.recordUpstreamOutcome(rc.Channel.ID, probe.Model, resp.StatusCode)
 			recorded[rc.Channel.ID] = true
-			s.Routing.MarkChannelStatus(a.rc.Channel.ID, resp.StatusCode < 400, "")
-			var u convert.Usage
-			ttft, total := int64(0), int64(0)
-			if probe.Stream {
-				u, ttft, total = s.streamResponse(c, a, "openai", resp, reqStart, 0)
-			} else {
-				u, ttft, total = s.bodyResponse(c, a, "openai", resp, reqStart, 0)
-			}
+			s.Routing.MarkChannelStatus(rc.Channel.ID, resp.StatusCode < 400, "")
+			u, ttft, total := s.bodyResponse(c, a, "openai", resp, reqStart, 0)
 			s.submitLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, u, ttft, total)
 			return
 		}
@@ -469,21 +482,45 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			continue
 		}
 
-		// 成功（或其他 4xx 透传）：按最终状态维护熔断（2xx/3xx 关闭；404 计为
+		// 流式：先窥探首帧再提交（FR-SG2）——首帧错误/超时/零数据终止按上游
+		// 失败换下一组合，未向客户端写出任何字节（无损切换）
+		if stream {
+			if len(dropped) > 0 {
+				c.Header("X-Keyway-Dropped", strings.Join(dropped, ","))
+			}
+			dialect := dialectChat
+			if a.protocol == "anthropic" {
+				dialect = dialectAnthropic
+			}
+			promptEst := estimateRequestTokens(inbound, rawBody)
+			u, ttft, total, fate, summary, committed := s.streamResponse(c, a, inbound, resp, reqStart, promptEst, dialect)
+			if !committed {
+				segErr = summary
+				lastErr = summary
+				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, summary)
+				s.submitFailureLog(c, a, inbound, model, upstreamModel, http.StatusBadGateway, summary, reqStart)
+				continue
+			}
+			// 提交后按流结局记账（FR-SG1）：错误/异常终止计熔断失败并落错误摘要
+			mark := ""
+			if fate == fateErrFrame || fate == fateAborted {
+				mark = summary
+			}
+			s.Routing.MarkChannelStatus(a.rc.Channel.ID, mark == "", mark)
+			s.recordStreamOutcome(a.rc.Channel.ID, model, fate, summary)
+			s.submitLogWithError(c, a, inbound, model, upstreamModel, resp.StatusCode, u, ttft, total, mark)
+			return
+		}
+
+		// 非流式成功（或其他 4xx 透传）：按最终状态维护熔断（2xx/3xx 关闭；404 计为
 		// 模型维度失败，其余 4xx 是客户端侧问题不计）
 		s.recordUpstreamOutcome(a.rc.Channel.ID, model, resp.StatusCode)
 		s.Routing.MarkChannelStatus(a.rc.Channel.ID, resp.StatusCode < 400, "")
 		if len(dropped) > 0 {
 			c.Header("X-Keyway-Dropped", strings.Join(dropped, ","))
 		}
-		var u convert.Usage
-		ttft, total := int64(0), int64(0)
 		promptEst := estimateRequestTokens(inbound, rawBody)
-		if stream {
-			u, ttft, total = s.streamResponse(c, a, inbound, resp, reqStart, promptEst)
-		} else {
-			u, ttft, total = s.bodyResponse(c, a, inbound, resp, reqStart, promptEst)
-		}
+		u, ttft, total := s.bodyResponse(c, a, inbound, resp, reqStart, promptEst)
 		s.submitLog(c, a, inbound, model, upstreamModel, resp.StatusCode, u, ttft, total)
 		return
 	}
@@ -633,18 +670,32 @@ func copyForwardHeaders(dst, src http.Header) {
 }
 
 // streamResponse 流式回写：跨协议走转换器，同协议逐行透传（flush）；公共代理统计出站字节。
+// v1.5.54 重构（FR-SG1/SG2）：先**窥探首帧**再向客户端提交——首帧是错误事件、
+// 零数据终止或首帧超时（复用空闲超时配置）→ 不提交任何字节，返回
+// committed=false 由调用方继续尝试下一组合（可无损切换）；提交后透传全程
+// 由 streamTracker 追踪结局，正常结束/流内错误/异常终止分别回报调用方记账。
 // 保活与止损（对齐 new-api 的 SSE 处理经验）：
 //   - ping：每 15s 向客户端写一行 SSE 注释（": ping"），防中间代理掐断长空闲连接
 //   - 空闲超时：上游连续 IdleStreamTimeoutSec 无数据 → 关闭上游 body 唤醒读循环并告知客户端
 //   - 客户端断开：立即关闭上游 body 止损（不等 transport 传播）
 //   - usage 兜底：上游未回传 usage 时按入站请求与累计输出文本本地估算
 //
-// 返回 usage、首字节耗时（自请求开始到首个写出块）、总耗时
-func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time, promptEst int) (convert.Usage, int64, int64) {
+// 返回 usage、首字节耗时、总耗时、流结局（fate）与失败摘要、是否已向客户端提交
+func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp *http.Response, reqStart time.Time, promptEst int, dialect streamDialect) (convert.Usage, int64, int64, streamFate, string, bool) {
 	channelType := a.protocol
 	if channelType == "" {
 		channelType = inbound
 	}
+	idle := time.Duration(s.Cfg.IdleStreamTimeoutSec) * time.Second
+
+	// 阶段一：首帧窥探（FR-SG2）——未提交任何字节前判定，失败可无损切换
+	pk := peekFirstData(resp, dialect, idle, c.Request.Context())
+	if !pk.committed {
+		return convert.Usage{}, 0, 0, pk.fate, pk.summary, false
+	}
+
+	// 阶段二：提交响应头，进入透传
+	tracker := newStreamTracker(dialect)
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -680,7 +731,7 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 	watchDone := make(chan struct{})
 	var lastUpstream atomic.Int64
 	lastUpstream.Store(time.Now().UnixMilli())
-	idle := time.Duration(s.Cfg.IdleStreamTimeoutSec) * time.Second
+	var clientGone atomic.Bool
 	go func() {
 		defer close(watchDone)
 		// 检查粒度 500ms：空闲超时（可低至秒级）与 ping（15s）共用同一循环
@@ -698,6 +749,7 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 				return
 			case <-reqCtx.Done():
 				// 客户端断开：立即关闭上游止损
+				clientGone.Store(true)
 				resp.Body.Close()
 				return
 			case <-t.C:
@@ -731,26 +783,35 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 			ttft = time.Since(reqStart).Milliseconds()
 		}
 	}
+	// 行处理：窥探缓冲与后续读取统一喂入（含结局追踪与 usage 嗅探）
+	processChunk := func(chunk []byte) {
+		if len(chunk) == 0 {
+			return
+		}
+		lastUpstream.Store(time.Now().UnixMilli())
+		totalBytes += int64(len(chunk))
+		lineBuf = append(lineBuf, chunk...)
+		for {
+			idx := bytes.IndexByte(lineBuf, '\n')
+			if idx < 0 {
+				break
+			}
+			line := lineBuf[:idx+1]
+			lineBuf = lineBuf[idx+1:]
+			tracker.feedLine(line)
+			s.writeStreamLine(conv, line, &u, markTTFT, writeOut)
+			tally.feed(line)
+		}
+	}
+	processChunk(pk.buf)
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			lastUpstream.Store(time.Now().UnixMilli())
-			totalBytes += int64(n)
-			markTTFT()
-			lineBuf = append(lineBuf, buf[:n]...)
-			for {
-				idx := bytes.IndexByte(lineBuf, '\n')
-				if idx < 0 {
-					break
-				}
-				line := lineBuf[:idx+1]
-				lineBuf = lineBuf[idx+1:]
-				s.writeStreamLine(conv, line, &u, markTTFT, writeOut)
-				tally.feed(line)
-			}
+			processChunk(buf[:n])
 		}
 		if readErr != nil {
 			if len(lineBuf) > 0 {
+				tracker.feedTail(lineBuf)
 				s.writeStreamLine(conv, lineBuf, &u, markTTFT, writeOut)
 				tally.feed(lineBuf)
 			}
@@ -781,8 +842,12 @@ func (s *Server) streamResponse(c *gin.Context, a attempt, inbound string, resp 
 			u.CompletionTokens = est
 		}
 	}
+	if clientGone.Load() {
+		tracker.markClientGone()
+	}
+	fate, summary := tracker.ended()
 	total := time.Since(reqStart).Milliseconds()
-	return u, ttft, total
+	return u, ttft, total, fate, summary, true
 }
 
 func (s *Server) writeStreamLine(conv interface {
@@ -893,6 +958,25 @@ func (s *Server) recordUpstreamOutcome(channelID int64, model string, statusCode
 		s.Breaker.RecordFailure(channelID, model, "上游 404（模型或端点不存在）")
 	case keyLevelStatus(statusCode):
 		s.Breaker.RecordFailure(channelID, model, fmt.Sprintf("上游 %d", statusCode))
+	}
+}
+
+// recordStreamOutcome 流式结局的熔断记账（FR-SG1，v1.5.54）：正常结束 →
+// 关闭熔断（流量切回）；流内错误事件/异常终止 → 计一次「渠道×模型」失败
+// （keyway 此前对流式一律按 HTTP 200 记成功，200+SSE 错误事件会清零熔断计数，
+// oct-yescode 案例中限额渠道因此长期不被熔断）；客户端断开不计（不归上游）
+func (s *Server) recordStreamOutcome(channelID int64, model string, fate streamFate, summary string) {
+	if s.Breaker == nil || model == "" {
+		return
+	}
+	switch fate {
+	case fateOK:
+		s.Breaker.RecordSuccess(channelID, model)
+	case fateErrFrame, fateAborted:
+		if summary == "" {
+			summary = "流异常终止"
+		}
+		s.Breaker.RecordFailure(channelID, model, summary)
 	}
 }
 

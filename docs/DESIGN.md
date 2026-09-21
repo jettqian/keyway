@@ -1,6 +1,16 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.50（与 PRD v1.5.53 对应；新增**推理强度维度**——`relay/handlers.go`
+- 版本：v1.51（与 PRD v1.5.54 对应；新增**流式失败检测与切换**——`relay/streamguard.go`
+  帧分类器（错误帧=JSON 带 `error` 对象 / `type=="error"`；终止标记=chat `[DONE]`、
+  anthropic `message_stop`、responses `response.completed/failed/incomplete/cancelled`）
+  + `streamTracker` 透传结局追踪 + `peekFirstData` 首帧窥探（提交 200 头前读首帧，
+  错误帧/零数据终止/首帧超时（复用 `KEYWAY_IDLE_STREAM_TIMEOUT_S`，经 `time.AfterFunc`
+  关闭 body 解除阻塞）→ 不提交、按上游失败换下一组合，无损切换）；`streamResponse`
+  重构为先窥探后提交、窥探缓冲经既有行循环写出，结局（正常/流内错误/异常终止/客户端
+  断开）经 `recordStreamOutcome` 记账——正常 `RecordSuccess`，流内错误与异常终止
+  `RecordFailure`，客户端断开不计；chat（按上游方言 chat/anthropic）与 responses
+  （dialectResponses）两管线接线，失败尝试逐条落日志（502 + 流内错误摘要）；
+  前版 v1.50：与 PRD v1.5.53 对应；新增**推理强度维度**——`relay/handlers.go`
   `reasoningEffortOf` 在三管线入站解析：chat 顶层 `reasoning_effort`、Responses
   `reasoning.effort` 取原值、anthropic `thinking.budget_tokens` 归一 `thinking:N`，
   经 `gin.Context`（kw_effort）传递，`submitLogWithError` 落 `logs.reasoning_effort`
@@ -565,20 +575,23 @@ flowchart TD
     EMPTY -->|"否"| RUN["逐组合执行"]
     REB --> RUN
 
-    subgraph RUN_SG["逐组合执行（首字节保护：已向客户端写出任何字节即停止切换）"]
+    subgraph RUN_SG["逐组合执行（首字节保护：已向客户端写出任何字节即停止切换；流式首帧窥探见 §5.6）"]
         direction TB
         C0{"trial（半开试探）？"} -->|"是"| C1{"ClaimHalfOpen 原子认领"}
         C1 -->|"他人已认领"| C2["跳过该渠道 → 判定候选是否耗尽"]
         C1 -->|"认领成功"| SEND
         C0 -->|"否"| SEND["转发：passthrough 透传 / convert 转换"]
         SEND --> OUT{"上游结果"}
-        OUT -->|"2xx / 3xx"| OK["回写客户端 + 落日志 + RecordSuccess 关闭熔断（请求结束）"]
+        OUT -->|"2xx / 3xx 非流式"| OK["回写客户端 + 落日志 + RecordSuccess 关闭熔断（请求结束）"]
+        OUT -->|"2xx 流式（窥探后提交）"| SOK["结局记账（§5.6）：正常 RecordSuccess / 流内错误与异常终止 RecordFailure（请求结束）"]
+        OUT -->|"2xx 流式（窥探未提交）"| N3["首帧错误/超时/零数据终止 → 按上游失败换下一组合（未写出任何字节，无损切换）"]
         OUT -->|"404"| P404["计熔断失败 + 透传 404（请求结束，不切换）"]
         OUT -->|"其他 4xx"| P4XX["透传（请求结束，不计熔断——客户端侧问题）"]
         OUT -->|"网络错误 / HTML / 5xx"| N1["落失败日志 → 换下一组合"]
         OUT -->|"401 / 402 / 403 / 429"| N2["换密钥（429 按 Retry-After、402 按配额长冷却），密钥耗尽换组合"]
         N1 --> SEG{"本渠道组合耗尽？"}
         N2 --> SEG
+        N3 --> SEG
         SEG -->|"否"| C0
         SEG -->|"是"| RF["RecordFailure ×1（渠道×模型连续失败 +1）→ 换下一候选渠道"]
         RF --> MORE{"候选耗尽？"}
@@ -635,6 +648,9 @@ graph LR
    上游错误（保留状态码与 body）。注意预算不是跨渠道共享的全局上限：首渠道的
    多线路/多密钥组合不得挤占后续渠道的尝试机会（FR-K5/A9，v1.38 修正）
 6. **首字节保护**：一旦向客户端写出任何字节（含流式首包），不再做任何切换，错误透传
+   （v1.5.54 修订：流式首包提交前先**窥探首帧**判定，见 §5.6——首帧错误/超时/
+   零数据终止时尚未写出任何字节，不构成首字节，仍可无损切换；提交后流内错误
+   仅记账不切换）
 7. **熔断过滤（v1.5.45，§5.4）**：生成尝试计划前按 `breakerView` 过滤候选渠道——
    熔断且冷却未到期的渠道整渠道跳过（不占预算）；冷却到期（半开）的渠道只放行
    首个组合并在执行时原子认领；该模型全部候选渠道熔断时旁路（视图置空，与无
@@ -685,7 +701,9 @@ stateDiagram-v2
 ```
 
 > 计入失败的上游形态：网络错误、HTML 回退、5xx、密钥级错误（401/402/403/429，
-> 含换 key 后仍耗尽）、404（模型或端点不存在）；其余 4xx（400/413 等客户端侧问题）
+> 含换 key 后仍耗尽）、404（模型或端点不存在）、**流内错误事件与流异常终止**
+> （v1.5.54 §5.6：流式按结局记账，正常见到终止标记才 `RecordSuccess`——
+> 否则 200+SSE 错误事件会清零熔断计数）；其余 4xx（400/413 等客户端侧问题）
 > 不计。触发阈值的 N 与各冷却时长见 §12 环境变量。
 
 **恢复时间线示例**（渠道 1 priority 100 故障，渠道 2 priority 50 健康）：
@@ -761,6 +779,56 @@ sequenceDiagram
   一致（可用性优先：此时无处可切），旁路尝试成功即自动关闭；chat 管线另有兜底：
   视图过滤后尝试计划为空（如其余渠道无密钥）时同样以空视图重建
 - **默认参数**：阈值 3 / 冷却 600s / 退避上限 3600s（§12 环境变量可调）
+
+### 5.6 流式失败检测与切换（streamguard，v1.5.54，FR-SG）
+
+**动机**：中转/聚合型网关在流式请求下常以 **200 + SSE 错误事件**表达失败
+（oct-yescode 实测：Codex Responses 协议 `type:"error"` /
+`upstream_error stream_read_error`，配额耗尽亦然）。旧实现失败切换与熔断
+全部挂在 HTTP 状态码上：200 → 直接记成功（`recordUpstreamOutcome` 会
+`RecordSuccess` 清零熔断计数）并把错误帧透传给客户端——限额渠道既不切换
+也永不熔断，客户端无辜中断。
+
+**协议依赖面（刻意最小化）**：只依赖少量「锚点」，它们是客户端契约的一部分
+（SDK/Agent 都靠它们判断响应结束），是协议中最稳定的面；其余事件种类与字段
+的演进不影响检测：
+
+| 锚点 | chat | responses | anthropic |
+|---|---|---|---|
+| 终止标记 | `data: [DONE]` | `response.completed/failed/incomplete/cancelled` | `message_stop` |
+| 错误帧 | 顶层 `error` 对象 | `type=="error"`、`response.failed` 嵌套 | `type=="error"` |
+
+传输层事实（EOF / 读错误 / 空闲超时 / 客户端断开）零协议依赖。记账宽松化
+（lenient）：只在「明确看到错误帧」或「未见终止标记的异常终止」时计失败，
+未知的新终止事件形态最多导致一次误记，连续失败阈值可吸收。
+
+**组件**（`internal/relay/streamguard.go`）：
+
+- `classifyDataLine(dialect, line)`：单行分类（frameData / frameTerminal /
+  frameError），解析尽力而为，非法 JSON 按普通帧
+- `streamTracker`：透传循环逐行喂入，结束时给结局（fateOK / fateErrFrame /
+  fateAborted / fateClientGone）；错误事件晚于终止标记仍计失败（错误后置
+  同样是流内失败）；`feedTail` 处理无换行残段
+- `peekFirstData(resp, dialect, timeout, ctx)`：首帧窥探——首个**数据帧**
+  为正常内容或终止标记才提交（非数据行如 SSE 注释/event 行不触发提交，
+  继续等待）；错误帧 / 零数据 EOF / 首帧超时（复用
+  `KEYWAY_IDLE_STREAM_TIMEOUT_S`，`time.AfterFunc` 关闭 body 解除阻塞读）/
+  客户端断开 → 返回未提交 + 失败摘要，窥探缓冲字节带回供提交路径写出
+
+**streamResponse 重构**：先窥探（阶段一，未提交）→ 提交响应头、窥探缓冲经
+既有行循环写出（阶段二）→ 后续读取透传并由 tracker 追踪（阶段三）。跨协议
+转换按**上游**方言判定（转换器入口侧），与透传一致；保活 ping/空闲超时/
+客户端断开（`clientGone` 标志区分结局）行为不变，idle 超时起点含窥探阶段。
+
+**管线接线**（chat 按 `a.protocol` 取 dialectChat/dialectAnthropic，responses
+取 dialectResponses）：
+
+- 未提交失败 → 等同网络错误：`MarkChannelStatus(false)`、逐次尝试落失败
+  日志（状态码记 502 + 流内错误摘要，保持错误率统计口径）、`continue` 换
+  下一组合；渠道段落耗尽由既有分段逻辑计熔断（FR-SG2）
+- 提交后按结局记账（`recordStreamOutcome`，FR-SG1）：fateOK →
+  `RecordSuccess`；fateErrFrame / fateAborted → `RecordFailure`（摘要入
+  熔断行 last_error 与日志 Error 列）；fateClientGone 不计（不归上游）
 
 ### 5.5 出站代理管理（proxyman）
 
@@ -1280,8 +1348,8 @@ warnings 清单 + 「刷新页面查看」。
 
 | 层 | 内容 |
 |---|---|
-| 单元 | convert 金样本 round-trip（§7.5）；错误分类器；attempt plan 排序；**熔断器状态机（阈值/指数退避封顶/半开认领单飞/手动恢复/模型维度隔离，注入时钟）**；AES-GCM/bcrypt |
-| 集成 | httptest 模拟上游矩阵：透传/转换、流式分块边界、失败切换链（网络→换线、429→换 key+冷却、402 计费限额→换 key+长冷却+密钥耗尽切渠道、预算耗尽→换渠道→502 透传）、首字节保护、**熔断 e2e（跳过期间上游零命中/模型维度隔离/全候选旁路/探测恢复切回/手动恢复与越权 404）**、半开单组合试探与切回/探测恢复切回/手动恢复与越权 404）**、按需线路预热（宽松判定含 4xx 记通、节流与 0=关闭开关）、**链路状态 e2e（用户隔离/管理端全量含所有者/熔断叠加与零尝试补行/渠道删除后不可见）** |
+| 单元 | convert 金样本 round-trip（§7.5）；错误分类器；attempt plan 排序；**熔断器状态机（阈值/指数退避封顶/半开认领单飞/手动恢复/模型维度隔离，注入时钟）**；**streamguard 帧分类/结局判定/首帧窥探（各方言错误帧与终止标记、错误后置仍计失败、窥探不提交/超时/零数据终止）**；AES-GCM/bcrypt |
+| 集成 | httptest 模拟上游矩阵：透传/转换、流式分块边界、失败切换链（网络→换线、429→换 key+冷却、402 计费限额→换 key+长冷却+密钥耗尽切渠道、预算耗尽→换渠道→502 透传）、首字节保护、**流内错误事件 e2e（200+SSE 错误事件→首帧窥探无损切渠道，chat/responses 双管线；内容已透传后的错误事件原样透传但计熔断，连续 3 次开闸）**、**熔断 e2e（跳过期间上游零命中/模型维度隔离/全候选旁路/探测恢复切回/手动恢复与越权 404）**、半开单组合试探与切回/探测恢复切回/手动恢复与越权 404）**、按需线路预热（宽松判定含 4xx 记通、节流与 0=关闭开关）、**链路状态 e2e（用户隔离/管理端全量含所有者/熔断叠加与零尝试补行/渠道删除后不可见）** |
 | 端到端 | 本地起 keyway + mock 上游，真实 Claude Code（ANTHROPIC_BASE_URL 指向）跑工具调用多轮；Cline 会话内切模型；mihomo socks5 做公共代理打通假"墙外"上游 |
 | 探测 | 虚拟延迟注入验证优选排序与退避 |
 | 压力 | 50 并发流式 10 分钟（PRD A7）；日志批写在高压下的丢弃行为 |

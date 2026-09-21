@@ -371,3 +371,157 @@ func TestE2E失败切换Responses402计费限额切渠道(t *testing.T) {
 	// 逐次尝试落日志：渠道1 一条 402 失败 + 渠道2 一条成功（FR-L1）
 	assertAttemptLogs(t, c.waitLogs(t, "gpt-402r", 2), 1, 1, 402)
 }
+
+// ---------- 流式失败检测与切换（v1.5.54，FR-SG） ----------
+
+// sseDone 终止标记（拼接构造避免整串字面量）
+var sseDone = "data: [" + "DONE]\n\n"
+
+// newSSEUpstream 固定帧的 SSE 上游：200 + 一次性写完全部帧后结束
+type newSSEUpstreamT struct {
+	srv    *httptest.Server
+	mu     sync.Mutex
+	hits   int
+	frames string
+}
+
+func newSSEUpstream(frames string) *newSSEUpstreamT {
+	u := &newSSEUpstreamT{frames: frames}
+	u.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.mu.Lock()
+		u.hits++
+		u.mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		fmt.Fprint(w, frames)
+	}))
+	return u
+}
+
+func (u *newSSEUpstreamT) hitCount() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.hits
+}
+
+// TestE2E流内错误事件切渠道（FR-SG2） chat 管线：上游 200 + 首帧 SSE 错误
+// 事件（oct-yescode 场景，状态码层切换的盲区）→ 首帧窥探判定失败、未向
+// 客户端写出任何字节 → 切渠道2 承接，客户端拿到正常流而非错误事件
+func TestE2E流内错误事件切渠道(t *testing.T) {
+	c, _ := setupApp(t)
+	up1 := newSSEUpstream("data: {\"error\":{\"message\":\"Team spending limit exceeded\",\"type\":\"upstream_error\"}}\n\n")
+	up2 := newSSEUpstream("data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n" + sseDone)
+	defer up1.srv.Close()
+	defer up2.srv.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "fosg1", "password": "password123"}, false); w.Code != 200 {
+		t.Fatalf("注册失败: %d %s", w.Code, w.Body.String())
+	}
+	setupFailover(t, c, []string{up1.srv.URL, up2.srv.URL}, "gpt-sg")
+
+	w := c.do("POST", "/v1/chat/completions", map[string]any{
+		"model": "gpt-sg", "stream": true,
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	}, false)
+	if w.Code != 200 {
+		t.Fatalf("流内错误事件应切渠道2 成功，得到 %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "\"content\":\"ok\"") {
+		t.Fatalf("客户端应拿到渠道2 的正常流，实际: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "spending limit") {
+		t.Fatalf("错误事件不应透传给客户端，实际: %s", w.Body.String())
+	}
+	if up1.hitCount() != 1 || up2.hitCount() != 1 {
+		t.Fatalf("两渠道各应被尝试一次（ch1=%d ch2=%d）", up1.hitCount(), up2.hitCount())
+	}
+	// 逐次尝试落日志：渠道1 一条流内错误失败 + 渠道2 一条成功（FR-L1）
+	logs := c.waitLogs(t, "gpt-sg", 2)
+	fail, ok := 0, 0
+	for _, l := range logs {
+		if l.StatusCode == nil {
+			continue
+		}
+		if *l.StatusCode == 502 {
+			fail++
+			if l.Error == nil || !strings.Contains(*l.Error, "流内错误事件") {
+				t.Fatalf("失败日志应含流内错误摘要，实际: %v", l.Error)
+			}
+		} else if *l.StatusCode == 200 {
+			ok++
+		}
+	}
+	if fail != 1 || ok != 1 {
+		t.Fatalf("失败/成功日志行数 = %d/%d，期望 1/1（总行 %d）", fail, ok, len(logs))
+	}
+}
+
+// TestE2EResponses流内错误事件切渠道（FR-SG2） /v1/responses 管线同场景：
+// 上游 200 + 首帧 type:"error" 事件（upstream_error stream_read_error，
+// 用户实测的 oct-yescode 形态）→ 窥探判失败切渠道2，客户端拿到正常流
+func TestE2EResponses流内错误事件切渠道(t *testing.T) {
+	c, _ := setupApp(t)
+	up1 := newSSEUpstream("data: {\"type\":\"error\",\"sequence_number\":0,\"error\":{\"type\":\"upstream_error\",\"code\":\"stream_read_error\",\"message\":\"stream_read_error\"}}\n\n")
+	up2 := newSSEUpstream("data: {\"type\":\"response.created\",\"sequence_number\":0}\n\n" +
+		"data: {\"type\":\"response.completed\",\"sequence_number\":2,\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
+	defer up1.srv.Close()
+	defer up2.srv.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "fosg2", "password": "password123"}, false); w.Code != 200 {
+		t.Fatalf("注册失败: %d %s", w.Code, w.Body.String())
+	}
+	setupFailover(t, c, []string{up1.srv.URL, up2.srv.URL}, "gpt-sgr")
+
+	w := c.do("POST", "/v1/responses", map[string]any{
+		"model": "gpt-sgr", "input": "hi", "stream": true,
+	}, false)
+	if w.Code != 200 {
+		t.Fatalf("responses 流内错误事件应切渠道2 成功，得到 %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "response.completed") {
+		t.Fatalf("客户端应拿到渠道2 的正常流，实际: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "stream_read_error") {
+		t.Fatalf("错误事件不应透传给客户端，实际: %s", w.Body.String())
+	}
+	if up1.hitCount() != 1 || up2.hitCount() != 1 {
+		t.Fatalf("两渠道各应被尝试一次（ch1=%d ch2=%d）", up1.hitCount(), up2.hitCount())
+	}
+}
+
+// TestE2E流内错误事件中途计熔断（FR-SG1） 头已提交、内容已透传后出现
+// 错误事件：无法换渠道重放，但必须计熔断失败（旧实现按 200 记成功、
+// 清零熔断计数，限额渠道永不熔断）；3 次后渠道×模型熔断
+func TestE2E流内错误事件中途计熔断(t *testing.T) {
+	c, _ := setupApp(t)
+	up := newSSEUpstream("data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"error\":{\"message\":\"upstream died\",\"type\":\"upstream_error\"}}\n\n")
+	defer up.srv.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "fosg3", "password": "password123"}, false); w.Code != 200 {
+		t.Fatalf("注册失败: %d %s", w.Code, w.Body.String())
+	}
+	setupFailover(t, c, []string{up.srv.URL}, "gpt-sgm")
+
+	for i := 0; i < 3; i++ {
+		w := c.do("POST", "/v1/chat/completions", map[string]any{
+			"model": "gpt-sgm", "stream": true,
+			"messages": []map[string]any{{"role": "user", "content": "hi"}},
+		}, false)
+		if w.Code != 200 {
+			t.Fatalf("中途错误已透传（头已提交不切换），得到 %d %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "upstream died") {
+			t.Fatalf("错误事件应原样透传（无法重放），实际: %s", w.Body.String())
+		}
+	}
+	// 3 次失败达到熔断阈值：breaker_states 应有该渠道×模型行（FR-SG1）
+	var rows []store.BreakerState
+	c.store.DB().Where("model = ?", "gpt-sgm").Find(&rows)
+	if len(rows) == 0 {
+		t.Fatal("流内错误连续 3 次应触发熔断（旧实现记成功永不熔断）")
+	}
+	if !strings.Contains(rows[0].LastError, "流内错误事件") {
+		t.Fatalf("熔断行应记录流内错误摘要，实际: %q", rows[0].LastError)
+	}
+}
