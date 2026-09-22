@@ -1,5 +1,5 @@
 import React from 'react'
-import { Button, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, message } from 'antd'
+import { Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { listChannels, updateModelBindings, listCatalogModels } from '../api'
 import type { Channel, CatalogModel } from '../api/types'
@@ -117,10 +117,13 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
   )
 }
 
-const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ channels, loading }) => {
+const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () => void }> = ({ channels, loading, refresh }) => {
   const { t } = useI18n()
   const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
   const [catLoading, setCatLoading] = React.useState(true)
+  const [bindingModel, setBindingModel] = React.useState<CatalogModel | null>(null)
+  const [bindingChannelIDs, setBindingChannelIDs] = React.useState<number[]>([])
+  const [bindingSaving, setBindingSaving] = React.useState(false)
 
   React.useEffect(() => {
     listCatalogModels()
@@ -142,12 +145,24 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
     return map
   }, [channels])
 
-  const addToAllChannels = async (model: CatalogModel) => {
+  const openBinding = (model: CatalogModel) => {
+    const used = new Set(usage.get(model.name) ?? [])
+    setBindingModel(model)
+    setBindingChannelIDs(channels.filter((c) => used.has(c.name)).map((c) => c.id))
+  }
+
+  const saveBinding = async () => {
+    if (!bindingModel) return
+    setBindingSaving(true)
     try {
-      await updateModelBindings({ name: model.name, previousName: '', channelIds: channels.map((c) => c.id) })
-      message.success(t('models.addedToAllChannels', { name: model.name }))
+      await updateModelBindings({ name: bindingModel.name, previousName: '', channelIds: bindingChannelIDs })
+      message.success(t('models.bindingSaved'))
+      setBindingModel(null)
+      refresh()
     } catch (e) {
       message.error((e as Error).message)
+    } finally {
+      setBindingSaving(false)
     }
   }
 
@@ -181,13 +196,28 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
              title: t('common.action'),
              width: 190,
              render: (_: unknown, m: CatalogModel) => (
-               <Button size="small" onClick={() => addToAllChannels(m)} disabled={channels.length === 0}>
-                 {t('models.addToAllChannels')}
-               </Button>
+             <Button size="small" onClick={() => openBinding(m)} disabled={channels.length === 0}>
+                 {t('models.selectChannels')}
+             </Button>
              ),
            },
         ]}
       />
+      <Modal
+        title={bindingModel ? t('models.selectChannelsTitle', { name: bindingModel.name }) : ''}
+        open={bindingModel !== null}
+        onOk={saveBinding}
+        okButtonProps={{ loading: bindingSaving }}
+        onCancel={() => setBindingModel(null)}
+        destroyOnClose
+      >
+        <Checkbox.Group
+          value={bindingChannelIDs}
+          onChange={(ids) => setBindingChannelIDs(ids as number[])}
+          style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
+          options={channels.map((c) => ({ label: `${c.name}${c.enabled ? '' : t('models.channelDisabledSuffix')}`, value: c.id }))}
+        />
+      </Modal>
     </div>
   )
 }
@@ -216,7 +246,7 @@ const ModelsPage: React.FC = () => {
       <Tabs
         items={[
           { key: 'mine', label: t('models.myModels'), children: <MyModelsTab channels={channels} loading={loading} refresh={refresh} /> },
-          { key: 'catalog', label: t('models.catalogTab'), children: <CatalogTab channels={channels} loading={loading} /> },
+          { key: 'catalog', label: t('models.catalogTab'), children: <CatalogTab channels={channels} loading={loading} refresh={refresh} /> },
         ]}
       />
     </div>

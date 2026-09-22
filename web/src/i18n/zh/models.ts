@@ -26,6 +26,7 @@ export default {
   'models.usage': '使用情况',
   'models.unused': '未使用',
   'models.usedByChannels': '已用于 {count} 个渠道',
-  'models.addToAllChannels': '添加到我的所有渠道',
-  'models.addedToAllChannels': '已将 {name} 添加到我的所有渠道',
+  'models.selectChannels': '选择渠道添加',
+  'models.selectChannelsTitle': '选择渠道：{name}',
+  'models.bindingSaved': '模型渠道绑定已更新',
 }
