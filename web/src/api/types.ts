@@ -223,6 +223,7 @@ export interface PricingListResponse {
 export interface CatalogModel {
   id: number
   name: string
+  pricingModel: string
   note: string
   enabled: boolean
   updatedAt: number

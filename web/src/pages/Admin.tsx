@@ -527,17 +527,17 @@ const CatalogModelsTab: React.FC = () => {
   const openEdit = (m: CatalogModel) => {
     setEditing(m)
     setPicked(null)
-    form.setFieldsValue({ name: m.name, note: m.note, enabled: m.enabled })
+    form.setFieldsValue({ name: m.name, pricingModel: m.pricingModel || m.name, note: m.note, enabled: m.enabled })
     setModalOpen(true)
   }
   const submit = async () => {
     const v = await form.validateFields()
     try {
       if (editing) {
-        await adminUpdateCatalogModel(editing.id, { name: v.name, note: v.note, enabled: v.enabled })
+        await adminUpdateCatalogModel(editing.id, { name: v.name, pricingModel: v.pricingModel, note: v.note, enabled: v.enabled })
         message.success(t('common.updated'))
       } else {
-        await adminCreateCatalogModel({ name: v.name, note: v.note })
+        await adminCreateCatalogModel({ name: v.name, pricingModel: v.pricingModel, note: v.note })
         message.success(t('common.added'))
       }
       setModalOpen(false)
@@ -631,6 +631,13 @@ const CatalogModelsTab: React.FC = () => {
                 placeholder={t('admin.catalogPickPlaceholder')}
               />
             )}
+          </Form.Item>
+          <Form.Item name="pricingModel" label={t('admin.pricingModelName')} extra={t('admin.pricingModelHint')}>
+            <AutoComplete
+              options={pricingList.map((p) => ({ value: p.model }))}
+              filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.trim().toLowerCase())}
+              placeholder={t('admin.pricingModelPlaceholder')}
+            />
           </Form.Item>
           <Form.Item name="note" label={t('common.note')}>
             <Input.TextArea rows={2} placeholder={t('admin.catalogNotePlaceholder')} />

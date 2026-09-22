@@ -421,7 +421,7 @@ CREATE TABLE channels (
 CREATE INDEX idx_channels_user ON channels(user_id, enabled);
 
 CREATE TABLE catalog_models (              -- 全局模型目录（管理员预置；点选数据源，不参与路由）
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, pricing_model TEXT NOT NULL DEFAULT '',
   note TEXT DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER, updated_at INTEGER
 );
@@ -1165,7 +1165,7 @@ new-api 的已知语义（仅参考行为，代码自研）。
 ### 8.4 模型目录与渠道模型列表维护
 
 - 全局模型目录 `catalog_models`（管理员手动收录常用模型，用户只关心自己用到的模型，
-  不与价目表对齐）：仅作为渠道/模板表单的
+  可通过 `pricing_model` 关联任意价目表模型）：仅作为渠道/模板表单的
   点选数据源与用户模型页的目录视图，**不参与路由**；删除目录项不影响已引用它的渠道配置。
   管理页"新增模型"弹窗的模型名为 AutoComplete：输入关键字在价目表（`GET
   /api/admin/pricing`，近 3000 条）中本地筛选（包含匹配，antd 虚拟滚动），候选项右侧
@@ -1216,7 +1216,7 @@ new-api 的已知语义（仅参考行为，代码自研）。
 - **模型目录关联单价**：目录（用户页与管理员页）单价列直接展示完整四档价
   （"标签 + $ 数值"两行：输入/输出主行 + 缓存读/缓存写副行，缓存档未配置时直接显示
   回退生效数值），数据来自 `catalogModelDTOWithPricing` 按模型名精确匹配
-  model_pricing（与费用计算同口径）。价格数字统一经 `Money` 组件分层渲染
+   model_pricing（与费用计算同口径；pricing_model 为空时回退目录名称）。价格数字统一经 `Money` 组件分层渲染
   （`fmtPrice` 4 位有效数字去尾零，`$` 符号小一号弱色、数字主体突出）；
   价目表四档价格列右对齐 + 等宽数字；Inter 字体自托管（@fontsource），
   数字/货币字形不再回退系统中文字体。

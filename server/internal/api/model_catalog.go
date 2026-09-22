@@ -15,7 +15,7 @@ import (
 
 func catalogModelDTO(m *store.CatalogModel) gin.H {
 	return gin.H{
-		"id": m.ID, "name": m.Name, "note": m.Note,
+		"id": m.ID, "name": m.Name, "pricingModel": m.PricingModel, "note": m.Note,
 		"enabled": m.Enabled == 1, "updatedAt": m.UpdatedAt,
 	}
 }
@@ -52,7 +52,11 @@ func (s *Server) handleListCatalogModels(c *gin.Context) {
 	prices := s.pricingMap()
 	out := make([]gin.H, 0, len(models))
 	for i := range models {
-		out = append(out, catalogModelDTOWithPricing(&models[i], prices[models[i].Name]))
+		priceModel := models[i].PricingModel
+		if priceModel == "" {
+			priceModel = models[i].Name
+		}
+		out = append(out, catalogModelDTOWithPricing(&models[i], prices[priceModel]))
 	}
 	s.ok(c, gin.H{"models": out})
 }
@@ -63,22 +67,34 @@ func (s *Server) handleAdminListCatalogModels(c *gin.Context) {
 	prices := s.pricingMap()
 	out := make([]gin.H, 0, len(models))
 	for i := range models {
-		out = append(out, catalogModelDTOWithPricing(&models[i], prices[models[i].Name]))
+		priceModel := models[i].PricingModel
+		if priceModel == "" {
+			priceModel = models[i].Name
+		}
+		out = append(out, catalogModelDTOWithPricing(&models[i], prices[priceModel]))
 	}
 	s.ok(c, gin.H{"models": out})
 }
 
 func (s *Server) handleAdminCreateCatalogModel(c *gin.Context) {
 	var req struct {
-		Name string `json:"name"`
-		Note string `json:"note"`
+		Name         string  `json:"name"`
+		PricingModel *string `json:"pricingModel"`
+		Note         string  `json:"note"`
 	}
 	if err := c.BindJSON(&req); err != nil || trimOrEmpty(req.Name) == "" || len(req.Name) > 255 {
 		s.fail(c, http.StatusBadRequest, "模型名须为 1~255 字节")
 		return
 	}
+	pricingModel := ""
+	if req.PricingModel != nil {
+		pricingModel = trimOrEmpty(*req.PricingModel)
+	}
+	if pricingModel == "" {
+		pricingModel = trimOrEmpty(req.Name)
+	}
 	m := store.CatalogModel{
-		Name: trimOrEmpty(req.Name), Note: req.Note, Enabled: 1,
+		Name: trimOrEmpty(req.Name), PricingModel: pricingModel, Note: req.Note, Enabled: 1,
 		CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
 	}
 	if err := s.Store.DB().Create(&m).Error; err != nil {
@@ -100,9 +116,10 @@ func (s *Server) handleAdminUpdateCatalogModel(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Name    string `json:"name"`
-		Note    string `json:"note"`
-		Enabled *bool  `json:"enabled"`
+		Name         string  `json:"name"`
+		PricingModel *string `json:"pricingModel"`
+		Note         string  `json:"note"`
+		Enabled      *bool   `json:"enabled"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		s.fail(c, http.StatusBadRequest, "非法请求体")
@@ -115,6 +132,9 @@ func (s *Server) handleAdminUpdateCatalogModel(c *gin.Context) {
 			return
 		}
 		updates["name"] = trimOrEmpty(req.Name)
+	}
+	if req.PricingModel != nil {
+		updates["pricing_model"] = trimOrEmpty(*req.PricingModel)
 	}
 	updates["note"] = req.Note
 	if req.Enabled != nil {
