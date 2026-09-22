@@ -517,6 +517,17 @@ const CatalogModelsTab: React.FC = () => {
         ),
       }))
   }, [pricingList, models, t])
+  const pricingModelOptions = React.useMemo(() => pricingList.map((p) => ({
+    value: p.model,
+    label: (
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.model}</span>
+        <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+          {t('common.input')} <Money value={p.inputPerM} /> / {t('common.output')} <Money value={p.outputPerM} />
+        </span>
+      </div>
+    ),
+  })), [pricingList, t])
   const openCreate = () => {
     setEditing(null)
     setPicked(null)
@@ -526,7 +537,7 @@ const CatalogModelsTab: React.FC = () => {
   }
   const openEdit = (m: CatalogModel) => {
     setEditing(m)
-    setPicked(null)
+    setPicked(pricingList.find((p) => p.model === (m.pricingModel || m.name)) ?? null)
     form.setFieldsValue({ name: m.name, pricingModel: m.pricingModel || m.name, note: m.note, enabled: m.enabled })
     setModalOpen(true)
   }
@@ -637,7 +648,8 @@ const CatalogModelsTab: React.FC = () => {
           </Form.Item>
           <Form.Item name="pricingModel" label={t('admin.pricingModelName')} extra={t('admin.pricingModelHint')}>
             <AutoComplete
-              options={pricingList.map((p) => ({ value: p.model }))}
+              options={pricingModelOptions}
+              onSelect={(v: string) => setPicked(pricingList.find((p) => p.model === v) ?? null)}
               filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.trim().toLowerCase())}
               placeholder={t('admin.pricingModelPlaceholder')}
             />

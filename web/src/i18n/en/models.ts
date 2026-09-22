@@ -22,7 +22,13 @@ export default {
     'The admin-curated model catalog serves as the pick list in the channel form; models not listed can still be entered manually. Unit prices are linked to the pricing table by model name (same basis as cost stats).',
   'models.catalogEmpty': 'The model catalog has not been configured by the admin yet',
   'models.unitPrice': 'Unit Price ($/M tokens)',
+  'models.pricingModel': 'Pricing model',
   'models.usage': 'Usage',
   'models.unused': 'Unused',
   'models.usedByChannels': 'Used by {count} channel(s)',
+  'models.newModelsNotice': 'New models are available in the catalog',
+  'models.newModelsNoticeDesc': 'These models are not in any of your channels yet: {models}. Click "Select channels" and choose only the channels that support them.',
+  'models.selectChannels': 'Select channels',
+  'models.selectChannelsTitle': 'Select channels: {name}',
+  'models.bindingSaved': 'Model-channel bindings updated',
 }

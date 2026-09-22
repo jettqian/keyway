@@ -20,6 +20,9 @@ const CatalogPrice: React.FC<{ m: CatalogModel }> = ({ m }) => {
   }
   return (
     <div className="catalog-price" style={{ lineHeight: 1.7 }}>
+      <div className="text-tertiary" style={{ fontSize: 12, lineHeight: 1.5 }}>
+        {t('models.pricingModel')}: {m.pricingModel || m.name}
+      </div>
       <div>
         <span className="catalog-price-label">{t('common.input')}</span> <Money value={m.inputPerM} />
         <span className="catalog-price-sep">·</span>

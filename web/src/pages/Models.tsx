@@ -1,5 +1,5 @@
 import React from 'react'
-import { Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, message } from 'antd'
+import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { listChannels, updateModelBindings, listCatalogModels } from '../api'
 import type { Channel, CatalogModel } from '../api/types'
@@ -166,8 +166,19 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () 
     }
   }
 
+  const pendingModels = catalog.filter((model) => !usage.has(model.name))
+
   return (
     <div>
+      {pendingModels.length > 0 ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={t('models.newModelsNotice')}
+          description={t('models.newModelsNoticeDesc', { models: pendingModels.map((model) => model.name).join('、') })}
+        />
+      ) : null}
       <div className="tab-note">{t('models.catalogTabNote')}</div>
       <Table<CatalogModel>
         rowKey="id"
