@@ -142,6 +142,15 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
     return map
   }, [channels])
 
+  const addToAllChannels = async (model: CatalogModel) => {
+    try {
+      await updateModelBindings({ name: model.name, previousName: '', channelIds: channels.map((c) => c.id) })
+      message.success(t('models.addedToAllChannels', { name: model.name }))
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
   return (
     <div>
       <div className="tab-note">{t('models.catalogTabNote')}</div>
@@ -159,15 +168,24 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean }> = ({ chann
             render: (_: unknown, m: CatalogModel) => <CatalogPrice m={m} />,
           },
           { title: t('common.note'), dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
-          {
-            title: t('models.usage'),
+           {
+             title: t('models.usage'),
             width: 220,
             render: (_: unknown, m: CatalogModel) => {
               const chans = usage.get(m.name)
               if (!chans || chans.length === 0) return <span className="text-tertiary">{t('models.unused')}</span>
               return <span>{t('models.usedByChannels', { count: chans.length })}</span>
-            },
-          },
+             },
+           },
+           {
+             title: t('common.action'),
+             width: 190,
+             render: (_: unknown, m: CatalogModel) => (
+               <Button size="small" onClick={() => addToAllChannels(m)} disabled={channels.length === 0}>
+                 {t('models.addToAllChannels')}
+               </Button>
+             ),
+           },
         ]}
       />
     </div>

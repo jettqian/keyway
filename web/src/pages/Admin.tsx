@@ -521,7 +521,7 @@ const CatalogModelsTab: React.FC = () => {
     setEditing(null)
     setPicked(null)
     form.resetFields()
-    form.setFieldsValue({ name: '', note: '', enabled: true })
+    form.setFieldsValue({ name: '', pricingModel: '', note: '', enabled: true })
     setModalOpen(true)
   }
   const openEdit = (m: CatalogModel) => {
@@ -621,7 +621,10 @@ const CatalogModelsTab: React.FC = () => {
                 allowClear
                 options={priceOptions}
                 onClear={() => setPicked(null)}
-                onSelect={(v: string) => setPicked(pricingList.find((p) => p.model === v) ?? null)}
+                onSelect={(v: string) => {
+                  setPicked(pricingList.find((p) => p.model === v) ?? null)
+                  form.setFieldsValue({ pricingModel: v })
+                }}
                 onChange={(v: string) => {
                   if (picked && picked.model !== v) setPicked(null)
                 }}

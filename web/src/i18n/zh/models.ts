@@ -26,4 +26,6 @@ export default {
   'models.usage': '使用情况',
   'models.unused': '未使用',
   'models.usedByChannels': '已用于 {count} 个渠道',
+  'models.addToAllChannels': '添加到我的所有渠道',
+  'models.addedToAllChannels': '已将 {name} 添加到我的所有渠道',
 }
