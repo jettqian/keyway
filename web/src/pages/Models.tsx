@@ -1,9 +1,11 @@
 import React from 'react'
 import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
+import { useSearchParams } from 'react-router-dom'
 import { listChannels, updateModelBindings, listCatalogModels } from '../api'
 import type { Channel, CatalogModel } from '../api/types'
 import CatalogPrice from '../components/CatalogPrice'
+import { emitNotificationsRefresh } from '../components/NotificationCenter'
 import { useI18n } from '../i18n'
 
 interface ModelRow {
@@ -149,6 +151,8 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () 
       await updateModelBindings({ name: bindingModel.name, previousName: '', channelIds: bindingChannelIDs })
       message.success(t('models.bindingSaved'))
       setBindingModel(null)
+      // 绑定变化会影响「可添加模型」通知，触发铃铛红点重算
+      emitNotificationsRefresh()
       refresh()
     } catch (e) {
       message.error((e as Error).message)
@@ -215,10 +219,18 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () 
 
 const ModelsPage: React.FC = () => {
   const { t } = useI18n()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [loading, setLoading] = React.useState(true)
   const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
   const [catLoading, setCatLoading] = React.useState(true)
+  // 支持 /models?tab=catalog 直达目录（通知中心「去添加」的落地页）
+  const [tab, setTab] = React.useState(searchParams.get('tab') === 'catalog' ? 'catalog' : 'mine')
+
+  const changeTab = (key: string) => {
+    setTab(key)
+    setSearchParams(key === 'catalog' ? { tab: 'catalog' } : {}, { replace: true })
+  }
 
   const refresh = React.useCallback(() => {
     setLoading(true)
@@ -248,6 +260,7 @@ const ModelsPage: React.FC = () => {
           style={{ marginBottom: 16 }}
           message={t('models.newModelsNotice')}
           description={t('models.newModelsNoticeDesc', { models: pendingModels.map((model) => model.name).join('、') })}
+          action={<Button size="small" type="primary" onClick={() => changeTab('catalog')}>{t('models.goCatalog')}</Button>}
         />
       ) : null}
       <div className="page-heading">
@@ -255,6 +268,8 @@ const ModelsPage: React.FC = () => {
         <div className="page-actions"><Button icon={<ReloadOutlined />} onClick={refresh}>{t('models.refresh')}</Button></div>
       </div>
       <Tabs
+        activeKey={tab}
+        onChange={changeTab}
         items={[
           { key: 'mine', label: t('models.myModels'), children: <MyModelsTab channels={channels} loading={loading} refresh={refresh} /> },
           { key: 'catalog', label: t('models.catalogTab'), children: <CatalogTab channels={channels} loading={loading} refresh={refresh} catalog={catalog} catLoading={catLoading} /> },

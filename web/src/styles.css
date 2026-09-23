@@ -111,6 +111,16 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
 .pref-trigger { color: var(--kw-secondary); }
 .pref-trigger:hover { color: var(--kw-primary) !important; }
 
+/* 通知中心铃铛面板：条目 = 标题行（标题 + 时间）+ 描述 + 跳转按钮 */
+.notify-list { display: flex; flex-direction: column; gap: 12px; }
+.notify-item { display: flex; flex-direction: column; gap: 6px; }
+.notify-item + .notify-item { border-top: 1px dashed var(--kw-border); padding-top: 12px; }
+.notify-item-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.notify-item-title { font-weight: 500; }
+.notify-item-time { flex: none; font-size: 12px; color: var(--kw-tertiary); }
+.notify-item-desc { font-size: 12px; line-height: 1.6; color: var(--kw-secondary); white-space: normal; }
+.notify-item .ant-btn { align-self: flex-start; }
+
 /* 窄屏头部：汉堡入口 + 精简品牌（侧栏在 <lg 时由抽屉替代，见 Layout.tsx） */
 .nav-trigger { font-size: 18px; margin-inline-end: 2px; }
 .nav-brand { font-size: 16px; }

@@ -13,7 +13,8 @@ import logs from './logs'
 import stats from './stats'
 import admin from './admin'
 import backup from './backup'
+import notify from './notify'
 
-const en = Object.assign({}, common, layout, login, register, keys, channels, models, tokens, guide, logs, stats, admin, backup) satisfies Record<DictKey, string>
+const en = Object.assign({}, common, layout, login, register, keys, channels, models, tokens, guide, logs, stats, admin, backup, notify) satisfies Record<DictKey, string>
 
 export default en

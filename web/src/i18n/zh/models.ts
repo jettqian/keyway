@@ -29,6 +29,7 @@ export default {
   'models.usedByChannels': '已用于 {count} 个渠道',
   'models.newModelsNotice': '模型目录有可添加模型',
   'models.newModelsNoticeDesc': '以下模型尚未添加到你的渠道：{models}。请按需点击“选择渠道添加”，勾选实际支持这些模型的渠道。',
+  'models.goCatalog': '去添加',
   'models.selectChannels': '选择渠道添加',
   'models.selectChannelsTitle': '选择渠道：{name}',
   'models.bindingSaved': '模型渠道绑定已更新',

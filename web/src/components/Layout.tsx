@@ -25,6 +25,7 @@ import { useI18n } from '../i18n'
 import { useTheme } from '../theme'
 import { GITHUB_URL } from '../constants'
 import BackupModal from './BackupModal'
+import { NotificationBell, NotificationsProvider } from './NotificationCenter'
 
 const { Sider, Header, Content } = AntLayout
 
@@ -83,107 +84,110 @@ export const ConsoleLayout: React.FC = () => {
   )
 
   return (
-    <AntLayout style={{ minHeight: '100vh' }}>
-      {!isMobile && (
-        <Sider theme="light" className="console-sider">
+    <NotificationsProvider user={user}>
+      <AntLayout style={{ minHeight: '100vh' }}>
+        {!isMobile && (
+          <Sider theme="light" className="console-sider">
+            {brand}
+            {menuEl}
+          </Sider>
+        )}
+        <AntLayout>
+          <Header className="console-header" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingInline: 24 }}>
+            {isMobile && (
+              <>
+                <Button
+                  type="text"
+                  className="nav-trigger"
+                  aria-label={t('layout.openNav')}
+                  icon={<MenuOutlined />}
+                  onClick={() => setNavOpen(true)}
+                />
+                <div className="brand-name nav-brand">Keyway</div>
+                <div style={{ flex: 1 }} />
+              </>
+            )}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Tooltip title={t('common.github')}>
+                <Button
+                  type="text"
+                  className="pref-trigger"
+                  aria-label={t('common.github')}
+                  icon={<GithubOutlined />}
+                  href={GITHUB_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                />
+              </Tooltip>
+              <Tooltip title={t('common.toggleTheme')}>
+                <Button
+                  type="text"
+                  className="pref-trigger"
+                  aria-label={t('common.toggleTheme')}
+                  icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
+                  onClick={toggle}
+                />
+              </Tooltip>
+              <Tooltip title={t('common.toggleLang')}>
+                <Button
+                  type="text"
+                  className="pref-trigger"
+                  aria-label={t('common.toggleLang')}
+                  icon={<TranslationOutlined />}
+                  onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
+                >
+                  {locale === 'zh' ? 'EN' : '中'}
+                </Button>
+              </Tooltip>
+              <NotificationBell />
+            </span>
+            <Dropdown
+              menu={{
+                items: [
+                  { key: 'backup', icon: <SaveOutlined />, label: t('layout.backup') },
+                  { type: 'divider' },
+                  { key: 'logout', icon: <LogoutOutlined />, label: t('layout.logout') },
+                ],
+                onClick: async ({ key }) => {
+                  if (key === 'backup') {
+                    setBackupOpen(true)
+                    return
+                  }
+                  if (key === 'logout') {
+                    await logout()
+                    message.success(t('layout.loggedOut'))
+                    nav('/login')
+                  }
+                },
+              }}
+            >
+              <span className="user-chip">
+                <Avatar size={26} icon={<UserOutlined />}>
+                  {user?.username?.slice(0, 1).toUpperCase()}
+                </Avatar>
+                <span className="user-chip-name">{user?.username ?? '...'}</span>
+                {isAdmin ? <Tag style={{ marginInlineEnd: 0 }}>{t('layout.adminTag')}</Tag> : null}
+              </span>
+            </Dropdown>
+          </Header>
+          <Content className="console-content">
+            <Outlet context={{ user, setUser }} />
+          </Content>
+        </AntLayout>
+        <Drawer
+          placement="left"
+          width={280}
+          open={navOpen && isMobile}
+          onClose={() => setNavOpen(false)}
+          className="nav-drawer"
+          styles={{ body: { padding: 0 } }}
+          closable={false}
+        >
           {brand}
           {menuEl}
-        </Sider>
-      )}
-      <AntLayout>
-        <Header className="console-header" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingInline: 24 }}>
-          {isMobile && (
-            <>
-              <Button
-                type="text"
-                className="nav-trigger"
-                aria-label={t('layout.openNav')}
-                icon={<MenuOutlined />}
-                onClick={() => setNavOpen(true)}
-              />
-              <div className="brand-name nav-brand">Keyway</div>
-              <div style={{ flex: 1 }} />
-            </>
-          )}
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <Tooltip title={t('common.github')}>
-              <Button
-                type="text"
-                className="pref-trigger"
-                aria-label={t('common.github')}
-                icon={<GithubOutlined />}
-                href={GITHUB_URL}
-                target="_blank"
-                rel="noreferrer"
-              />
-            </Tooltip>
-            <Tooltip title={t('common.toggleTheme')}>
-              <Button
-                type="text"
-                className="pref-trigger"
-                aria-label={t('common.toggleTheme')}
-                icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
-                onClick={toggle}
-              />
-            </Tooltip>
-            <Tooltip title={t('common.toggleLang')}>
-              <Button
-                type="text"
-                className="pref-trigger"
-                aria-label={t('common.toggleLang')}
-                icon={<TranslationOutlined />}
-                onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
-              >
-                {locale === 'zh' ? 'EN' : '中'}
-              </Button>
-            </Tooltip>
-          </span>
-          <Dropdown
-            menu={{
-              items: [
-                { key: 'backup', icon: <SaveOutlined />, label: t('layout.backup') },
-                { type: 'divider' },
-                { key: 'logout', icon: <LogoutOutlined />, label: t('layout.logout') },
-              ],
-              onClick: async ({ key }) => {
-                if (key === 'backup') {
-                  setBackupOpen(true)
-                  return
-                }
-                if (key === 'logout') {
-                  await logout()
-                  message.success(t('layout.loggedOut'))
-                  nav('/login')
-                }
-              },
-            }}
-          >
-            <span className="user-chip">
-              <Avatar size={26} icon={<UserOutlined />}>
-                {user?.username?.slice(0, 1).toUpperCase()}
-              </Avatar>
-              <span className="user-chip-name">{user?.username ?? '...'}</span>
-              {isAdmin ? <Tag style={{ marginInlineEnd: 0 }}>{t('layout.adminTag')}</Tag> : null}
-            </span>
-          </Dropdown>
-        </Header>
-        <Content className="console-content">
-          <Outlet context={{ user, setUser }} />
-        </Content>
+        </Drawer>
+        <BackupModal open={backupOpen} onClose={() => setBackupOpen(false)} />
       </AntLayout>
-      <Drawer
-        placement="left"
-        width={280}
-        open={navOpen && isMobile}
-        onClose={() => setNavOpen(false)}
-        className="nav-drawer"
-        styles={{ body: { padding: 0 } }}
-        closable={false}
-      >
-        {brand}
-        {menuEl}
-      </Drawer>
-      <BackupModal open={backupOpen} onClose={() => setBackupOpen(false)} />
-    </AntLayout>
+    </NotificationsProvider>
   )
 }

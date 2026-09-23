@@ -28,6 +28,7 @@ export default {
   'models.usedByChannels': 'Used by {count} channel(s)',
   'models.newModelsNotice': 'New models are available in the catalog',
   'models.newModelsNoticeDesc': 'These models are not in any of your channels yet: {models}. Click "Select channels" and choose only the channels that support them.',
+  'models.goCatalog': 'Go to catalog',
   'models.selectChannels': 'Select channels',
   'models.selectChannelsTitle': 'Select channels: {name}',
   'models.bindingSaved': 'Model-channel bindings updated',

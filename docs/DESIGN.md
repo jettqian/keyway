@@ -1,6 +1,13 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.56（与 PRD v1.5.59 对应；① 日志页展开图标重做——`expandable.expandIcon`
+- 版本：v1.57（与 PRD v1.5.60 对应；新增**通用通知中心**——前端派生结构不落库：
+  `components/NotificationCenter.tsx` 提供 Provider（通知生成器 + 已读集合）与
+  NotificationBell（Badge dot 铃铛 + Popover 面板）；当前唯一通知类型 =
+  模型目录启用模型 ∖ 本人渠道模型并集（id 取排序模型名集合，内容变化即换 id 驱动
+  红点重现），已读按用户存 localStorage（`kw-notify-read-<uid>`，打开面板即全部
+  已读并修剪已失效 id）；`emitNotificationsRefresh` 事件供绑定保存后即时重算；
+  模型页支持 `?tab=catalog` 直达目录 Tab，顶部提示加「去添加」按钮）；
+  前版 v1.56：与 PRD v1.5.59 对应；① 日志页展开图标重做——`expandable.expandIcon`
   自定义旋转 chevron（边框方块 + `--kw-*` 主题变量，展开旋转 90° 着主题色）；
   ② `stats.recent` 补 `reasoningEffort`（LatestUsage 增字段 + SQL COALESCE
   reasoning_effort），统计页最近生效流量模型旁紫色小标签展示）；
@@ -282,7 +289,7 @@
   v1.15：令牌渠道顺序与启用集合分离；v1.14：统计页名称化/补算/时间窗/最近流量；
   v1.13：限定渠道面板交互优化；
   历史变更见文档各节与 PRD 变更记录）
-- 日期：2026-09-18
+- 日期：2026-09-23
 - 关联文档：docs/PRD.md
 - 本文档解决：架构、技术选型、数据模型落地、核心机制设计、协议转换决策表（PRD 开放
   问题 Q4）、API 设计、部署、测试与实施计划
@@ -1180,6 +1187,14 @@ new-api 的已知语义（仅参考行为，代码自研）。
   `model_mapping_json`（重命名顺带迁移映射）。
 - 不创建用户级模型实体；空绑定模型不会出现在路由与 `/v1/models` 中。渠道表单和模型管理页
   共享同一数据来源，避免两套配置产生分歧。
+- **新模型通知（通用通知中心，FR-MC4）**：纯前端派生结构，不落库、无后端改动。
+  `components/NotificationCenter.tsx`：① Provider 拉取 `/api/channels` + `/api/models/catalog`
+  计算「可添加模型」（目录启用项 ∖ 本人渠道模型并集）生成通知，id 取排序后模型名集合
+  （目录增删模型都会换 id → 红点重现）；② 已读状态按用户存 localStorage
+  （`kw-notify-read-<uid>` 的 id 数组，加载时修剪已失效 id），打开铃铛面板即全部已读、
+  红点消失；③ `NotificationBell` = Badge dot + Popover 面板（模型清单 + 时间 +
+  「去添加」跳 `/models?tab=catalog`）；④ 模块级 `emitNotificationsRefresh` 事件供
+  模型绑定保存后即时重算。后续新增通知类型在 buildNotifications 追加生成器即可。
 
 ### 8.5 汇率同步（fxrate，FR-M7）
 
