@@ -182,9 +182,12 @@ export const NotificationBell: React.FC = () => {
       content={content}
       styles={{ body: { width: 340, maxWidth: 'calc(100vw - 32px)' } }}
     >
-      <Badge dot={unreadCount > 0} offset={[-3, 3]}>
-        <Button type="text" className="pref-trigger" aria-label={t('notify.title')} icon={<BellOutlined />} />
-      </Badge>
+      <Button type="text" className="pref-trigger" aria-label={t('notify.title')}>
+        {/* Badge 只包图标本身：红点贴铃铛右上角（包按钮会被 padding 推远） */}
+        <Badge dot={unreadCount > 0} offset={[-2, 2]}>
+          <BellOutlined />
+        </Badge>
+      </Button>
     </Popover>
   )
 }
