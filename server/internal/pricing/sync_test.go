@@ -172,9 +172,9 @@ func TestMergeSourcesPriority(t *testing.T) {
 	}
 }
 
-// 同步落库语义（v1.5.65）：只刷新目录关联的价目条目；不补缺、不新增任何模型，
-// 未关联条目不动；关联名不在价目表仅计数提示
-func TestSyncRefreshLinked(t *testing.T) {
+// 全量 upsert 落库语义（v1.5.70）：远程条目缺失即新增（记命中源）；已存在的远程来源
+// 条目与目录关联条目刷新四档价；manual/import 且未关联的条目不覆盖、同步永不删除
+func TestSyncUpsertRemote(t *testing.T) {
 	st, err := store.Open(store.Options{DataDir: ":memory:"})
 	if err != nil {
 		t.Fatal(err)
@@ -182,50 +182,64 @@ func TestSyncRefreshLinked(t *testing.T) {
 	defer st.Close()
 	db := st.DB()
 
-	// 目录关联 prov/m（在表）；prov/gone（不在表，验证不补插）
-	if err := db.Create(&store.CatalogModel{Name: "cm", PricingModel: "prov/m", Enabled: 1}).Error; err != nil {
+	// 目录关联 prov/linked-manual（人工条目但被关联 → 应刷新且来源转为远程）
+	if err := db.Create(&store.CatalogModel{Name: "cm", PricingModel: "prov/linked-manual", Enabled: 1}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&store.CatalogModel{Name: "cm2", PricingModel: "prov/gone", Enabled: 1}).Error; err != nil {
+	if err := db.Create(&store.ModelPricing{Model: "prov/linked-manual", InputPerM: 1, OutputPerM: 1, Currency: "USD", Source: "manual"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&store.ModelPricing{Model: "prov/m", InputPerM: 1, OutputPerM: 1, Currency: "USD"}).Error; err != nil {
+	// 远程来源条目 → 刷新；人工未关联条目 → 跳过
+	if err := db.Create(&store.ModelPricing{Model: "prov/remote", InputPerM: 1, OutputPerM: 1, Currency: "USD", Source: SrcLiteLLM}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&store.ModelPricing{Model: "plain", InputPerM: 2, OutputPerM: 2, Currency: "USD"}).Error; err != nil {
+	if err := db.Create(&store.ModelPricing{Model: "my-manual", InputPerM: 8, OutputPerM: 28, Currency: "USD", Source: "manual"}).Error; err != nil {
 		t.Fatal(err)
 	}
+	// 人工条目远程源没有同名 → 不得删除
 
 	cr := 0.1
-	refreshed, missing := refreshLinked(db, []ModelPrice{
-		{Model: "prov/m", InputPerM: 3, OutputPerM: 7, CachedInputPerM: &cr, Source: SrcLiteLLM},
-		{Model: "prov/gone", InputPerM: 9, OutputPerM: 9, Source: SrcModelsDev},
-		{Model: "plain", InputPerM: 4, OutputPerM: 4},
+	added, refreshed := upsertRemote(db, []ModelPrice{
+		{Model: "prov/linked-manual", InputPerM: 3, OutputPerM: 7, CachedInputPerM: &cr, Source: SrcModelsDev},
+		{Model: "prov/remote", InputPerM: 2, OutputPerM: 5, Source: SrcModelsDev},
+		{Model: "prov/new", InputPerM: 0.5, OutputPerM: 2, Source: SrcModelsDev}, // 缺失 → 新增
+		{Model: "other/new", InputPerM: 1, OutputPerM: 1, Source: SrcLiteLLM},    // 缺失 → 新增
 	})
-	if refreshed != 1 || missing != 1 {
-		t.Fatalf("期望 刷新1/缺失1，实际 %d/%d", refreshed, missing)
+	if added != 2 || refreshed != 2 {
+		t.Fatalf("期望 新增2/刷新2，实际 %d/%d", added, refreshed)
 	}
 
-	var pm store.ModelPricing
-	if err := db.First(&pm, "model = ?", "prov/m").Error; err != nil {
+	var linkedManual store.ModelPricing
+	if err := db.First(&linkedManual, "model = ?", "prov/linked-manual").Error; err != nil {
 		t.Fatal(err)
 	}
-	if pm.InputPerM != 3 || pm.OutputPerM != 7 || pm.CachedInputPerM == nil || *pm.CachedInputPerM != 0.1 {
-		t.Fatalf("关联条目应刷新为网络最新价: %+v", pm)
+	if linkedManual.InputPerM != 3 || linkedManual.OutputPerM != 7 || linkedManual.Source != SrcModelsDev {
+		t.Fatalf("关联人工条目应刷新且来源转为远程: %+v", linkedManual)
 	}
-	if pm.Source != SrcLiteLLM {
-		t.Errorf("关联条目应写入命中源标识: %q", pm.Source)
-	}
-	var plain store.ModelPricing
-	if err := db.First(&plain, "model = ?", "plain").Error; err != nil {
+	var remoteRow store.ModelPricing
+	if err := db.First(&remoteRow, "model = ?", "prov/remote").Error; err != nil {
 		t.Fatal(err)
 	}
-	if plain.InputPerM != 2 || plain.OutputPerM != 2 || plain.Source != "" {
-		t.Fatalf("未关联条目不应被覆盖: %+v", plain)
+	if remoteRow.InputPerM != 2 || remoteRow.OutputPerM != 5 {
+		t.Fatalf("远程来源条目应刷新: %+v", remoteRow)
+	}
+	var addedRow store.ModelPricing
+	if err := db.First(&addedRow, "model = ?", "prov/new").Error; err != nil {
+		t.Fatal(err)
+	}
+	if addedRow.InputPerM != 0.5 || addedRow.Source != SrcModelsDev || addedRow.Currency != "USD" {
+		t.Fatalf("缺失条目应新增并记命中源: %+v", addedRow)
+	}
+	var manual store.ModelPricing
+	if err := db.First(&manual, "model = ?", "my-manual").Error; err != nil {
+		t.Fatal(err)
+	}
+	if manual.InputPerM != 8 || manual.OutputPerM != 28 || manual.Source != "manual" {
+		t.Fatalf("人工未关联条目不得被覆盖: %+v", manual)
 	}
 	var n int64
 	db.Model(&store.ModelPricing{}).Count(&n)
-	if n != 2 {
-		t.Fatalf("同步不得新增条目（含关联缺失名），实际 %d 条", n)
+	if n != 5 {
+		t.Fatalf("人工条目不得被删除（期望总数 5），实际 %d 条", n)
 	}
 }

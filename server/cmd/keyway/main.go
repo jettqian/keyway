@@ -83,7 +83,7 @@ func buildApp(cfg config.Config) (*app, error) {
 		close(fxDone)
 	}()
 
-	// 官方价目定期同步（LiteLLM + models.dev，只刷新目录关联条目；KEYWAY_PRICING_SYNC_HOURS=0 关闭）
+	// 官方价目定期同步（models.dev + LiteLLM 全量 upsert；KEYWAY_PRICING_SYNC_HOURS=0 关闭）
 	pricingStop := make(chan struct{})
 	pricingDone := make(chan struct{})
 	if cfg.PricingSyncHours > 0 {

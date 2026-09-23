@@ -1,10 +1,19 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.66（与 PRD v1.5.69 对应；**双源合并优先级翻转**——models.dev 先到先得
+- 版本：v1.67（与 PRD v1.5.70 对应；**同步恢复自动新增，全量 upsert**——
+  `refreshLinked` 替换为 `upsertRemote`：远程条目缺失即 Create（Currency=USD、
+  source 记命中源），已存在的远程来源条目与目录关联条目刷新四档价+source，
+  manual/import 且未关联的条目跳过（不覆盖不删除，同步永不删除）；
+  `Result` 改 {added, refreshed}（missing 概念随自动新增消亡），启动日志与管理页
+  提示同步改版（admin.syncAdded/syncRefreshed）；`TestSyncUpsertRemote` 覆盖
+  新增/远程刷新/关联人工条目转源/人工未关联保护四路径；存量 3298 条 manual
+  条目由运维删除（含 z-ai/glm-5.2、z-ai/glm-5.3，删除前 JSON 备份），重启同步
+  全量灌入双源条目）；
+  前版 v1.66：与 PRD v1.5.69 对应；**双源合并优先级翻转**——models.dev 先到先得
   （官方文档口径优先），LiteLLM 补缺名/裸名：v1.5.67 沿用 LiteLLM 优先导致目录关联名
   全部先命中 LiteLLM（11/11），models.dev 来源筛选恒空、关联候选只见 LiteLLM；
   合并抽 `mergeSources(dst, src)`（dst 既有名不被 src 覆盖）并补
-  `TestMergeSourcesPriority`）。**存量来源回填**：store.Open 幂等
+  `TestMergeSourcesPriority`。**存量来源回填**：store.Open 幂等
   `UPDATE model_pricing SET source='manual' WHERE source=''`（与 tokens restricted
   回填同风格——老同步/手工/种子混杂无法区分，按「价目表增长由管理员控制」语义
   统一记手工；远程同步/管理端编辑按实际来源覆盖）；
@@ -1295,11 +1304,12 @@ new-api 的已知语义（仅参考行为，代码自研）。
 - **同步**：models.dev（`api.json`）与 LiteLLM
   （`model_prices_and_context_window.json`）双源，归一化 USD/百万 token（含缓存读/写档；models.dev 的
   `cost.{input,output,cache_read,cache_write}` 直取免换算），合并去重
-  （v1.5.69：models.dev 先到先得——官方文档口径优先，LiteLLM 补缺名/裸名）。语义（v1.5.65）：**只刷新目录关联的价目条目，不补缺**——
-  `refreshLinked` 事务内：已存在且被 `linkedPricingModels`（catalog_models.pricing_model
-  去重集）引用 → Updates 四档单价与 `source`（命中源标识，随 `ModelPrice.Source` 由
-  解析器写入）为网络最新价（refreshed 计数）；远端源没有的关联名
-  保持现状；**不 Create 任何条目**（删除永久生效）；关联名不在价目表仅 missing 计数。
+  （v1.5.69：models.dev 先到先得——官方文档口径优先，LiteLLM 补缺名/裸名）。
+  语义（v1.5.70 修订）：**全量 upsert**——`upsertRemote` 事务内逐条处理：价目表缺失
+  → Create（Currency=USD，source 记命中源，added 计数）；已存在且来源为远程
+  （models.dev/LiteLLM）或被 `linkedPricingModels`（catalog_models.pricing_model
+  去重集）引用 → Updates 四档单价与 source（refreshed 计数）；manual/import 且未
+  关联 → 跳过（人工维护优先，不覆盖）。**同步永不删除**（删除永久生效）。
   手动 `POST /api/admin/pricing/sync_remote` 与
   定时 `StartSyncLoop`（`KEYWAY_PRICING_SYNC_HOURS`，0 关闭）共用 `SyncRemote`
   （mutex 串行化），单源失败降级为警告，双源失败报错。

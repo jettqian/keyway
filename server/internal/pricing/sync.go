@@ -1,7 +1,8 @@
 // Package pricing 官方价目远程同步：从 models.dev 与 LiteLLM 拉取模型单价（USD/百万 token）。
-// 同步语义（v1.5.65）：**只刷新目录关联的价目条目**——被模型目录 pricing_model 引用的
-// 价目条目用网络最新价覆盖四档单价；不补缺、不新增任何模型（价目表增长完全由管理员
-// 控制：手工录入 / JSON 导入；删除永久生效）
+// 同步语义（v1.5.70 修订，替代 v1.5.65 的「只刷新不新增」）：**全量 upsert**——
+// 远程源收录的条目缺失即新增（记命中源）、已存在的远程来源条目与目录关联条目
+// 刷新四档单价；manual/import 且未被目录关联的条目不覆盖、不删除（人工维护优先）。
+// 删除仍永久生效：同步只增改、永不删除
 // 双源合并（v1.5.69）：models.dev 先到先得（官方文档口径优先），LiteLLM 补缺名/裸名。
 package pricing
 
@@ -70,8 +71,8 @@ func mergeSources(dst map[string]ModelPrice, src []ModelPrice) map[string]ModelP
 
 // Result 同步结果
 type Result struct {
-	Refreshed int      `json:"refreshed"` // 目录关联条目刷新数
-	Missing   int      `json:"missing"`   // 关联名不在价目表（同步不新增，仅提示；v1.5.65）
+	Added     int      `json:"added"`     // 远程源收录、价目表缺失而新增的条目数
+	Refreshed int      `json:"refreshed"` // 已存在且被刷新的条目数（远程来源/目录关联）
 	Warnings  []string `json:"warnings,omitempty"`
 }
 
@@ -107,7 +108,7 @@ func SyncRemote(db *gorm.DB, timeout time.Duration) (*Result, error) {
 	for _, p := range merged {
 		prices = append(prices, p)
 	}
-	res.Refreshed, res.Missing = refreshLinked(db, prices)
+	res.Added, res.Refreshed = upsertRemote(db, prices)
 
 	// 记录最近一次同步完成时间（至少单源成功才记录）
 	if err := markSynced(db); err != nil {
@@ -141,7 +142,7 @@ func StartSyncLoop(db *gorm.DB, hours int, stop <-chan struct{}) {
 			fmt.Printf("[keyway] 价目同步失败: %v\n", err)
 			return
 		}
-		fmt.Printf("[keyway] 价目同步完成：关联刷新 %d、关联缺失 %d\n", res.Refreshed, res.Missing)
+		fmt.Printf("[keyway] 价目同步完成：新增 %d、刷新 %d\n", res.Added, res.Refreshed)
 	}
 	run()
 	ticker := time.NewTicker(time.Duration(hours) * time.Hour)
@@ -156,36 +157,45 @@ func StartSyncLoop(db *gorm.DB, hours int, stop <-chan struct{}) {
 	}
 }
 
-// refreshLinked 仅刷新目录关联的价目条目（v1.5.65：同步不再补缺/新增模型）。
-// 关联名不在价目表的不创建（missing 计数提示）；远端源没有的关联名保持现状。
-// 刷新时四档单价与 source（命中源标识）一并覆盖。
-// 返回 (刷新数, 关联名不在价目表的条数)
-func refreshLinked(db *gorm.DB, prices []ModelPrice) (refreshed, missing int) {
+// upsertRemote 全量 upsert（v1.5.70）：对远程源收录的每个条目——
+//   - 价目表缺失 → Create（source 记命中源）
+//   - 已存在且来源为远程（models.dev/LiteLLM）或被目录关联 → 刷新四档单价与 source
+//   - 已存在且为 manual/import 且未被目录关联 → 跳过（人工维护优先，不覆盖）
+//
+// 同步永不删除：manual/import 条目（含远程源没有的同名条目）原样保留。
+// 返回 (新增数, 刷新数)
+func upsertRemote(db *gorm.DB, prices []ModelPrice) (added, refreshed int) {
 	if len(prices) == 0 {
 		return 0, 0
 	}
-	src := make(map[string]ModelPrice, len(prices))
-	for _, p := range prices {
-		src[p.Model] = p
-	}
 	var rows []store.ModelPricing
 	db.Find(&rows)
+	existing := make(map[string]store.ModelPricing, len(rows))
+	for i := range rows {
+		existing[rows[i].Model] = rows[i]
+	}
 	linked := linkedPricingModels(db)
 	now := time.Now().Unix()
-	inTable := make(map[string]bool, len(rows))
 	db.Transaction(func(tx *gorm.DB) error {
-		for i := range rows {
-			name := rows[i].Model
-			inTable[name] = true
-			if !linked[name] {
+		for _, p := range prices {
+			row, ok := existing[p.Model]
+			if !ok {
+				if err := tx.Create(&store.ModelPricing{
+					Model: p.Model, InputPerM: p.InputPerM, OutputPerM: p.OutputPerM,
+					CachedInputPerM: p.CachedInputPerM, CacheWritePerM: p.CacheWritePerM,
+					Currency: "USD", Source: p.Source, UpdatedAt: now,
+				}).Error; err != nil {
+					continue // 单条失败跳过
+				}
+				existing[p.Model] = store.ModelPricing{Model: p.Model, Source: p.Source}
+				added++
 				continue
 			}
-			p, ok := src[name]
-			if !ok {
-				continue // 远端源没有此关联名：人工维护优先，保持现状
+			remoteSource := row.Source == SrcLiteLLM || row.Source == SrcModelsDev
+			if !remoteSource && !linked[p.Model] {
+				continue // 人工条目且未关联：不覆盖
 			}
-			// 关联条目：按网络最新价覆盖四档单价
-			if err := tx.Model(&store.ModelPricing{}).Where("model = ?", name).Updates(map[string]any{
+			if err := tx.Model(&store.ModelPricing{}).Where("model = ?", p.Model).Updates(map[string]any{
 				"input_per_m": p.InputPerM, "output_per_m": p.OutputPerM,
 				"cached_input_per_m": p.CachedInputPerM, "cache_write_per_m": p.CacheWritePerM,
 				"source": p.Source, "updated_at": now,
@@ -196,12 +206,7 @@ func refreshLinked(db *gorm.DB, prices []ModelPrice) (refreshed, missing int) {
 		}
 		return nil
 	})
-	for name := range linked {
-		if !inTable[name] {
-			missing++
-		}
-	}
-	return refreshed, missing
+	return added, refreshed
 }
 
 // linkedPricingModels 被模型目录 pricing_model 引用的价目名集合（这些条目同步时刷新）
