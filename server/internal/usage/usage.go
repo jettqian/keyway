@@ -94,7 +94,7 @@ func ComputeCost(db *gorm.DB, model, upstreamModel, pricingMode string, multipli
 		pricingMode = "usd"
 	}
 	snap := pricingSnapshot(db)
-	p, ok := lookupPricing(snap.table, model, upstreamModel)
+	p, ok := snap.lookup(model, upstreamModel)
 	if !ok {
 		return nil, nil
 	}
@@ -149,15 +149,25 @@ var priceCaches sync.Map // *sql.DB → *priceSnapshot
 
 type priceSnapshot struct {
 	table map[string]store.ModelPricing
+	alias map[string]string // 目录名 → 关联价目名（catalog_models.pricing_model，v1.5.64）
 	fx    float64
 	at    time.Time
 }
 
 const priceCacheTTL = time.Minute
 
-// pricingSnapshot 取价目与汇率快照：命中且未过期直接用，否则全量重建。
-// 价目表查不到的目录模型按「关联价目」（catalog_models.pricing_model）补别名，
-// 使费用计算与目录关联口径一致（裸名人工条目优先；v1.5.63）
+// lookup 计价查价（v1.5.64 口径）：目录「关联价目」优先，其后上游模型名、入站模型名。
+// 只按关联计费——上游名/裸名条目仅在未关联或关联名未定价时兜底
+func (s *priceSnapshot) lookup(model, upstreamModel string) (store.ModelPricing, bool) {
+	if a := s.alias[model]; a != "" {
+		if p, ok := s.table[a]; ok {
+			return p, true
+		}
+	}
+	return lookupPricing(s.table, model, upstreamModel)
+}
+
+// pricingSnapshot 取价目/汇率/目录关联快照：命中且未过期直接用，否则全量重建
 func pricingSnapshot(db *gorm.DB) *priceSnapshot {
 	key := sqlDBOf(db)
 	if key != nil {
@@ -173,31 +183,27 @@ func pricingSnapshot(db *gorm.DB) *priceSnapshot {
 	for i := range list {
 		table[list[i].Model] = list[i]
 	}
-	applyCatalogAliases(db, table)
-	s := &priceSnapshot{table: table, fx: usdCNYRate(db), at: time.Now()}
+	s := &priceSnapshot{table: table, alias: catalogAliases(db), fx: usdCNYRate(db), at: time.Now()}
 	if key != nil {
 		priceCaches.Store(key, s)
 	}
 	return s
 }
 
-// applyCatalogAliases 目录关联价目 → 计价别名：目录名未直接命中价目表、而其
-// 关联名命中时，按关联名价目计费。只补缺不覆盖（人工裸名条目优先）
-func applyCatalogAliases(db *gorm.DB, table map[string]store.ModelPricing) {
+// catalogAliases 目录「关联价目」映射（目录名 → 关联价目名）；关联名为空或等于
+// 自身名的不产生别名（按名称直查）。计价只按关联（v1.5.64），不再受裸名条目影响
+func catalogAliases(db *gorm.DB) map[string]string {
 	var catalogs []store.CatalogModel
 	db.Select("name, pricing_model").Find(&catalogs)
+	alias := make(map[string]string, len(catalogs))
 	for i := range catalogs {
 		c := &catalogs[i]
 		if c.PricingModel == "" || c.PricingModel == c.Name {
 			continue
 		}
-		if _, ok := table[c.Name]; ok {
-			continue
-		}
-		if p, ok := table[c.PricingModel]; ok {
-			table[c.Name] = p
-		}
+		alias[c.Name] = c.PricingModel
 	}
+	return alias
 }
 
 // InvalidatePricingCache 价目或汇率写入后按库失效（管理端 CRUD / 远程同步 / 汇率更新）
@@ -530,7 +536,7 @@ func recomputeUnpricedCost(db *gorm.DB, base func() *gorm.DB, chParams map[int64
 	for i := range rows {
 		l := &rows[i]
 		model, upstream := derefStr(l.Model), derefStr(l.UpstreamModel)
-		p, ok := lookupPricing(snap.table, model, upstream)
+		p, ok := snap.lookup(model, upstream)
 		if !ok {
 			unpriced++
 			continue

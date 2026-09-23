@@ -1,5 +1,7 @@
-// Package pricing 官方价目远程同步：从 LiteLLM 与 OpenRouter 拉取模型单价（USD/百万 token），
-// 仅补缺——已存在的条目一律不覆盖（人工维护与历史快照优先，如需刷新可删除后重新同步）
+// Package pricing 官方价目远程同步：从 LiteLLM 与 OpenRouter 拉取模型单价（USD/百万 token）。
+// 同步语义（v1.5.64）：**目录关联条目刷新 + 其余只补缺**——被模型目录 pricing_model
+// 引用的价目条目每次同步用网络最新价覆盖（关联价保持新鲜）；其余已存在条目一律不动
+// （人工维护与历史快照优先），缺失条目补插
 package pricing
 
 import (
@@ -53,6 +55,7 @@ type ModelPrice struct {
 type Result struct {
 	LiteLLMAdded    int      `json:"litellmAdded"`
 	OpenRouterAdd   int      `json:"openrouterAdded"`
+	Refreshed       int      `json:"refreshed"` // 目录关联条目按网络最新价刷新数（v1.5.64）
 	SkippedExisting int      `json:"skippedExisting"`
 	Warnings        []string `json:"warnings,omitempty"`
 }
@@ -71,14 +74,19 @@ func SyncRemote(db *gorm.DB, timeout time.Duration) (*Result, error) {
 	if err != nil {
 		res.Warnings = append(res.Warnings, "LiteLLM 拉取失败："+err.Error())
 	} else {
-		res.LiteLLMAdded = applyMissing(db, litellm)
+		var skipped int
+		res.LiteLLMAdded, res.Refreshed, skipped = applyMissing(db, litellm)
+		res.SkippedExisting += skipped
 	}
 
 	openrouter, err := fetchParse(client, openrouterURL, parseOpenRouter)
 	if err != nil {
 		res.Warnings = append(res.Warnings, "OpenRouter 拉取失败："+err.Error())
 	} else {
-		res.OpenRouterAdd = applyMissing(db, openrouter)
+		var refreshed, skipped int
+		res.OpenRouterAdd, refreshed, skipped = applyMissing(db, openrouter)
+		res.Refreshed += refreshed
+		res.SkippedExisting += skipped
 	}
 
 	if len(res.Warnings) == 2 {
@@ -116,8 +124,8 @@ func StartSyncLoop(db *gorm.DB, hours int, stop <-chan struct{}) {
 			fmt.Printf("[keyway] 价目同步失败: %v\n", err)
 			return
 		}
-		fmt.Printf("[keyway] 价目同步完成：LiteLLM 新增 %d、OpenRouter 新增 %d、已存在跳过 %d\n",
-			res.LiteLLMAdded, res.OpenRouterAdd, res.SkippedExisting)
+		fmt.Printf("[keyway] 价目同步完成：LiteLLM 新增 %d、OpenRouter 新增 %d、关联刷新 %d、已存在跳过 %d\n",
+			res.LiteLLMAdded, res.OpenRouterAdd, res.Refreshed, res.SkippedExisting)
 	}
 	run()
 	ticker := time.NewTicker(time.Duration(hours) * time.Hour)
@@ -132,10 +140,11 @@ func StartSyncLoop(db *gorm.DB, hours int, stop <-chan struct{}) {
 	}
 }
 
-// applyMissing 事务内补缺（已在库或本批已新增的跳过）
-func applyMissing(db *gorm.DB, prices []ModelPrice) int {
+// applyMissing 同步落库（事务内）：已存在的条目仅在**被目录关联引用**时刷新为网络
+// 最新价（v1.5.64），其余跳过；缺失条目补插。返回 (新增数, 刷新数, 跳过数)
+func applyMissing(db *gorm.DB, prices []ModelPrice) (added, refreshed, skipped int) {
 	if len(prices) == 0 {
-		return 0
+		return 0, 0, 0
 	}
 	existing := map[string]bool{}
 	var rows []store.ModelPricing
@@ -143,11 +152,24 @@ func applyMissing(db *gorm.DB, prices []ModelPrice) int {
 	for _, r := range rows {
 		existing[r.Model] = true
 	}
+	linked := linkedPricingModels(db)
 	now := time.Now().Unix()
-	added := 0
 	db.Transaction(func(tx *gorm.DB) error {
 		for _, p := range prices {
 			if existing[p.Model] {
+				if !linked[p.Model] {
+					skipped++
+					continue
+				}
+				// 关联条目：按网络最新价覆盖四档单价
+				if err := tx.Model(&store.ModelPricing{}).Where("model = ?", p.Model).Updates(map[string]any{
+					"input_per_m": p.InputPerM, "output_per_m": p.OutputPerM,
+					"cached_input_per_m": p.CachedInputPerM, "cache_write_per_m": p.CacheWritePerM,
+					"updated_at": now,
+				}).Error; err != nil {
+					continue // 单条失败跳过
+				}
+				refreshed++
 				continue
 			}
 			existing[p.Model] = true
@@ -162,7 +184,18 @@ func applyMissing(db *gorm.DB, prices []ModelPrice) int {
 		}
 		return nil
 	})
-	return added
+	return added, refreshed, skipped
+}
+
+// linkedPricingModels 被模型目录 pricing_model 引用的价目名集合（这些条目同步时刷新）
+func linkedPricingModels(db *gorm.DB) map[string]bool {
+	var names []string
+	db.Model(&store.CatalogModel{}).Where("pricing_model != ''").Distinct("pricing_model").Pluck("pricing_model", &names)
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return set
 }
 
 func fetchParse(client *http.Client, url string, parse func([]byte) ([]ModelPrice, error)) ([]ModelPrice, error) {

@@ -1,6 +1,16 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.60（与 PRD v1.5.63 对应；模型目录**「关联价目」参与计价**——
+- 版本：v1.61（与 PRD v1.5.64 对应；**计价只按目录关联 + 关联价目定时网络刷新**——
+  ① `priceSnapshot` 增 `alias map[string]string`（目录名→关联价目名）与
+  `lookup(model, upstream)`：**关联价优先于上游名/裸名直查**（v1.5.63 的"裸名优先只补缺"
+  与预期相反，现命中关联即按关联价，关联名未定价才回退 `lookupPricing`），
+  `ComputeCost` 与统计价目补算同走 `snap.lookup`；② 同步语义改「补缺 + 关联条目刷新」：
+  `applyMissing` 返回 (added, refreshed, skipped)，被 `linkedPricingModels`
+  （catalog_models.pricing_model 去重集）引用的已存在条目按网络最新价 Updates 四档
+  单价，其余跳过，缺失补插；`Result.Refreshed` 新字段 + 管理页同步提示
+  admin.syncRefreshed；顺带修复 `SkippedExisting` 从未赋值恒 0；
+  `TestCatalogAliasPricing` 重写断言（关联 > 裸名/上游名）、新增 `TestApplyMissingRefresh`）；
+  前版 v1.60：与 PRD v1.5.63 对应；模型目录**「关联价目」参与计价**——
   `pricingSnapshot` 重建时 `applyCatalogAliases`：`catalog_models.pricing_model`
   非空且 ≠ 目录名、目录名未直接命中价目表、关联名命中 → `table[目录名] = 关联名价目`
   （只补缺不覆盖，裸名人工条目优先）；写入时快照与统计价目补算同口径，历史未定价行
@@ -1105,10 +1115,11 @@ new-api 的已知语义（仅参考行为，代码自研）。
 
 ### 8.2 费用快照（FR-L5，含缓存计价与渠道计价模式）
 
-- 写日志时查 model_pricing（内存缓存，按库实例快照：价目+汇率一次性载入；写路径——
-  管理端 CRUD / 远程同步 / 汇率更新——显式失效，另设 60s TTL 兜底）：`upstream_model`（映射后）优先，
-  回退入站 model；两者均未命中时按**目录关联价目**别名计价（v1.5.63：目录名未直接命中
-  价目表而 `catalog_models.pricing_model` 命中 → 按关联名价，快照重建时合入别名）
+- 写日志时查 model_pricing（内存缓存，按库实例快照：价目+汇率+目录关联一次性载入；
+  写路径——管理端 CRUD / 远程同步 / 汇率更新——显式失效，另设 60s TTL 兜底）。
+  查价优先级（v1.5.64）：**目录关联价目 → `upstream_model`（映射后）→ 入站 model**——
+  `priceSnapshot.lookup` 先按 `alias[入站名]` 取关联名条目（关联名未定价才回退），
+  目录关联缺失时上游名/入站名直查
 - 基础公式（token 归一化后，官方 USD 价）：
   ```
   base_input  = (prompt_tokens − cached_tokens − cache_write_tokens) ÷ 1M × input_per_m
@@ -1242,8 +1253,11 @@ new-api 的已知语义（仅参考行为，代码自研）。
 ### 8.6 官方价目远程同步与同步元信息（FR-M4.2）
 
 - **同步**：LiteLLM（`model_prices_and_context_window.json`）与 OpenRouter
-  （`/api/v1/models`）双源，归一化 USD/百万 token（含缓存读/写档）；**只补缺不覆盖**
-  （applyMissing 事务内查库判重）；手动 `POST /api/admin/pricing/sync_remote` 与
+  （`/api/v1/models`）双源，归一化 USD/百万 token（含缓存读/写档）。语义（v1.5.64）：
+  **目录关联条目刷新 + 其余只补缺**——applyMissing 事务内：已存在且被
+  `linkedPricingModels`（catalog_models.pricing_model 去重集）引用 → Updates 四档
+  单价为网络最新价（refreshed 计数）；已存在未引用 → 跳过（skipped 计数）；
+  缺失 → 补插（added 计数）。手动 `POST /api/admin/pricing/sync_remote` 与
   定时 `StartSyncLoop`（`KEYWAY_PRICING_SYNC_HOURS`，0 关闭）共用 `SyncRemote`
   （mutex 串行化），单源失败降级为警告，双源失败报错。
 - **同步元信息**：至少单源成功时把完成时间写入 `settings.pricing_synced_at`

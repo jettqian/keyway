@@ -121,3 +121,57 @@ func TestSyncedAtRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// 同步落库语义（v1.5.64）：目录关联条目刷新为网络最新价；其余已存在条目跳过；
+// 缺失条目补插
+func TestApplyMissingRefresh(t *testing.T) {
+	st, err := store.Open(store.Options{DataDir: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	db := st.DB()
+
+	// 目录关联 prov/m；plain 存在但无关联
+	if err := db.Create(&store.CatalogModel{Name: "cm", PricingModel: "prov/m", Enabled: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&store.ModelPricing{Model: "prov/m", InputPerM: 1, OutputPerM: 1, Currency: "USD"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&store.ModelPricing{Model: "plain", InputPerM: 2, OutputPerM: 2, Currency: "USD"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cr := 0.1
+	added, refreshed, skipped := applyMissing(db, []ModelPrice{
+		{Model: "prov/m", InputPerM: 3, OutputPerM: 7, CachedInputPerM: &cr},
+		{Model: "plain", InputPerM: 4, OutputPerM: 4},
+		{Model: "brandnew", InputPerM: 5, OutputPerM: 5},
+	})
+	if added != 1 || refreshed != 1 || skipped != 1 {
+		t.Fatalf("期望 新增1/刷新1/跳过1，实际 %d/%d/%d", added, refreshed, skipped)
+	}
+
+	var pm store.ModelPricing
+	if err := db.First(&pm, "model = ?", "prov/m").Error; err != nil {
+		t.Fatal(err)
+	}
+	if pm.InputPerM != 3 || pm.OutputPerM != 7 || pm.CachedInputPerM == nil || *pm.CachedInputPerM != 0.1 {
+		t.Fatalf("关联条目应刷新为网络最新价: %+v", pm)
+	}
+	var plain store.ModelPricing
+	if err := db.First(&plain, "model = ?", "plain").Error; err != nil {
+		t.Fatal(err)
+	}
+	if plain.InputPerM != 2 || plain.OutputPerM != 2 {
+		t.Fatalf("未关联条目不应被覆盖: %+v", plain)
+	}
+	var bn store.ModelPricing
+	if err := db.First(&bn, "model = ?", "brandnew").Error; err != nil {
+		t.Fatal(err)
+	}
+	if bn.InputPerM != 5 || bn.Currency != "USD" {
+		t.Fatalf("缺失条目应补插: %+v", bn)
+	}
+}
