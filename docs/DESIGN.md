@@ -1,6 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.70（与 PRD v1.5.73 对应；**长模型名显示不全修复**——CatalogPrice
+- 版本：v1.71（与 PRD v1.5.74 对应；**关联价目点选卡顿修复**——`pricingModelOptions`
+  改手动过滤（`filterOption={false}` + `onSearch` 本地包含匹配）+ `slice(0, 50)` 截断，
+  候选价格摘要用 `fmtPrice` 纯文本替代 Money 组件实例（9k+ 条全量构造组件节点
+  是卡顿根因）；openCreate/openEdit 清空 `pmSearch`）；
+  前版 v1.70：与 PRD v1.5.73 对应；**长模型名显示不全修复**——CatalogPrice
   「价格模型」行 whiteSpace normal + overflowWrap anywhere，单价列去 230 限宽；
   关联价目候选 AutoComplete popupMatchSelectWidth=false + 去 ellipsis）；
   前版 v1.69：与 PRD v1.5.72 对应；**价目表被关联条目置前**——恢复目录关联排序：

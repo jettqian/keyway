@@ -30,7 +30,7 @@ import {
   adminStatsLinks,
 } from '../api'
 import type { User, ModelPricing, PricingSource, Proxy, ChannelTemplate, CatalogModel, StatsResponse, StatsGroup, AdminSettings, LinkStat } from '../api/types'
-import { formatDateTime, fmtInt, fmtTokens } from '../format'
+import { formatDateTime, fmtInt, fmtTokens, fmtPrice } from '../format'
 import { useI18n } from '../i18n'
 import CatalogPrice from '../components/CatalogPrice'
 import LinksTable from '../components/LinksTable'
@@ -504,6 +504,7 @@ const CatalogModelsTab: React.FC = () => {
   const [modalOpen, setModalOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<CatalogModel | null>(null)
   const [picked, setPicked] = React.useState<ModelPricing | null>(null)
+  const [pmSearch, setPmSearch] = React.useState('')
   const [form] = Form.useForm()
   const refresh = React.useCallback(() => {
     setLoading(true)
@@ -516,23 +517,29 @@ const CatalogModelsTab: React.FC = () => {
       .finally(() => setLoading(false))
   }, [])
   React.useEffect(refresh, [refresh])
-  // 关联价目候选（关联价目输入框点选用）：右侧显示来源 + 价格摘要；长模型名完整展示
-  const pricingModelOptions = React.useMemo(() => pricingList.map((p) => ({
-    value: p.model,
-    label: (
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span style={{ whiteSpace: 'nowrap' }}>
-          {p.model} <SourceTag source={p.source} />
-        </span>
-        <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-          {t('common.input')} <Money value={p.inputPerM} /> / {t('common.output')} <Money value={p.outputPerM} />
-        </span>
-      </div>
-    ),
-  })), [pricingList, t])
+  // 关联价目候选（关联价目输入框点选用）：手动过滤 + 截断前 50 条——价目表 9k+ 条，
+  // 全量构造选项节点会导致下拉卡顿；标签用 fmtPrice 纯文本摘要避免逐条组件实例
+  const pricingModelOptions = React.useMemo(() => {
+    const kw = pmSearch.trim().toLowerCase()
+    const matched = kw ? pricingList.filter((p) => p.model.toLowerCase().includes(kw)) : pricingList
+    return matched.slice(0, 50).map((p) => ({
+      value: p.model,
+      label: (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <span style={{ whiteSpace: 'nowrap' }}>
+            {p.model} <SourceTag source={p.source} />
+          </span>
+          <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+            {t('common.input')} {fmtPrice(p.inputPerM)} / {t('common.output')} {fmtPrice(p.outputPerM)}
+          </span>
+        </div>
+      ),
+    }))
+  }, [pricingList, pmSearch, t])
   const openCreate = () => {
     setEditing(null)
     setPicked(null)
+    setPmSearch('')
     form.resetFields()
     form.setFieldsValue({ name: '', pricingModel: '', note: '', enabled: true })
     setModalOpen(true)
@@ -540,6 +547,7 @@ const CatalogModelsTab: React.FC = () => {
   const openEdit = (m: CatalogModel) => {
     setEditing(m)
     setPicked(pricingList.find((p) => p.model === (m.pricingModel || m.name)) ?? null)
+    setPmSearch('')
     form.setFieldsValue({ name: m.name, pricingModel: m.pricingModel || m.name, note: m.note, enabled: m.enabled })
     setModalOpen(true)
   }
@@ -637,8 +645,9 @@ const CatalogModelsTab: React.FC = () => {
             <AutoComplete
               options={pricingModelOptions}
               popupMatchSelectWidth={false}
+              filterOption={false}
+              onSearch={(v: string) => setPmSearch(v)}
               onSelect={(v: string) => setPicked(pricingList.find((p) => p.model === v) ?? null)}
-              filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.trim().toLowerCase())}
               placeholder={t('admin.pricingModelPlaceholder')}
             />
           </Form.Item>
