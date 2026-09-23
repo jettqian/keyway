@@ -117,20 +117,11 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
   )
 }
 
-const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () => void }> = ({ channels, loading, refresh }) => {
+const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () => void; catalog: CatalogModel[]; catLoading: boolean }> = ({ channels, loading, refresh, catalog, catLoading }) => {
   const { t } = useI18n()
-  const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
-  const [catLoading, setCatLoading] = React.useState(true)
   const [bindingModel, setBindingModel] = React.useState<CatalogModel | null>(null)
   const [bindingChannelIDs, setBindingChannelIDs] = React.useState<number[]>([])
   const [bindingSaving, setBindingSaving] = React.useState(false)
-
-  React.useEffect(() => {
-    listCatalogModels()
-      .then((r) => setCatalog(r.models))
-      .catch((e) => message.error((e as Error).message))
-      .finally(() => setCatLoading(false))
-  }, [])
 
   const usage = React.useMemo(() => {
     const map = new Map<string, string[]>()
@@ -166,19 +157,8 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () 
     }
   }
 
-  const pendingModels = catalog.filter((model) => !usage.has(model.name))
-
   return (
     <div>
-      {pendingModels.length > 0 ? (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message={t('models.newModelsNotice')}
-          description={t('models.newModelsNoticeDesc', { models: pendingModels.map((model) => model.name).join('、') })}
-        />
-      ) : null}
       <div className="tab-note">{t('models.catalogTabNote')}</div>
       <Table<CatalogModel>
         rowKey="id"
@@ -237,6 +217,8 @@ const ModelsPage: React.FC = () => {
   const { t } = useI18n()
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [catalog, setCatalog] = React.useState<CatalogModel[]>([])
+  const [catLoading, setCatLoading] = React.useState(true)
 
   const refresh = React.useCallback(() => {
     setLoading(true)
@@ -247,9 +229,27 @@ const ModelsPage: React.FC = () => {
   }, [])
 
   React.useEffect(refresh, [refresh])
+  React.useEffect(() => {
+    listCatalogModels()
+      .then((r) => setCatalog(r.models))
+      .catch((e) => message.error((e as Error).message))
+      .finally(() => setCatLoading(false))
+  }, [])
+
+  const usedModels = React.useMemo(() => new Set(channels.flatMap((channel) => channel.models ?? [])), [channels])
+  const pendingModels = catalog.filter((model) => !usedModels.has(model.name))
 
   return (
     <div>
+      {pendingModels.length > 0 ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t('models.newModelsNotice')}
+          description={t('models.newModelsNoticeDesc', { models: pendingModels.map((model) => model.name).join('、') })}
+        />
+      ) : null}
       <div className="page-heading">
         <div><h2>{t('models.title')}</h2><p>{t('models.subtitle')}</p></div>
         <div className="page-actions"><Button icon={<ReloadOutlined />} onClick={refresh}>{t('models.refresh')}</Button></div>
@@ -257,7 +257,7 @@ const ModelsPage: React.FC = () => {
       <Tabs
         items={[
           { key: 'mine', label: t('models.myModels'), children: <MyModelsTab channels={channels} loading={loading} refresh={refresh} /> },
-          { key: 'catalog', label: t('models.catalogTab'), children: <CatalogTab channels={channels} loading={loading} refresh={refresh} /> },
+          { key: 'catalog', label: t('models.catalogTab'), children: <CatalogTab channels={channels} loading={loading} refresh={refresh} catalog={catalog} catLoading={catLoading} /> },
         ]}
       />
     </div>
