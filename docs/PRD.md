@@ -1,12 +1,18 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.68
+- 版本：v1.5.69
 - 日期：2026-09-23
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.69：**双源合并优先级翻转：models.dev 先到先得**——v1.5.67 沿用了
+>   「LiteLLM 先到先得」，实测目录关联名在 LiteLLM 全部先命中（11/11 记 LiteLLM），
+>   models.dev 颗粒无收：来源筛选 models.dev 恒为空、关联价目候选只见 LiteLLM。
+>   现翻转为 **models.dev 先到先得（官方文档口径优先），LiteLLM 补缺名/裸名**
+>   （models.dev 缺 `moonshot/kimi-k3`、`z-ai/glm-5.3` 等命名，仍由 LiteLLM 覆盖）；
+>   下次同步起关联条目按新优先级刷新来源标识
 > - v1.5.68：**价目条目标识来源 + 按来源筛选**——`model_pricing` 新增 `source` 列
 >   （`LiteLLM` / `models.dev` / `manual` 手工 / `import` 导入；空串为历史数据）：
 >   远程同步刷新关联条目时把命中源标识随四档单价一并覆盖；新增/编辑走管理接口的
@@ -1110,9 +1116,10 @@ HTTP 状态码上：200 = 成功 → 不换 key、不换渠道、还把渠道×�
   管理页表格支持**按模型名搜索筛选**，且**模型目录中的条目置前显示**（带"目录"标签）
 - FR-M4.1 全局模型目录：管理员维护供用户点选的模型目录（见 5.3.1 FR-MC1/MC2），
   管理页提供"模型目录"标签
-- FR-M4.2 官方价目远程同步：从 LiteLLM（model_prices_and_context_window.json）与
-  models.dev（api.json）拉取模型单价，归一化 USD/百万 token（含缓存读/写档；
+- FR-M4.2 官方价目远程同步：从 models.dev（api.json）与 LiteLLM
+  （model_prices_and_context_window.json）拉取模型单价，归一化 USD/百万 token（含缓存读/写档；
   仅输入输出模态均含 text 且输入输出价均大于 0 的条目；models.dev 价目直取无需换算）。
+  双源合并（v1.5.69）：**models.dev 先到先得（官方文档口径优先），LiteLLM 补缺名/裸名**。
   同步语义（v1.5.65 修订）：
   **只刷新模型目录关联的价目条目，不补缺**——被 `catalog_models.pricing_model` 引用的
   价目条目按网络最新价覆盖四档单价（关联价保持新鲜）；不新增任何模型（删除永久生效）；

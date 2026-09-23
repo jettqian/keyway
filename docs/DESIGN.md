@@ -1,6 +1,11 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.65（与 PRD v1.5.68 对应；**价目条目标识来源 + 按来源筛选**——
+- 版本：v1.66（与 PRD v1.5.69 对应；**双源合并优先级翻转**——models.dev 先到先得
+  （官方文档口径优先），LiteLLM 补缺名/裸名：v1.5.67 沿用 LiteLLM 优先导致目录关联名
+  全部先命中 LiteLLM（11/11），models.dev 来源筛选恒空、关联候选只见 LiteLLM；
+  合并抽 `mergeSources(dst, src)`（dst 既有名不被 src 覆盖）并补
+  `TestMergeSourcesPriority`）；
+  前版 v1.65：与 PRD v1.5.68 对应；**价目条目标识来源 + 按来源筛选**——
   `model_pricing` 新增 `source` 列（AutoMigrate 自动补列，存量空串）：`ModelPrice`
   增 `Source` 字段由解析器写入（LiteLLM/models.dev），`refreshLinked` 刷新时随四档
   单价一并覆盖；`PUT /pricing/:model` 来源服务端裁定——仅接受 `import`，其余
@@ -1284,10 +1289,10 @@ new-api 的已知语义（仅参考行为，代码自研）。
 
 ### 8.6 官方价目远程同步与同步元信息（FR-M4.2）
 
-- **同步**：LiteLLM（`model_prices_and_context_window.json`）与 models.dev
-  （`api.json`）双源，归一化 USD/百万 token（含缓存读/写档；models.dev 的
+- **同步**：models.dev（`api.json`）与 LiteLLM
+  （`model_prices_and_context_window.json`）双源，归一化 USD/百万 token（含缓存读/写档；models.dev 的
   `cost.{input,output,cache_read,cache_write}` 直取免换算），合并去重
-  （LiteLLM 先到先得，models.dev 补缺名）。语义（v1.5.65）：**只刷新目录关联的价目条目，不补缺**——
+  （v1.5.69：models.dev 先到先得——官方文档口径优先，LiteLLM 补缺名/裸名）。语义（v1.5.65）：**只刷新目录关联的价目条目，不补缺**——
   `refreshLinked` 事务内：已存在且被 `linkedPricingModels`（catalog_models.pricing_model
   去重集）引用 → Updates 四档单价与 `source`（命中源标识，随 `ModelPrice.Source` 由
   解析器写入）为网络最新价（refreshed 计数）；远端源没有的关联名
@@ -1457,7 +1462,7 @@ warnings 清单 + 「刷新页面查看」。
 | KEYWAY_RESPONSE_HEADER_TIMEOUT_S | 1800 | 上游响应头等待超时（秒），0=不限制；对齐 new-api `RELAY_RESPONSE_HEADER_TIMEOUT`。仅覆盖响应头阶段，流式 body 不受影响（不用 Client.Timeout 整体超时，避免切断长流式） |
 | KEYWAY_IDLE_STREAM_TIMEOUT_S | 300 | 流式空闲超时（秒，0 关闭）：上游持续无数据即发送保活注释并关闭上游止损；期间每 15s 向客户端发 SSE 注释 ping 防中间层断连 |
 | KEYWAY_LOG_RETENTION_DAYS | 30 | 日志保留期 |
-| KEYWAY_PRICING_SYNC_HOURS | 24 | 官方价目远程同步周期（小时，LiteLLM + models.dev；0 关闭；启动先执行一次） |
+| KEYWAY_PRICING_SYNC_HOURS | 24 | 官方价目远程同步周期（小时，models.dev + LiteLLM；0 关闭；启动先执行一次） |
 | KEYWAY_FX_SOURCE_URL | 空 | 覆盖汇率同步源（单一源无回退，自建镜像/测试用；留空用 frankfurter→jsdelivr→er-api 三源回退） |
 
 ## 13. 部署

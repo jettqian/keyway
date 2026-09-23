@@ -1,7 +1,8 @@
-// Package pricing 官方价目远程同步：从 LiteLLM 与 models.dev 拉取模型单价（USD/百万 token）。
+// Package pricing 官方价目远程同步：从 models.dev 与 LiteLLM 拉取模型单价（USD/百万 token）。
 // 同步语义（v1.5.65）：**只刷新目录关联的价目条目**——被模型目录 pricing_model 引用的
 // 价目条目用网络最新价覆盖四档单价；不补缺、不新增任何模型（价目表增长完全由管理员
 // 控制：手工录入 / JSON 导入；删除永久生效）
+// 双源合并（v1.5.69）：models.dev 先到先得（官方文档口径优先），LiteLLM 补缺名/裸名。
 package pricing
 
 import (
@@ -57,6 +58,16 @@ type ModelPrice struct {
 	Source          string
 }
 
+// mergeSources 双源合并：按传入顺序先到先得（dst 为已合并结果，src 不覆盖既有名）
+func mergeSources(dst map[string]ModelPrice, src []ModelPrice) map[string]ModelPrice {
+	for _, p := range src {
+		if _, ok := dst[p.Model]; !ok {
+			dst[p.Model] = p
+		}
+	}
+	return dst
+}
+
 // Result 同步结果
 type Result struct {
 	Refreshed int      `json:"refreshed"` // 目录关联条目刷新数
@@ -74,27 +85,19 @@ func SyncRemote(db *gorm.DB, timeout time.Duration) (*Result, error) {
 	client := &http.Client{Timeout: timeout}
 	res := &Result{}
 
-	// 双源合并（LiteLLM 先到先得，models.dev 补缺名）
+	// 双源合并（v1.5.69：models.dev 先到先得——官方文档口径优先，LiteLLM 补缺名/裸名）
 	merged := map[string]ModelPrice{}
-	litellm, err := fetchParse(client, litellmURL, parseLiteLLM)
-	if err != nil {
-		res.Warnings = append(res.Warnings, "LiteLLM 拉取失败："+err.Error())
-	} else {
-		for _, p := range litellm {
-			if _, ok := merged[p.Model]; !ok {
-				merged[p.Model] = p
-			}
-		}
-	}
 	modelsDev, err := fetchParse(client, modelsDevURL, parseModelsDev)
 	if err != nil {
 		res.Warnings = append(res.Warnings, "models.dev 拉取失败："+err.Error())
 	} else {
-		for _, p := range modelsDev {
-			if _, ok := merged[p.Model]; !ok {
-				merged[p.Model] = p
-			}
-		}
+		merged = mergeSources(merged, modelsDev)
+	}
+	litellm, err := fetchParse(client, litellmURL, parseLiteLLM)
+	if err != nil {
+		res.Warnings = append(res.Warnings, "LiteLLM 拉取失败："+err.Error())
+	} else {
+		merged = mergeSources(merged, litellm)
 	}
 	if len(res.Warnings) == 2 {
 		return res, fmt.Errorf("两个价目源均拉取失败")

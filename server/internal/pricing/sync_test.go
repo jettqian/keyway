@@ -149,6 +149,29 @@ func TestSyncedAtRoundTrip(t *testing.T) {
 	}
 }
 
+// 双源合并优先级（v1.5.69）：models.dev 先到先得，同名 LiteLLM 不抢占；LiteLLM 补缺名
+func TestMergeSourcesPriority(t *testing.T) {
+	modelsDev := []ModelPrice{
+		{Model: "zai/glm-5.3-flash", InputPerM: 0.15, OutputPerM: 0.5, Source: SrcModelsDev},
+	}
+	litellm := []ModelPrice{
+		{Model: "zai/glm-5.3-flash", InputPerM: 9, OutputPerM: 9, Source: SrcLiteLLM}, // 同名，不得覆盖
+		{Model: "gpt-4o", InputPerM: 2.5, OutputPerM: 10, Source: SrcLiteLLM},         // 裸名补缺
+	}
+	merged := mergeSources(mergeSources(map[string]ModelPrice{}, modelsDev), litellm)
+	if len(merged) != 2 {
+		t.Fatalf("期望 2 条，实际 %d", len(merged))
+	}
+	flash := merged["zai/glm-5.3-flash"]
+	if flash.Source != SrcModelsDev || flash.InputPerM != 0.15 {
+		t.Errorf("同名应保留 models.dev 条目：%+v", flash)
+	}
+	gpt := merged["gpt-4o"]
+	if gpt.Source != SrcLiteLLM {
+		t.Errorf("缺名应由 LiteLLM 补齐：%+v", gpt)
+	}
+}
+
 // 同步落库语义（v1.5.65）：只刷新目录关联的价目条目；不补缺、不新增任何模型，
 // 未关联条目不动；关联名不在价目表仅计数提示
 func TestSyncRefreshLinked(t *testing.T) {
