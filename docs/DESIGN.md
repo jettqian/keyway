@@ -1,6 +1,12 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.59（与 PRD v1.5.62 对应；**移除内置价目种子**——删除 `store/pricing.go`
+- 版本：v1.60（与 PRD v1.5.63 对应；模型目录**「关联价目」参与计价**——
+  `pricingSnapshot` 重建时 `applyCatalogAliases`：`catalog_models.pricing_model`
+  非空且 ≠ 目录名、目录名未直接命中价目表、关联名命中 → `table[目录名] = 关联名价目`
+  （只补缺不覆盖，裸名人工条目优先）；写入时快照与统计价目补算同口径，历史未定价行
+  自动按关联价补齐；目录新增/编辑/删除显式 `InvalidatePricingCache`（60s TTL 兜底）；
+  `TestCatalogAliasPricing` 覆盖别名计价/裸名优先/关联未定价/上游名直接命中优先）；
+  前版 v1.59：与 PRD v1.5.62 对应；**移除内置价目种子**——删除 `store/pricing.go`
   种子清单与 `store.Open` 的 `seedModelPricing` 调用：种子按"冲突跳过"每次启动重插，
   价目表删掉的条目（模型目录改名后的老模型价等）重启即复活。价目来源只剩手工录入/
   JSON 导入/远程同步（StartSyncLoop「只补缺」不变），新部署价目表为空、费用显示
@@ -1101,7 +1107,8 @@ new-api 的已知语义（仅参考行为，代码自研）。
 
 - 写日志时查 model_pricing（内存缓存，按库实例快照：价目+汇率一次性载入；写路径——
   管理端 CRUD / 远程同步 / 汇率更新——显式失效，另设 60s TTL 兜底）：`upstream_model`（映射后）优先，
-  回退入站 model
+  回退入站 model；两者均未命中时按**目录关联价目**别名计价（v1.5.63：目录名未直接命中
+  价目表而 `catalog_models.pricing_model` 命中 → 按关联名价，快照重建时合入别名）
 - 基础公式（token 归一化后，官方 USD 价）：
   ```
   base_input  = (prompt_tokens − cached_tokens − cache_write_tokens) ÷ 1M × input_per_m
@@ -1186,7 +1193,8 @@ new-api 的已知语义（仅参考行为，代码自研）。
 ### 8.4 模型目录与渠道模型列表维护
 
 - 全局模型目录 `catalog_models`（管理员手动收录常用模型，用户只关心自己用到的模型，
-  可通过 `pricing_model` 关联任意价目表模型）：仅作为渠道/模板表单的
+  可通过 `pricing_model` 关联任意价目表模型，且**关联价目参与费用计算**——v1.5.63
+  起 `pricingSnapshot` 按目录关联生成计价别名）：仅作为渠道/模板表单的
   点选数据源与用户模型页的目录视图，**不参与路由**；删除目录项不影响已引用它的渠道配置。
   管理页"新增模型"弹窗的模型名为 AutoComplete：输入关键字在价目表（`GET
   /api/admin/pricing`，近 3000 条）中本地筛选（包含匹配，antd 虚拟滚动），候选项右侧

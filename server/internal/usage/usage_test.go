@@ -2,7 +2,9 @@ package usage
 
 import (
 	"testing"
+	"time"
 
+	"keyway/internal/convert"
 	"keyway/internal/store"
 )
 
@@ -508,5 +510,71 @@ func TestQueryLogs仅看失败(t *testing.T) {
 		if l.Error == nil {
 			t.Errorf("仅看失败不应返回无错误行: %+v", l)
 		}
+	}
+}
+
+// 目录「关联价目」参与计价（v1.5.63）：裸名未定价而关联名命中时按关联名价计算；
+// 裸名人工条目优先于别名；未关联或关联名也未定价仍为未定价
+func TestCatalogAliasPricing(t *testing.T) {
+	st, err := store.Open(store.Options{DataDir: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	db := st.DB()
+
+	// 关联名条目（模拟 LiteLLM 带前缀名）与裸名人工条目
+	if err := db.Create(&store.ModelPricing{Model: "provider/flashx", InputPerM: 0.37, CachedInputPerM: f64p(0.075), OutputPerM: 1.25, Currency: "USD"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&store.ModelPricing{Model: "provider/bare", InputPerM: 5, OutputPerM: 5, Currency: "USD"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&store.ModelPricing{Model: "bare", InputPerM: 9, OutputPerM: 9, Currency: "USD"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	catalogs := []store.CatalogModel{
+		{Name: "flashx", PricingModel: "provider/flashx", Enabled: 1, CreatedAt: now, UpdatedAt: now},
+		{Name: "bare", PricingModel: "provider/bare", Enabled: 1, CreatedAt: now, UpdatedAt: now},
+		{Name: "orphan", PricingModel: "provider/none", Enabled: 1, CreatedAt: now, UpdatedAt: now},
+		{Name: "noassoc", PricingModel: "", Enabled: 1, CreatedAt: now, UpdatedAt: now},
+	}
+	for i := range catalogs {
+		if err := db.Create(&catalogs[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	u := convert.Usage{PromptTokens: 1_000_000, CompletionTokens: 1_000_000}
+	// 别名计价：0.37 + 1.25 = 1.62
+	ic, oc := ComputeCost(db, "flashx", "", "usd", 1, 0, u)
+	if ic == nil || *ic+*oc != 1.62 {
+		t.Fatalf("关联价目应生效 $1.62，实际 %v / %v", ic, oc)
+	}
+	// 裸名人工条目优先：9 + 9 = 18（而非关联名 5+5=10）
+	ic, oc = ComputeCost(db, "bare", "", "usd", 1, 0, u)
+	if ic == nil || *ic+*oc != 18 {
+		t.Fatalf("裸名人工条目应优先 $18，实际 %v / %v", ic, oc)
+	}
+	// 关联名未定价 → 未定价
+	if ic, oc = ComputeCost(db, "orphan", "", "usd", 1, 0, u); ic != nil {
+		t.Fatalf("关联名未定价应返回 nil，实际 %v", *ic)
+	}
+	// 未关联（pricing_model 空回退自身名）→ 未定价
+	if ic, oc = ComputeCost(db, "noassoc", "", "usd", 1, 0, u); ic != nil {
+		t.Fatalf("未关联目录模型应返回 nil，实际 %v", *ic)
+	}
+	// 入站名命中目录、上游名直接命中价目表 → 上游名优先（1 + 1 = 2，不走别名）
+	if err := db.Create(&store.ModelPricing{Model: "upstream-x", InputPerM: 1, OutputPerM: 1, Currency: "USD"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&store.CatalogModel{Name: "alias-x", PricingModel: "provider/flashx", Enabled: 1, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	InvalidatePricingCache(db) // 模拟目录/价目变更后的失效（生产由 TTL 或显式失效驱动）
+	ic, oc = ComputeCost(db, "alias-x", "upstream-x", "usd", 1, 0, u)
+	if ic == nil || *ic+*oc != 2 {
+		t.Fatalf("上游名直接命中应优先 $2，实际 %v / %v", ic, oc)
 	}
 }

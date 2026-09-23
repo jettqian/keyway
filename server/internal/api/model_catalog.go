@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/store"
+	"keyway/internal/usage"
 )
 
 // ---------- 全局模型目录（管理员预置，供渠道/模板表单点选） ----------
@@ -105,6 +106,7 @@ func (s *Server) handleAdminCreateCatalogModel(c *gin.Context) {
 		s.fail(c, http.StatusInternalServerError, "创建失败")
 		return
 	}
+	usage.InvalidatePricingCache(s.Store.DB()) // 关联价目参与计价别名（v1.5.63）
 	s.ok(c, gin.H{"model": catalogModelDTO(&m)})
 }
 
@@ -149,6 +151,7 @@ func (s *Server) handleAdminUpdateCatalogModel(c *gin.Context) {
 		return
 	}
 	s.Store.DB().First(&m, id)
+	usage.InvalidatePricingCache(s.Store.DB()) // 名称/关联价目变化影响计价别名
 	s.ok(c, gin.H{"model": catalogModelDTO(&m)})
 }
 
@@ -160,5 +163,6 @@ func (s *Server) handleAdminDeleteCatalogModel(c *gin.Context) {
 		s.fail(c, http.StatusNotFound, "目录模型不存在")
 		return
 	}
+	usage.InvalidatePricingCache(s.Store.DB()) // 移除目录条目即移除计价别名
 	s.ok(c, gin.H{})
 }

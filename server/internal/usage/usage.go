@@ -155,7 +155,9 @@ type priceSnapshot struct {
 
 const priceCacheTTL = time.Minute
 
-// pricingSnapshot 取价目与汇率快照：命中且未过期直接用，否则全量重建
+// pricingSnapshot 取价目与汇率快照：命中且未过期直接用，否则全量重建。
+// 价目表查不到的目录模型按「关联价目」（catalog_models.pricing_model）补别名，
+// 使费用计算与目录关联口径一致（裸名人工条目优先；v1.5.63）
 func pricingSnapshot(db *gorm.DB) *priceSnapshot {
 	key := sqlDBOf(db)
 	if key != nil {
@@ -171,11 +173,31 @@ func pricingSnapshot(db *gorm.DB) *priceSnapshot {
 	for i := range list {
 		table[list[i].Model] = list[i]
 	}
+	applyCatalogAliases(db, table)
 	s := &priceSnapshot{table: table, fx: usdCNYRate(db), at: time.Now()}
 	if key != nil {
 		priceCaches.Store(key, s)
 	}
 	return s
+}
+
+// applyCatalogAliases 目录关联价目 → 计价别名：目录名未直接命中价目表、而其
+// 关联名命中时，按关联名价目计费。只补缺不覆盖（人工裸名条目优先）
+func applyCatalogAliases(db *gorm.DB, table map[string]store.ModelPricing) {
+	var catalogs []store.CatalogModel
+	db.Select("name, pricing_model").Find(&catalogs)
+	for i := range catalogs {
+		c := &catalogs[i]
+		if c.PricingModel == "" || c.PricingModel == c.Name {
+			continue
+		}
+		if _, ok := table[c.Name]; ok {
+			continue
+		}
+		if p, ok := table[c.PricingModel]; ok {
+			table[c.Name] = p
+		}
+	}
 }
 
 // InvalidatePricingCache 价目或汇率写入后按库失效（管理端 CRUD / 远程同步 / 汇率更新）
