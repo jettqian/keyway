@@ -25,6 +25,12 @@ const (
 
 	// KeySyncedAt settings 表键：最近一次同步完成时间（RFC3339；双源全失败不记录）
 	KeySyncedAt = "pricing_synced_at"
+
+	// 价目来源标识（model_pricing.source）：双远程源 + 本地录入
+	SrcLiteLLM   = "LiteLLM"
+	SrcModelsDev = "models.dev"
+	SrcManual    = "manual"
+	SrcImport    = "import"
 )
 
 // Source 官方价目同步源（名称 + 链接，供管理界面展示）
@@ -36,8 +42,8 @@ type Source struct {
 // Sources 返回全部同步源信息
 func Sources() []Source {
 	return []Source{
-		{Name: "LiteLLM", URL: litellmURL},
-		{Name: "models.dev", URL: modelsDevURL},
+		{Name: SrcLiteLLM, URL: litellmURL},
+		{Name: SrcModelsDev, URL: modelsDevURL},
 	}
 }
 
@@ -48,6 +54,7 @@ type ModelPrice struct {
 	OutputPerM      float64
 	CachedInputPerM *float64
 	CacheWritePerM  *float64
+	Source          string
 }
 
 // Result 同步结果
@@ -148,6 +155,7 @@ func StartSyncLoop(db *gorm.DB, hours int, stop <-chan struct{}) {
 
 // refreshLinked 仅刷新目录关联的价目条目（v1.5.65：同步不再补缺/新增模型）。
 // 关联名不在价目表的不创建（missing 计数提示）；远端源没有的关联名保持现状。
+// 刷新时四档单价与 source（命中源标识）一并覆盖。
 // 返回 (刷新数, 关联名不在价目表的条数)
 func refreshLinked(db *gorm.DB, prices []ModelPrice) (refreshed, missing int) {
 	if len(prices) == 0 {
@@ -177,7 +185,7 @@ func refreshLinked(db *gorm.DB, prices []ModelPrice) (refreshed, missing int) {
 			if err := tx.Model(&store.ModelPricing{}).Where("model = ?", name).Updates(map[string]any{
 				"input_per_m": p.InputPerM, "output_per_m": p.OutputPerM,
 				"cached_input_per_m": p.CachedInputPerM, "cache_write_per_m": p.CacheWritePerM,
-				"updated_at": now,
+				"source": p.Source, "updated_at": now,
 			}).Error; err != nil {
 				continue // 单条失败跳过
 			}
@@ -251,6 +259,7 @@ func parseLiteLLM(body []byte) ([]ModelPrice, error) {
 			OutputPerM:      e.OutputCostPerToken * 1e6,
 			CachedInputPerM: positivePtr(e.CacheReadInputTokenCost * 1e6),
 			CacheWritePerM:  positivePtr(e.CacheCreationTokenCost * 1e6),
+			Source:          SrcLiteLLM,
 		})
 	}
 	return out, nil
@@ -312,6 +321,7 @@ func parseModelsDev(body []byte) ([]ModelPrice, error) {
 				OutputPerM:      m.Cost.Output,
 				CachedInputPerM: positivePtr(m.Cost.CacheRead),
 				CacheWritePerM:  positivePtr(m.Cost.CacheWrite),
+				Source:          SrcModelsDev,
 			})
 		}
 	}

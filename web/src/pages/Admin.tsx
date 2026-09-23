@@ -109,6 +109,7 @@ const PricingTab: React.FC = () => {
   const [importOpen, setImportOpen] = React.useState(false)
   const [importText, setImportText] = React.useState('')
   const [search, setSearch] = React.useState('')
+  const [sourceFilter, setSourceFilter] = React.useState('')
   const [syncedAt, setSyncedAt] = React.useState('')
   const [sources, setSources] = React.useState<PricingSource[]>([])
   const [catalogNames, setCatalogNames] = React.useState<Set<string>>(new Set())
@@ -127,17 +128,18 @@ const PricingTab: React.FC = () => {
   }, [])
   React.useEffect(refresh, [refresh])
 
-  // 目录内模型置前显示，其余按名称排后；支持按模型名搜索筛选
+  // 目录内模型置前显示，其余按名称排后；支持按模型名搜索与按来源筛选
   const rows = React.useMemo(() => {
     const kw = search.trim().toLowerCase()
     return pricing
       .filter((p) => !kw || p.model.toLowerCase().includes(kw))
+      .filter((p) => !sourceFilter || (p.source ?? '') === sourceFilter)
       .sort((a, b) => {
         const inA = catalogNames.has(a.model) ? 0 : 1
         const inB = catalogNames.has(b.model) ? 0 : 1
         return inA - inB || a.model.localeCompare(b.model)
       })
-  }, [pricing, search, catalogNames])
+  }, [pricing, search, sourceFilter, catalogNames])
 
   const openCreate = () => {
     setEditing(null)
@@ -191,11 +193,12 @@ const PricingTab: React.FC = () => {
     for (const p of list) {
       if (!p.model || p.inputPerM == null || p.outputPerM == null) continue
       try {
-        await adminUpdatePricing({
-          model: p.model, inputPerM: Number(p.inputPerM), outputPerM: Number(p.outputPerM),
-          cachedInputPerM: p.cachedInputPerM == null ? null : Number(p.cachedInputPerM),
-          cacheWritePerM: p.cacheWritePerM == null ? null : Number(p.cacheWritePerM),
-        })
+      await adminUpdatePricing({
+        model: p.model, inputPerM: Number(p.inputPerM), outputPerM: Number(p.outputPerM),
+        cachedInputPerM: p.cachedInputPerM == null ? null : Number(p.cachedInputPerM),
+        cacheWritePerM: p.cacheWritePerM == null ? null : Number(p.cacheWritePerM),
+        source: 'import',
+      })
         ok++
       } catch {
         // 单条失败继续
@@ -262,9 +265,21 @@ const PricingTab: React.FC = () => {
           style={{ width: 240 }}
           prefix={<SearchOutlined />}
         />
+        <Select
+          value={sourceFilter}
+          onChange={(v) => setSourceFilter(v)}
+          style={{ width: 150, marginLeft: 8 }}
+          options={[
+            { value: '', label: t('admin.sourceAll') },
+            { value: 'LiteLLM', label: 'LiteLLM' },
+            { value: 'models.dev', label: 'models.dev' },
+            { value: 'manual', label: t('admin.srcManual') },
+            { value: 'import', label: t('admin.srcImport') },
+          ]}
+        />
         <span className="text-tertiary" style={{ fontSize: 12, marginLeft: 12 }}>
           {t('admin.totalEntries', { count: pricing.length })}
-          {search.trim() ? t('admin.matchedEntries', { count: rows.length }) : ''}
+          {search.trim() || sourceFilter ? t('admin.matchedEntries', { count: rows.length }) : ''}
           {t('admin.catalogFirstNote')}
         </span>
       </div>
@@ -278,10 +293,13 @@ const PricingTab: React.FC = () => {
           {
             title: t('common.model'),
             dataIndex: 'model',
-            render: (n: string) => (
+            render: (n: string, p: ModelPricing) => (
               <Space>
                 {n}
                 {catalogNames.has(n) ? <Tag color="blue">{t('admin.catalogTag')}</Tag> : null}
+                {p.source === 'manual' ? <Tag>{t('admin.srcManual')}</Tag> : null}
+                {p.source === 'import' ? <Tag>{t('admin.srcImport')}</Tag> : null}
+                {p.source && p.source !== 'manual' && p.source !== 'import' ? <Tag color="purple">{p.source}</Tag> : null}
               </Space>
             ),
           },

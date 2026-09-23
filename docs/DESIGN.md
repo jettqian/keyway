@@ -1,6 +1,13 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.64（与 PRD v1.5.67 对应；**价目同步源 OpenRouter → models.dev**——
+- 版本：v1.65（与 PRD v1.5.68 对应；**价目条目标识来源 + 按来源筛选**——
+  `model_pricing` 新增 `source` 列（AutoMigrate 自动补列，存量空串）：`ModelPrice`
+  增 `Source` 字段由解析器写入（LiteLLM/models.dev），`refreshLinked` 刷新时随四档
+  单价一并覆盖；`PUT /pricing/:model` 来源服务端裁定——仅接受 `import`，其余
+  （含伪造远程源名）强制 `manual`；管理页价目表条目显示来源标签（手工/导入灰标、
+  远程源紫标），筛选栏新增来源 Select（全部/LiteLLM/models.dev/手工/导入），
+  前端 JSON 导入显式传 `source: 'import'`；`TestE2E价目表CRUD` 补白名单断言）；
+  前版 v1.64：与 PRD v1.5.67 对应；**价目同步源 OpenRouter → models.dev**——
   OpenRouter 是转售价且 api.json 结构偏 API 响应，换 models.dev
   （`https://models.dev/api.json`，cost 字段直为 USD/百万 token 免换算，价格取官方
   文档口径）：`parseModelsDev` 解析 provider → models 两层 map，条目名
@@ -533,7 +540,8 @@ CREATE TABLE model_pricing (
   cache_write_per_m REAL,                 -- 缓存写单价（NULL → 回退 input_per_m；
                                           --   Anthropic 实际 1.25×，价目中显式配置）
   output_per_m REAL NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'USD', updated_at INTEGER
+  currency TEXT NOT NULL DEFAULT 'USD', updated_at INTEGER,
+  source TEXT NOT NULL DEFAULT ''         -- 价格来源：LiteLLM/models.dev/manual/import（v1.5.68；'' 历史数据）
 );
 
 CREATE TABLE logs (
@@ -1281,7 +1289,8 @@ new-api 的已知语义（仅参考行为，代码自研）。
   `cost.{input,output,cache_read,cache_write}` 直取免换算），合并去重
   （LiteLLM 先到先得，models.dev 补缺名）。语义（v1.5.65）：**只刷新目录关联的价目条目，不补缺**——
   `refreshLinked` 事务内：已存在且被 `linkedPricingModels`（catalog_models.pricing_model
-  去重集）引用 → Updates 四档单价为网络最新价（refreshed 计数）；远端源没有的关联名
+  去重集）引用 → Updates 四档单价与 `source`（命中源标识，随 `ModelPrice.Source` 由
+  解析器写入）为网络最新价（refreshed 计数）；远端源没有的关联名
   保持现状；**不 Create 任何条目**（删除永久生效）；关联名不在价目表仅 missing 计数。
   手动 `POST /api/admin/pricing/sync_remote` 与
   定时 `StartSyncLoop`（`KEYWAY_PRICING_SYNC_HOURS`，0 关闭）共用 `SyncRemote`
@@ -1292,6 +1301,10 @@ new-api 的已知语义（仅参考行为，代码自研）。
 - **展示**：`GET /api/admin/pricing` 在价目列表外一并返回 `syncedAt` 与 `sources`，
   管理页价目表头部展示"最近同步时间 + 同步源链接"；价目表排序为**模型目录中的条目
   置前**（前端按 catalog_models 名称集合排序并打"目录"标签），并支持按模型名搜索筛选。
+  条目**来源标签**（v1.5.68）：`source` 列——手工/导入灰标、远程源（LiteLLM/models.dev）
+  紫标、历史空串不显示；筛选栏来源 Select（全部/LiteLLM/models.dev/手工/导入）与
+  模型名搜索叠加过滤；`PUT /pricing/:model` 的来源由服务端裁定（仅接受 `import`，
+  其余强制 `manual`）。
 - **模型目录关联单价**：目录（用户页与管理员页）单价列直接展示完整四档价
   （"标签 + $ 数值"两行：输入/输出主行 + 缓存读/缓存写副行，缓存档未配置时直接显示
   回退生效数值），数据来自 `catalogModelDTOWithPricing` 按模型名精确匹配

@@ -191,6 +191,7 @@ type ModelPricing struct {
 	CacheWritePerM  *float64 `gorm:"column:cache_write_per_m" json:"cacheWritePerM"`   // NULL 回退 input_per_m
 	OutputPerM      float64  `gorm:"column:output_per_m;not null" json:"outputPerM"`
 	Currency        string   `gorm:"column:currency;not null;default:'USD'" json:"currency"`
+	Source          string   `gorm:"column:source;not null;default:''" json:"source"` // 价格来源：LiteLLM / models.dev / manual / import；'' 为历史数据
 	UpdatedAt       int64    `gorm:"column:updated_at" json:"updatedAt"`
 }
 

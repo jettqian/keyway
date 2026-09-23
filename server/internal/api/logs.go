@@ -368,6 +368,10 @@ func (s *Server) handleAdminUpdatePricing(c *gin.Context) {
 		return
 	}
 	p.Model = model // URL 参数为权威
+	// 来源由服务端裁定：仅接受 import（JSON 批量导入），其余（含伪造远程源名）一律记手工
+	if p.Source != pricing.SrcImport {
+		p.Source = pricing.SrcManual
+	}
 	p.UpdatedAt = time.Now().Unix()
 	if err := s.Store.DB().Save(&p).Error; err != nil {
 		s.fail(c, http.StatusInternalServerError, "保存价目失败")

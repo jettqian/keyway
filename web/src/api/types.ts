@@ -204,6 +204,8 @@ export interface ModelPricing {
   cachedInputPerM: number | null
   cacheWritePerM: number | null
   outputPerM: number
+  /** 价格来源：LiteLLM / models.dev / manual（手工）/ import（导入）；'' 为历史数据 */
+  source?: string
 }
 
 /** 官方价目远程同步源（名称 + 链接） */

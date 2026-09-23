@@ -39,7 +39,7 @@ var expectedColumns = map[string][]string{
 	"proxies":           {"id", "name", "url_enc", "enabled", "note", "created_at"},
 	"proxy_usage":       {"user_id", "proxy_id", "day", "bytes"},
 	"tokens":            {"id", "user_id", "name", "key_enc", "key_prefix", "key_hash", "channel_id", "channel_ids_json", "channel_order_json", "restricted", "model_scope", "expires_at", "revoked", "created_at"},
-	"model_pricing":     {"model", "input_per_m", "cached_input_per_m", "cache_write_per_m", "output_per_m", "currency", "updated_at"},
+	"model_pricing":     {"model", "input_per_m", "cached_input_per_m", "cache_write_per_m", "output_per_m", "currency", "source", "updated_at"},
 	"logs":              {"id", "created_at", "user_id", "token_id", "channel_id", "template_source_id", "line_url", "via", "key_id", "protocol", "model", "upstream_model", "status_code", "ttft_ms", "total_ms", "prompt_tokens", "completion_tokens", "cached_tokens", "cache_write_tokens", "reasoning_effort", "input_cost", "output_cost", "error"},
 	"invite_codes":      {"code", "created_by", "used_by", "used_at"},
 	"settings":          {"key", "value"},

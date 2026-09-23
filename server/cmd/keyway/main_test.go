@@ -689,7 +689,7 @@ func TestE2E价目表CRUD(t *testing.T) {
 	c, _ := setupApp(t)
 	c.bootstrap(t, "http://upstream.invalid")
 
-	// 新增（body 不带 model，URL 为权威）
+	// 新增（body 不带 model，URL 为权威；不带 source → 服务端记手工）
 	w := c.do("PUT", "/api/admin/pricing/test-price-model", map[string]any{
 		"inputPerM": 0.5, "outputPerM": 2.0, "cachedInputPerM": 0.1,
 	}, true)
@@ -704,6 +704,7 @@ func TestE2E价目表CRUD(t *testing.T) {
 			InputPerM       float64  `json:"inputPerM"`
 			CachedInputPerM *float64 `json:"cachedInputPerM"`
 			OutputPerM      float64  `json:"outputPerM"`
+			Source          string   `json:"source"`
 		} `json:"pricing"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
@@ -714,10 +715,38 @@ func TestE2E价目表CRUD(t *testing.T) {
 			if p.InputPerM != 0.5 || p.OutputPerM != 2 || p.CachedInputPerM == nil || *p.CachedInputPerM != 0.1 {
 				t.Fatalf("价目字段错误: %+v", p)
 			}
+			if p.Source != "manual" {
+				t.Fatalf("不带 source 的新增应记手工，实际 %q", p.Source)
+			}
 		}
 	}
 	if !found {
 		t.Fatal("未找到新增价目")
+	}
+	// 伪造远程源名应被强制回落手工；显式 import 应保留
+	if w := c.do("PUT", "/api/admin/pricing/test-price-model", map[string]any{
+		"inputPerM": 0.5, "outputPerM": 2.0, "source": "LiteLLM",
+	}, true); w.Code != 200 {
+		t.Fatalf("更新价目失败: %s", w.Body.String())
+	}
+	w = c.do("GET", "/api/admin/pricing", nil, true)
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	for _, p := range resp.Pricing {
+		if p.Model == "test-price-model" && p.Source != "manual" {
+			t.Fatalf("伪造远程源名应强制记手工，实际 %q", p.Source)
+		}
+	}
+	if w := c.do("PUT", "/api/admin/pricing/test-price-model", map[string]any{
+		"inputPerM": 0.5, "outputPerM": 2.0, "source": "import",
+	}, true); w.Code != 200 {
+		t.Fatalf("更新价目失败: %s", w.Body.String())
+	}
+	w = c.do("GET", "/api/admin/pricing", nil, true)
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	for _, p := range resp.Pricing {
+		if p.Model == "test-price-model" && p.Source != "import" {
+			t.Fatalf("显式 import 应保留，实际 %q", p.Source)
+		}
 	}
 	// 删除
 	w = c.do("DELETE", "/api/admin/pricing/test-price-model", nil, true)

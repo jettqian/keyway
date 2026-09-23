@@ -32,6 +32,9 @@ func TestParseLiteLLM(t *testing.T) {
 	if an.InputPerM != 3 || an.OutputPerM != 15 {
 		t.Errorf("输入/输出换算错误：%v/%v", an.InputPerM, an.OutputPerM)
 	}
+	if an.Source != SrcLiteLLM {
+		t.Errorf("来源标识错误：%q", an.Source)
+	}
 	if an.CachedInputPerM == nil || *an.CachedInputPerM != 0.3 {
 		t.Errorf("缓存读错误：%v", an.CachedInputPerM)
 	}
@@ -73,6 +76,9 @@ func TestParseModelsDev(t *testing.T) {
 	an := byName["anthropic/claude-sonnet-4-5"]
 	if an.InputPerM != 3 || an.OutputPerM != 15 {
 		t.Errorf("输入/输出取值错误：%v/%v", an.InputPerM, an.OutputPerM)
+	}
+	if an.Source != SrcModelsDev {
+		t.Errorf("来源标识错误：%q", an.Source)
 	}
 	if an.CachedInputPerM == nil || *an.CachedInputPerM != 0.3 {
 		t.Errorf("缓存读错误：%v", an.CachedInputPerM)
@@ -169,8 +175,8 @@ func TestSyncRefreshLinked(t *testing.T) {
 
 	cr := 0.1
 	refreshed, missing := refreshLinked(db, []ModelPrice{
-		{Model: "prov/m", InputPerM: 3, OutputPerM: 7, CachedInputPerM: &cr},
-		{Model: "prov/gone", InputPerM: 9, OutputPerM: 9},
+		{Model: "prov/m", InputPerM: 3, OutputPerM: 7, CachedInputPerM: &cr, Source: SrcLiteLLM},
+		{Model: "prov/gone", InputPerM: 9, OutputPerM: 9, Source: SrcModelsDev},
 		{Model: "plain", InputPerM: 4, OutputPerM: 4},
 	})
 	if refreshed != 1 || missing != 1 {
@@ -184,11 +190,14 @@ func TestSyncRefreshLinked(t *testing.T) {
 	if pm.InputPerM != 3 || pm.OutputPerM != 7 || pm.CachedInputPerM == nil || *pm.CachedInputPerM != 0.1 {
 		t.Fatalf("关联条目应刷新为网络最新价: %+v", pm)
 	}
+	if pm.Source != SrcLiteLLM {
+		t.Errorf("关联条目应写入命中源标识: %q", pm.Source)
+	}
 	var plain store.ModelPricing
 	if err := db.First(&plain, "model = ?", "plain").Error; err != nil {
 		t.Fatal(err)
 	}
-	if plain.InputPerM != 2 || plain.OutputPerM != 2 {
+	if plain.InputPerM != 2 || plain.OutputPerM != 2 || plain.Source != "" {
 		t.Fatalf("未关联条目不应被覆盖: %+v", plain)
 	}
 	var n int64
