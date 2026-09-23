@@ -43,6 +43,7 @@ export default {
   'admin.searchModelPlaceholder': '按模型名搜索筛选',
   'admin.totalEntries': '共 {count} 条',
   'admin.matchedEntries': '，匹配 {count} 条',
+  'admin.linkedFirstNote': '；被模型目录关联的条目置前显示',
   'admin.inputPerM': '输入 $/M',
   'admin.outputPerM': '输出 $/M',
   'admin.cacheReadPerM': '缓存读 $/M',

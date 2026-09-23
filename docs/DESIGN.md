@@ -1,6 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.68（与 PRD v1.5.71 对应；**目录表单「模型名」改纯输入，价目表移除目录标注**——
+- 版本：v1.69（与 PRD v1.5.72 对应；**价目表被关联条目置前**——恢复目录关联排序：
+  `catalogNames` 集合改按 `pricing_model || name`（被关联的价目条目名）判定，
+  修正旧实现按目录名匹配的偏差；仍不打「目录」标签，提示
+  admin.linkedFirstNote）；
+  前版 v1.68：与 PRD v1.5.71 对应；**目录表单「模型名」改纯输入，价目表移除目录标注**——
   目录与价目是单一映射关系（目录名 → pricing_model → 价目条目），映射只在目录侧表达：
   新增弹窗「模型名」从价目表点选 AutoComplete 改纯 Input（`priceOptions` 候选与
   `catalogPickPlaceholder` 等随删），「关联价目」点选下拉保留（来源标签 + 价格摘要）；

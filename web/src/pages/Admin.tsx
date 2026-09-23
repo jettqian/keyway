@@ -113,28 +113,35 @@ const PricingTab: React.FC = () => {
   const [sourceFilter, setSourceFilter] = React.useState('')
   const [syncedAt, setSyncedAt] = React.useState('')
   const [sources, setSources] = React.useState<PricingSource[]>([])
+  const [catalogNames, setCatalogNames] = React.useState<Set<string>>(new Set())
   const [form] = Form.useForm()
   const refresh = React.useCallback(() => {
     setLoading(true)
-    adminPricing()
-      .then((p) => {
+    Promise.all([adminPricing(), adminCatalogModels()])
+      .then(([p, m]) => {
         setPricing(p.pricing)
         setSyncedAt(p.syncedAt ?? '')
         setSources(p.sources ?? [])
+        setCatalogNames(new Set(m.models.map((c) => c.pricingModel || c.name)))
       })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
   }, [])
   React.useEffect(refresh, [refresh])
 
-  // 按模型名排序；支持按模型名搜索与按来源筛选（目录关联在模型目录侧表达，此处不标目录）
+  // 被目录关联的条目置前（不打标签，关联映射在模型目录侧表达），其余按模型名排序；
+  // 支持按模型名搜索与按来源筛选
   const rows = React.useMemo(() => {
     const kw = search.trim().toLowerCase()
     return pricing
       .filter((p) => !kw || p.model.toLowerCase().includes(kw))
       .filter((p) => !sourceFilter || (p.source ?? '') === sourceFilter)
-      .sort((a, b) => a.model.localeCompare(b.model))
-  }, [pricing, search, sourceFilter])
+      .sort((a, b) => {
+        const inA = catalogNames.has(a.model) ? 0 : 1
+        const inB = catalogNames.has(b.model) ? 0 : 1
+        return inA - inB || a.model.localeCompare(b.model)
+      })
+  }, [pricing, search, sourceFilter, catalogNames])
 
   const openCreate = () => {
     setEditing(null)
@@ -274,6 +281,7 @@ const PricingTab: React.FC = () => {
         <span className="text-tertiary" style={{ fontSize: 12, marginLeft: 12 }}>
           {t('admin.totalEntries', { count: pricing.length })}
           {search.trim() || sourceFilter ? t('admin.matchedEntries', { count: rows.length }) : ''}
+          {t('admin.linkedFirstNote')}
         </span>
       </div>
       <Table<ModelPricing>

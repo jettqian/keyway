@@ -42,6 +42,7 @@ export default {
   'admin.searchModelPlaceholder': 'Search by model name',
   'admin.totalEntries': '{count} entries in total',
   'admin.matchedEntries': ', {count} matched',
+  'admin.linkedFirstNote': '; entries linked by the catalog are shown first',
   'admin.inputPerM': 'Input $/M',
   'admin.outputPerM': 'Output $/M',
   'admin.cacheReadPerM': 'Cached Read $/M',
