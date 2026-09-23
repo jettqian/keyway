@@ -1,6 +1,15 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.63（与 PRD v1.5.66 对应；**修复 anthropic 透传 usage 嗅探缺失**——
+- 版本：v1.64（与 PRD v1.5.67 对应；**价目同步源 OpenRouter → models.dev**——
+  OpenRouter 是转售价且 api.json 结构偏 API 响应，换 models.dev
+  （`https://models.dev/api.json`，cost 字段直为 USD/百万 token 免换算，价格取官方
+  文档口径）：`parseModelsDev` 解析 provider → models 两层 map，条目名
+  `provider/model`（如 `anthropic/claude-sonnet-4-5`），过滤输入输出模态均含 text
+  且输入输出价均大于 0，缓存价 0/缺失归 NULL；双源合并与同步语义不变
+  （LiteLLM 先到先得，models.dev 补缺名；只刷新目录关联条目）。实测解析 6971 条；
+  `TestParseModelsDev` 覆盖模态过滤/零价剔除/缓存 NULL，`TestSyncedAtRoundTrip`
+  断言 sources 为 LiteLLM + models.dev）；
+  前版 v1.63：与 PRD v1.5.66 对应；**修复 anthropic 透传 usage 嗅探缺失**——
   `sniffUsage` 补 anthropic 三种结构：非流式顶层 usage、流式 `message_start` 的
   `message.usage` 与 `message_delta` 顶层 usage（新增 `anthropicSniffUsage` 形状 +
   `mergeUsage` 字段级非零合并，归一口径复用 `NormalizeAnthropicUsage`：总输入=
@@ -1267,9 +1276,10 @@ new-api 的已知语义（仅参考行为，代码自研）。
 
 ### 8.6 官方价目远程同步与同步元信息（FR-M4.2）
 
-- **同步**：LiteLLM（`model_prices_and_context_window.json`）与 OpenRouter
-  （`/api/v1/models`）双源，归一化 USD/百万 token（含缓存读/写档），合并去重
-  （LiteLLM 先到先得）。语义（v1.5.65）：**只刷新目录关联的价目条目，不补缺**——
+- **同步**：LiteLLM（`model_prices_and_context_window.json`）与 models.dev
+  （`api.json`）双源，归一化 USD/百万 token（含缓存读/写档；models.dev 的
+  `cost.{input,output,cache_read,cache_write}` 直取免换算），合并去重
+  （LiteLLM 先到先得，models.dev 补缺名）。语义（v1.5.65）：**只刷新目录关联的价目条目，不补缺**——
   `refreshLinked` 事务内：已存在且被 `linkedPricingModels`（catalog_models.pricing_model
   去重集）引用 → Updates 四档单价为网络最新价（refreshed 计数）；远端源没有的关联名
   保持现状；**不 Create 任何条目**（删除永久生效）；关联名不在价目表仅 missing 计数。
@@ -1278,7 +1288,7 @@ new-api 的已知语义（仅参考行为，代码自研）。
   （mutex 串行化），单源失败降级为警告，双源失败报错。
 - **同步元信息**：至少单源成功时把完成时间写入 `settings.pricing_synced_at`
   （RFC3339，markSynced upsert），双源失败不记录；`pricing.Sources()` 暴露双源
-  名称 + 链接（LiteLLM / OpenRouter）。
+  名称 + 链接（LiteLLM / models.dev）。
 - **展示**：`GET /api/admin/pricing` 在价目列表外一并返回 `syncedAt` 与 `sources`，
   管理页价目表头部展示"最近同步时间 + 同步源链接"；价目表排序为**模型目录中的条目
   置前**（前端按 catalog_models 名称集合排序并打"目录"标签），并支持按模型名搜索筛选。
@@ -1432,7 +1442,7 @@ warnings 清单 + 「刷新页面查看」。
 | KEYWAY_RESPONSE_HEADER_TIMEOUT_S | 1800 | 上游响应头等待超时（秒），0=不限制；对齐 new-api `RELAY_RESPONSE_HEADER_TIMEOUT`。仅覆盖响应头阶段，流式 body 不受影响（不用 Client.Timeout 整体超时，避免切断长流式） |
 | KEYWAY_IDLE_STREAM_TIMEOUT_S | 300 | 流式空闲超时（秒，0 关闭）：上游持续无数据即发送保活注释并关闭上游止损；期间每 15s 向客户端发 SSE 注释 ping 防中间层断连 |
 | KEYWAY_LOG_RETENTION_DAYS | 30 | 日志保留期 |
-| KEYWAY_PRICING_SYNC_HOURS | 24 | 官方价目远程同步周期（小时，LiteLLM + OpenRouter；0 关闭；启动先执行一次） |
+| KEYWAY_PRICING_SYNC_HOURS | 24 | 官方价目远程同步周期（小时，LiteLLM + models.dev；0 关闭；启动先执行一次） |
 | KEYWAY_FX_SOURCE_URL | 空 | 覆盖汇率同步源（单一源无回退，自建镜像/测试用；留空用 frankfurter→jsdelivr→er-api 三源回退） |
 
 ## 13. 部署

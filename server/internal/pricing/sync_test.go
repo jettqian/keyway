@@ -44,30 +44,51 @@ func TestParseLiteLLM(t *testing.T) {
 	}
 }
 
-// OpenRouter 解析：仅保留 text->text 且输入输出价可解析且大于 0 的条目
-func TestParseOpenRouter(t *testing.T) {
-	body := []byte(`{"data":[
-		{"id":"openai/gpt-4o","architecture":{"modality":"text->text"},"pricing":{"prompt":"0.0000025","completion":"0.00001","input_cache_read":"0.00000125","input_cache_write":"0.000001875"}},
-		{"id":"openai/gpt-4o-audio","architecture":{"modality":"text+audio->text"},"pricing":{"prompt":"0.0000025","completion":"0.0001"}},
-		{"id":"meta-llama/llama-3.1-8b-instruct:free","architecture":{"modality":"text->text"},"pricing":{"prompt":"0","completion":"0"}},
-		{"id":"no-pricing","architecture":{"modality":"text->text"}}
-	]}`)
-	out, err := parseOpenRouter(body)
+// models.dev 解析：仅保留输入输出模态均含 text 且输入输出价均大于 0 的条目；
+// 价目为 USD/百万 token 直取；缓存价 0/缺失归 NULL
+func TestParseModelsDev(t *testing.T) {
+	body := []byte(`{
+		"anthropic": {"models": {
+			"claude-sonnet-4-5": {"modalities": {"input": ["text", "image"], "output": ["text"]}, "cost": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75}},
+			"claude-audio": {"modalities": {"input": ["text", "audio"], "output": ["audio"]}, "cost": {"input": 3, "output": 15}},
+			"image-only": {"modalities": {"input": ["image"], "output": ["text"]}, "cost": {"input": 1, "output": 2}},
+			"free-model": {"modalities": {"input": ["text"], "output": ["text"]}, "cost": {"input": 0, "output": 0}},
+			"no-cost": {"modalities": {"input": ["text"], "output": ["text"]}}
+		}},
+		"zhipuai": {"models": {
+			"glm-5.3": {"modalities": {"input": ["text"], "output": ["text"]}, "cost": {"input": 1.11, "output": 3.89, "cache_read": 0.2, "cache_write": 0}}
+		}}
+	}`)
+	out, err := parseModelsDev(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 1 {
-		t.Fatalf("期望 1 条，实际 %d", len(out))
+	if len(out) != 2 {
+		t.Fatalf("期望 2 条，实际 %d", len(out))
 	}
-	p := out[0]
-	if p.Model != "openai/gpt-4o" || p.InputPerM != 2.5 || p.OutputPerM != 10 {
-		t.Errorf("映射错误：%+v", p)
+	byName := map[string]ModelPrice{}
+	for _, p := range out {
+		byName[p.Model] = p
 	}
-	if p.CachedInputPerM == nil || *p.CachedInputPerM != 1.25 {
-		t.Errorf("缓存读错误：%v", p.CachedInputPerM)
+	an := byName["anthropic/claude-sonnet-4-5"]
+	if an.InputPerM != 3 || an.OutputPerM != 15 {
+		t.Errorf("输入/输出取值错误：%v/%v", an.InputPerM, an.OutputPerM)
 	}
-	if p.CacheWritePerM == nil || *p.CacheWritePerM != 1.875 {
-		t.Errorf("缓存写错误：%v", p.CacheWritePerM)
+	if an.CachedInputPerM == nil || *an.CachedInputPerM != 0.3 {
+		t.Errorf("缓存读错误：%v", an.CachedInputPerM)
+	}
+	if an.CacheWritePerM == nil || *an.CacheWritePerM != 3.75 {
+		t.Errorf("缓存写错误：%v", an.CacheWritePerM)
+	}
+	glm := byName["zhipuai/glm-5.3"]
+	if glm.InputPerM != 1.11 || glm.OutputPerM != 3.89 {
+		t.Errorf("glm 输入/输出取值错误：%v/%v", glm.InputPerM, glm.OutputPerM)
+	}
+	if glm.CachedInputPerM == nil || *glm.CachedInputPerM != 0.2 {
+		t.Errorf("glm 缓存读错误：%v", glm.CachedInputPerM)
+	}
+	if glm.CacheWritePerM != nil {
+		t.Errorf("缓存写 0 应归 NULL：%v", glm.CacheWritePerM)
 	}
 }
 
@@ -76,8 +97,8 @@ func TestParseInvalid(t *testing.T) {
 	if _, err := parseLiteLLM([]byte("not json")); err == nil {
 		t.Error("LiteLLM 非法 JSON 应报错")
 	}
-	if _, err := parseOpenRouter([]byte("not json")); err == nil {
-		t.Error("OpenRouter 非法 JSON 应报错")
+	if _, err := parseModelsDev([]byte("not json")); err == nil {
+		t.Error("models.dev 非法 JSON 应报错")
 	}
 	var _ = json.Marshal // 保留 import
 }
@@ -112,7 +133,7 @@ func TestSyncedAtRoundTrip(t *testing.T) {
 	}
 
 	srcs := Sources()
-	if len(srcs) != 2 || srcs[0].Name != "LiteLLM" || srcs[1].Name != "OpenRouter" {
+	if len(srcs) != 2 || srcs[0].Name != "LiteLLM" || srcs[1].Name != "models.dev" {
 		t.Errorf("同步源信息不符：%+v", srcs)
 	}
 	for _, s := range srcs {

@@ -387,7 +387,7 @@ func (s *Server) handleAdminDeletePricing(c *gin.Context) {
 	s.ok(c, gin.H{})
 }
 
-// handleAdminSyncPricing 手动触发官方价目同步（LiteLLM + OpenRouter，只补缺不覆盖已有条目）
+// handleAdminSyncPricing 手动触发官方价目同步（LiteLLM + models.dev，只刷新目录关联条目）
 func (s *Server) handleAdminSyncPricing(c *gin.Context) {
 	res, err := pricing.SyncRemote(s.Store.DB(), 60*time.Second)
 	if err != nil {

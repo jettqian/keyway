@@ -1,4 +1,4 @@
-// Package pricing 官方价目远程同步：从 LiteLLM 与 OpenRouter 拉取模型单价（USD/百万 token）。
+// Package pricing 官方价目远程同步：从 LiteLLM 与 models.dev 拉取模型单价（USD/百万 token）。
 // 同步语义（v1.5.65）：**只刷新目录关联的价目条目**——被模型目录 pricing_model 引用的
 // 价目条目用网络最新价覆盖四档单价；不补缺、不新增任何模型（价目表增长完全由管理员
 // 控制：手工录入 / JSON 导入；删除永久生效）
@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -21,8 +20,8 @@ import (
 )
 
 const (
-	litellmURL    = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
-	openrouterURL = "https://openrouter.ai/api/v1/models"
+	litellmURL   = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+	modelsDevURL = "https://models.dev/api.json"
 
 	// KeySyncedAt settings 表键：最近一次同步完成时间（RFC3339；双源全失败不记录）
 	KeySyncedAt = "pricing_synced_at"
@@ -38,7 +37,7 @@ type Source struct {
 func Sources() []Source {
 	return []Source{
 		{Name: "LiteLLM", URL: litellmURL},
-		{Name: "OpenRouter", URL: openrouterURL},
+		{Name: "models.dev", URL: modelsDevURL},
 	}
 }
 
@@ -68,7 +67,7 @@ func SyncRemote(db *gorm.DB, timeout time.Duration) (*Result, error) {
 	client := &http.Client{Timeout: timeout}
 	res := &Result{}
 
-	// 双源合并（LiteLLM 先到先得，OpenRouter 补缺名）
+	// 双源合并（LiteLLM 先到先得，models.dev 补缺名）
 	merged := map[string]ModelPrice{}
 	litellm, err := fetchParse(client, litellmURL, parseLiteLLM)
 	if err != nil {
@@ -80,11 +79,11 @@ func SyncRemote(db *gorm.DB, timeout time.Duration) (*Result, error) {
 			}
 		}
 	}
-	openrouter, err := fetchParse(client, openrouterURL, parseOpenRouter)
+	modelsDev, err := fetchParse(client, modelsDevURL, parseModelsDev)
 	if err != nil {
-		res.Warnings = append(res.Warnings, "OpenRouter 拉取失败："+err.Error())
+		res.Warnings = append(res.Warnings, "models.dev 拉取失败："+err.Error())
 	} else {
-		for _, p := range openrouter {
+		for _, p := range modelsDev {
 			if _, ok := merged[p.Model]; !ok {
 				merged[p.Model] = p
 			}
@@ -257,64 +256,75 @@ func parseLiteLLM(body []byte) ([]ModelPrice, error) {
 	return out, nil
 }
 
-// ---------- OpenRouter ----------
+// ---------- models.dev ----------
 
-type openrouterResp struct {
-	Data []struct {
-		ID           string `json:"id"`
-		Architecture *struct {
-			Modality string `json:"modality"`
-		} `json:"architecture"`
-		Pricing *struct {
-			Prompt          string `json:"prompt"`
-			Completion      string `json:"completion"`
-			InputCacheRead  string `json:"input_cache_read"`
-			InputCacheWrite string `json:"input_cache_write"`
-		} `json:"pricing"`
-	} `json:"data"`
+// modelsDevModalities models.dev 单模型的模态标注
+type modelsDevModalities struct {
+	Input  []string `json:"input"`
+	Output []string `json:"output"`
 }
 
-func parseOpenRouter(body []byte) ([]ModelPrice, error) {
-	var raw openrouterResp
+// modelsDevCost 单模型价目（USD/百万 token，直取无需换算）
+type modelsDevCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cache_read"`
+	CacheWrite float64 `json:"cache_write"`
+}
+
+type modelsDevModel struct {
+	Modalities *modelsDevModalities `json:"modalities"`
+	Cost       *modelsDevCost       `json:"cost"`
+}
+
+type modelsDevProvider struct {
+	Models map[string]modelsDevModel `json:"models"`
+}
+
+// modelsDevResp api.json 顶层：provider_id → { models: { model_id → 单模型 } }
+type modelsDevResp map[string]modelsDevProvider
+
+// parseModelsDev 解析 models.dev api.json：条目名取 provider/model（如 anthropic/claude-sonnet-4-5），
+// 仅保留输入输出模态均含 text 且输入输出价均大于 0 的条目；缓存价 0/缺失归 NULL
+func parseModelsDev(body []byte) ([]ModelPrice, error) {
+	var raw modelsDevResp
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("非法 JSON: %w", err)
 	}
-	out := make([]ModelPrice, 0, len(raw.Data))
-	for _, m := range raw.Data {
-		if m.ID == "" || m.Pricing == nil {
+	out := make([]ModelPrice, 0)
+	for pid, p := range raw {
+		if pid == "" {
 			continue
 		}
-		if m.Architecture != nil && m.Architecture.Modality != "text->text" {
-			continue // 仅文本对话模型
+		for mid, m := range p.Models {
+			if mid == "" || m.Modalities == nil || m.Cost == nil {
+				continue
+			}
+			if !containsStr(m.Modalities.Input, "text") || !containsStr(m.Modalities.Output, "text") {
+				continue // 仅文本对话模型
+			}
+			if m.Cost.Input <= 0 || m.Cost.Output <= 0 {
+				continue // 免费或未定价条目
+			}
+			out = append(out, ModelPrice{
+				Model:           pid + "/" + mid,
+				InputPerM:       m.Cost.Input,
+				OutputPerM:      m.Cost.Output,
+				CachedInputPerM: positivePtr(m.Cost.CacheRead),
+				CacheWritePerM:  positivePtr(m.Cost.CacheWrite),
+			})
 		}
-		in, err := strconv.ParseFloat(m.Pricing.Prompt, 64)
-		if err != nil || in <= 0 {
-			continue
-		}
-		outv, err := strconv.ParseFloat(m.Pricing.Completion, 64)
-		if err != nil || outv <= 0 {
-			continue
-		}
-		cr, e1 := strconv.ParseFloat(m.Pricing.InputCacheRead, 64)
-		cw, e2 := strconv.ParseFloat(m.Pricing.InputCacheWrite, 64)
-		var cached, cachew *float64
-		if e1 == nil && cr > 0 {
-			v := cr * 1e6
-			cached = &v
-		}
-		if e2 == nil && cw > 0 {
-			v := cw * 1e6
-			cachew = &v
-		}
-		out = append(out, ModelPrice{
-			Model:           m.ID,
-			InputPerM:       in * 1e6,
-			OutputPerM:      outv * 1e6,
-			CachedInputPerM: cached,
-			CacheWritePerM:  cachew,
-		})
 	}
 	return out, nil
+}
+
+func containsStr(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func positivePtr(v float64) *float64 {

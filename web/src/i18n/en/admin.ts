@@ -30,7 +30,7 @@ export default {
   'admin.syncMissing': '{count} linked entries not in pricing table (not auto-added)',
   'admin.lastSyncedAt': 'Last official pricing sync: {time}',
   'admin.notSyncedYet': 'Official pricing not synced yet',
-  'admin.syncConfirmTitle': 'Sync official pricing from LiteLLM / OpenRouter?',
+  'admin.syncConfirmTitle': 'Sync official pricing from LiteLLM / models.dev?',
   'admin.syncConfirmDesc': 'Only catalog-linked pricing entries are refreshed to latest remote prices; no models are added, deletions are permanent. The backend also syncs periodically per KEYWAY_PRICING_SYNC_HOURS (default 24 hours, 0 disables).',
   'admin.syncOfficialPricing': 'Sync Official Pricing',
   'admin.exportJson': 'Export JSON',

@@ -1,12 +1,21 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.66
+- 版本：v1.5.67
 - 日期：2026-09-23
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.67：**价目同步源 OpenRouter → models.dev**——OpenRouter 为转售价（其自身
+>   加价/折扣口径），与「官方价目」语义不符，且 api.json 体积小、结构稳定。换用
+>   models.dev（`https://models.dev/api.json`，opencode 等生态同源数据）：价目字段
+>   `cost.{input,output,cache_read,cache_write}` 直为 USD/百万 token（免换算），
+>   价格取自厂商官方文档口径；条目名 `provider/model`（如 `anthropic/claude-sonnet-4-5`、
+>   `zhipuai/glm-5.3`）。过滤口径：输入输出模态均含 text 且输入输出价均大于 0。
+>   双源合并策略不变（LiteLLM 先到先得，models.dev 补缺名）；同步语义不变
+>   （只刷新目录关联条目，不补缺不新增）。实测解析 6971 条（厂商 223 家），
+>   覆盖 zhipuai/deepseek/moonshotai/alibaba/siliconflow/volcengine 等国产厂商
 > - v1.5.66：**修复 anthropic 透传 usage 嗅探缺失，缓存读计费失真与 token 全估算**——
 >   `relay.sniffUsage` 只识别 OpenAI chat 顶层 usage 与 Responses `response.usage`，
 >   **anthropic 形状（`input_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`）
@@ -1091,15 +1100,16 @@ HTTP 状态码上：200 = 成功 → 不换 key、不换渠道、还把渠道×�
 - FR-M4.1 全局模型目录：管理员维护供用户点选的模型目录（见 5.3.1 FR-MC1/MC2），
   管理页提供"模型目录"标签
 - FR-M4.2 官方价目远程同步：从 LiteLLM（model_prices_and_context_window.json）与
-  OpenRouter（/api/v1/models）拉取模型单价，归一化 USD/百万 token（含缓存读/写档；
-  仅 mode=chat / text→text 且输入输出价均大于 0 的条目）。同步语义（v1.5.65 修订）：
+  models.dev（api.json）拉取模型单价，归一化 USD/百万 token（含缓存读/写档；
+  仅输入输出模态均含 text 且输入输出价均大于 0 的条目；models.dev 价目直取无需换算）。
+  同步语义（v1.5.65 修订）：
   **只刷新模型目录关联的价目条目，不补缺**——被 `catalog_models.pricing_model` 引用的
   价目条目按网络最新价覆盖四档单价（关联价保持新鲜）；不新增任何模型（删除永久生效）；
   未关联条目与远端源没有的关联名保持现状；关联名不在价目表仅计数提示。
   定期同步周期 `KEYWAY_PRICING_SYNC_HOURS`（默认 24 小时，0 关闭，启动时先执行一次）；
   管理页提供手动"同步官方价目"按钮（幂等；单源失败降级为警告，双源失败报错）。
   同步元信息持久化于 `settings.pricing_synced_at`（至少单源成功才记录，RFC3339），
-  价目表页展示**最近同步时间与同步源链接**（LiteLLM / OpenRouter）
+  价目表页展示**最近同步时间与同步源链接**（LiteLLM / models.dev）
 - FR-M5 公共代理池管理：增删改查、启用/停用、探测健康状态展示、**按用户流量统计**
 - FR-M6 权限边界：管理员**看不到**用户上游密钥与网关令牌明文（仅元数据）；
   统计数据管理员可见全员，普通用户仅见本人
