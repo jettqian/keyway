@@ -62,6 +62,10 @@ func Open(opts Options) (*Store, error) {
 	// 幂等且安全：restricted=1 + 空集合（全部停用）不受影响；空集合 + restricted=0
 	// （从未限定/主开关时代的"不限"遗留）保持不限
 	db.Exec("UPDATE tokens SET restricted = 1 WHERE channel_ids_json IS NOT NULL AND channel_ids_json NOT IN ('', '[]')")
+	// 价目来源回填（v1.5.69）：source 列引入前的存量条目无来源记录，按现行语义
+	// 「价目表增长完全由管理员控制」统一记为手工维护；后续远程同步（目录关联）
+	// 或管理端编辑会按实际来源覆盖。幂等：首启跑完即无 source='' 行
+	db.Exec("UPDATE model_pricing SET source = 'manual' WHERE source = ''")
 	return &Store{db: db}, nil
 }
 

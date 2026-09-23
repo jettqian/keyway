@@ -4,7 +4,10 @@
   （官方文档口径优先），LiteLLM 补缺名/裸名：v1.5.67 沿用 LiteLLM 优先导致目录关联名
   全部先命中 LiteLLM（11/11），models.dev 来源筛选恒空、关联候选只见 LiteLLM；
   合并抽 `mergeSources(dst, src)`（dst 既有名不被 src 覆盖）并补
-  `TestMergeSourcesPriority`）；
+  `TestMergeSourcesPriority`）。**存量来源回填**：store.Open 幂等
+  `UPDATE model_pricing SET source='manual' WHERE source=''`（与 tokens restricted
+  回填同风格——老同步/手工/种子混杂无法区分，按「价目表增长由管理员控制」语义
+  统一记手工；远程同步/管理端编辑按实际来源覆盖）；
   前版 v1.65：与 PRD v1.5.68 对应；**价目条目标识来源 + 按来源筛选**——
   `model_pricing` 新增 `source` 列（AutoMigrate 自动补列，存量空串）：`ModelPrice`
   增 `Source` 字段由解析器写入（LiteLLM/models.dev），`refreshLinked` 刷新时随四档
