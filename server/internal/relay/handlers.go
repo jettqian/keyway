@@ -1197,8 +1197,11 @@ func respondRawOrConverted(c *gin.Context, inbound string, status int, body []by
 }
 
 // sniffUsage 从透传字节中嗅探 usage（尽力而为；兼容 SSE 行前缀）。
-// 兼容两种结构：chat completions 的顶层 usage，与 Responses API
-// response.completed 事件的 response.usage 嵌套结构
+// 兼容结构：chat completions 顶层 usage、Responses response.completed 的
+// response.usage、anthropic 非流式顶层 usage 与流式 message_start 的
+// message.usage / message_delta 的顶层 usage（v1.5.66——此前 anthropic 形状
+// 不识别，透传流量全部落到本地估算兜底，缓存读/写丢失导致费用按全价高估）。
+// anthropic 流式分片按字段级非零合并（message_start 带 input+缓存，message_delta 带 output）
 func sniffUsage(u convert.Usage, data []byte) convert.Usage {
 	payload := data
 	if s := strings.TrimSpace(string(data)); strings.HasPrefix(s, "data:") {
@@ -1208,21 +1211,76 @@ func sniffUsage(u convert.Usage, data []byte) convert.Usage {
 		return u
 	}
 	var probe struct {
-		Usage    *convert.OpenAIUsage `json:"usage"`
 		Response *struct {
 			Usage *responsesUsage `json:"usage"`
 		} `json:"response"`
+		Message *struct {
+			Usage *anthropicSniffUsage `json:"usage"`
+		} `json:"message"`
 	}
 	if err := json.Unmarshal(payload, &probe); err != nil {
 		return u
 	}
-	if probe.Usage != nil {
-		return convert.NormalizeOpenAIUsage(probe.Usage)
-	}
 	if probe.Response != nil && probe.Response.Usage != nil {
 		return probe.Response.Usage.normalized()
 	}
+	if probe.Message != nil && probe.Message.Usage != nil {
+		return mergeUsage(u, probe.Message.Usage.usage())
+	}
+	// 顶层 usage：anthropic 形状（非流式 / message_delta）优先按其字段解析，
+	// 命中任一非零字段即合并；否则回退 OpenAI 形状
+	var an struct {
+		Usage *anthropicSniffUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(payload, &an); err == nil && an.Usage != nil {
+		au := an.Usage.usage()
+		if au.PromptTokens > 0 || au.CompletionTokens > 0 || au.CachedTokens > 0 || au.CacheWriteTokens > 0 {
+			return mergeUsage(u, au)
+		}
+	}
+	var openai struct {
+		Usage *convert.OpenAIUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(payload, &openai); err == nil && openai.Usage != nil {
+		return convert.NormalizeOpenAIUsage(openai.Usage)
+	}
 	return u
+}
+
+// anthropicSniffUsage anthropic usage 的嗅探形状（归一口径同 NormalizeAnthropicUsage：
+// 总输入 = input + cache_read + cache_creation）
+type anthropicSniffUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+func (a *anthropicSniffUsage) usage() convert.Usage {
+	return convert.NormalizeAnthropicUsage(&convert.AnthropicUsage{
+		InputTokens:              a.InputTokens,
+		OutputTokens:             a.OutputTokens,
+		CacheCreationInputTokens: a.CacheCreationInputTokens,
+		CacheReadInputTokens:     a.CacheReadInputTokens,
+	})
+}
+
+// mergeUsage 字段级非零合并（anthropic 流式 usage 分片到帧：message_start 带
+// input+缓存，message_delta 带 output）
+func mergeUsage(base, extra convert.Usage) convert.Usage {
+	if extra.PromptTokens > 0 {
+		base.PromptTokens = extra.PromptTokens
+	}
+	if extra.CompletionTokens > 0 {
+		base.CompletionTokens = extra.CompletionTokens
+	}
+	if extra.CachedTokens > 0 {
+		base.CachedTokens = extra.CachedTokens
+	}
+	if extra.CacheWriteTokens > 0 {
+		base.CacheWriteTokens = extra.CacheWriteTokens
+	}
+	return base
 }
 
 // responsesUsage Responses API 的 usage 结构（input/output 命名）

@@ -1,12 +1,23 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.65
+- 版本：v1.5.66
 - 日期：2026-09-23
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.66：**修复 anthropic 透传 usage 嗅探缺失，缓存读计费失真与 token 全估算**——
+>   `relay.sniffUsage` 只识别 OpenAI chat 顶层 usage 与 Responses `response.usage`，
+>   **anthropic 形状（`input_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`）
+>   完全不解析**：anthropic→anthropic 同协议透传（opencode 主力链路）的流式/非流式
+>   usage 全部落到本地估算兜底（runes/3.6），缓存字段恒 0——上游已按缓存读价扣费、
+>   网关却按 100% 全价估算，费用高估 ~2×（实测：非流式第二次调用上游回传
+>   `cache_read_input_tokens: 1536`，日志却记 prompt=2201/缓存=0 全为估算值）。
+>   现嗅探补 anthropic 三种结构：非流式顶层 usage、流式 `message_start` 的
+>   `message.usage`（input+缓存）与 `message_delta` 顶层 usage（output，分片按字段级
+>   非零合并）；归一口径与 `NormalizeAnthropicUsage` 一致（总输入=三段之和）。
+>   OpenAI/Responses 形状解析不受影响。FR-L1 的 usage 解析自此对三协议完整
 > - v1.5.65：**同步去除补缺，删除永久生效**——价目表删除的条目仍会被同步补回：
 >   补缺只看「价目表现在有没有这一行」，没有删除记忆，目录关联不参与缺失判定
 >   （被删的关联条目同样按缺失补插）。现按管理员决策**移除补缺逻辑**：同步只把

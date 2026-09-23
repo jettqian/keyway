@@ -1,6 +1,13 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.62（与 PRD v1.5.65 对应；**同步去除补缺，删除永久生效**——补缺无删除记忆，
+- 版本：v1.63（与 PRD v1.5.66 对应；**修复 anthropic 透传 usage 嗅探缺失**——
+  `sniffUsage` 补 anthropic 三种结构：非流式顶层 usage、流式 `message_start` 的
+  `message.usage` 与 `message_delta` 顶层 usage（新增 `anthropicSniffUsage` 形状 +
+  `mergeUsage` 字段级非零合并，归一口径复用 `NormalizeAnthropicUsage`：总输入=
+  input+cache_read+cache_creation）；此前 anthropic 同协议透传 usage 全落本地估算
+  兜底、缓存字段恒 0（费用按全价高估 ~2×）；`TestSniffUsageAnthropic` 覆盖
+  非流式/流式合并/openai 与 responses 回归）；
+  前版 v1.62：与 PRD v1.5.65 对应；**同步去除补缺，删除永久生效**——补缺无删除记忆，
   价目表删掉的条目（含关联条目）会被按"缺失"补插回来。按管理员决策移除补缺：
   `SyncRemote` 双源合并（LiteLLM 先到先得）后只调 `refreshLinked`——被
   `linkedPricingModels`（catalog_models.pricing_model 去重集）引用的**已存在**条目
