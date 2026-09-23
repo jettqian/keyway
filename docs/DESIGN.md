@@ -1,6 +1,12 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.71（与 PRD v1.5.74 对应；**关联价目点选卡顿修复**——`pricingModelOptions`
+- 版本：v1.72（与 PRD v1.5.75 对应；**价目同步只保留官方厂商条目**——解析层白名单
+  `officialModelsDevProviders`（28 家厂商 provider id）与 `officialLiteLLMProviders`
+  （19 个 litellm_provider），聚合商/云托管/订阅计划排除；`upsertRemote` 增清理：
+  source 为远程但不在收录集且未被目录关联 → Delete（`Result.Pruned` 计数），
+  manual/import 永不删除；测试补 LiteLLM openrouter/bedrock 剔除、models.dev kilo
+  剔除与清理路径断言）；
+  前版 v1.71：与 PRD v1.5.74 对应；**关联价目点选卡顿修复**——`pricingModelOptions`
   改手动过滤（`filterOption={false}` + `onSearch` 本地包含匹配）+ `slice(0, 50)` 截断，
   候选价格摘要用 `fmtPrice` 纯文本替代 Money 组件实例（9k+ 条全量构造组件节点
   是卡顿根因）；openCreate/openEdit 清空 `pmSearch`）；

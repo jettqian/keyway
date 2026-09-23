@@ -215,9 +215,10 @@ const PricingTab: React.FC = () => {
     setSyncing(true)
     try {
       const r = await adminSyncRemotePricing()
-      const { added, refreshed, warnings } = r.result
+      const { added, refreshed, pruned, warnings } = r.result
       const sep = t('admin.listSeparator')
       const parts = [t('admin.syncAdded', { count: added }), t('admin.syncRefreshed', { count: refreshed })]
+      if (pruned) parts.push(t('admin.syncPruned', { count: pruned }))
       const head = parts.join(sep)
       message.success(warnings?.length ? head + t('admin.warningsSuffix', { warnings: warnings.join(sep) }) : head)
       refresh()

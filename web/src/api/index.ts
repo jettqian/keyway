@@ -114,7 +114,7 @@ export const adminUpdatePricing = (p: ModelPricing) =>
 export const adminDeletePricing = (model: string) =>
   del<void>(`/api/admin/pricing/${encodeURIComponent(model)}`)
 export const adminSyncRemotePricing = () =>
-  post<{ result: { added: number; refreshed: number; warnings?: string[] } }>(
+  post<{ result: { added: number; refreshed: number; pruned: number; warnings?: string[] } }>(
     '/api/admin/pricing/sync_remote',
   )
 export const adminProxies = () => get<{ proxies: Proxy[] }>('/api/admin/proxies')

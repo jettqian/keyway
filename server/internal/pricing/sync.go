@@ -2,7 +2,10 @@
 // 同步语义（v1.5.70 修订，替代 v1.5.65 的「只刷新不新增」）：**全量 upsert**——
 // 远程源收录的条目缺失即新增（记命中源）、已存在的远程来源条目与目录关联条目
 // 刷新四档单价；manual/import 且未被目录关联的条目不覆盖、不删除（人工维护优先）。
-// 删除仍永久生效：同步只增改、永不删除
+// 官方白名单（v1.5.75）：仅收录模型厂商第一方价目（聚合商/转售商/云托管/订阅计划
+// 均排除，见 officialModelsDevProviders / officialLiteLLMProviders）；来源为远程但
+// 不在收录集（白名单外/远程下架）且未被目录关联的条目随同步清理，价目表保持
+// 「官方集 + 人工条目」
 // 双源合并（v1.5.69）：models.dev 先到先得（官方文档口径优先），LiteLLM 补缺名/裸名。
 package pricing
 
@@ -34,6 +37,27 @@ const (
 	SrcManual    = "manual"
 	SrcImport    = "import"
 )
+
+// officialModelsDevProviders 官方厂商白名单（models.dev provider id）：
+// 仅保留模型厂商第一方价目，排除聚合商/转售商（openrouter、nano-gpt、kilo、zenmux…）
+// 与云托管（azure、amazon-bedrock、google-vertex…）及订阅计划（*-coding-plan）
+var officialModelsDevProviders = map[string]bool{
+	"openai": true, "anthropic": true, "google": true, "xai": true, "mistral": true,
+	"cohere": true, "ai21": true, "perplexity": true, "perplexity-agent": true,
+	"deepseek": true, "zhipuai": true, "zai": true, "moonshotai": true, "moonshotai-cn": true,
+	"alibaba": true, "alibaba-cn": true, "minimax": true, "minimax-cn": true,
+	"stepfun": true, "stepfun-ai": true, "sensenova": true, "volcengine": true,
+	"longcat": true, "xiaomi": true, "nvidia": true, "meta": true, "upstage": true, "sarvam": true,
+}
+
+// officialLiteLLMProviders 官方厂商白名单（litellm_provider 标识），口径同上
+var officialLiteLLMProviders = map[string]bool{
+	"openai": true, "text-completion-openai": true, "anthropic": true, "gemini": true,
+	"mistral": true, "xai": true, "perplexity": true, "deepseek": true, "zhipu": true,
+	"moonshot": true, "dashscope": true, "qwencloud": true, "qwen_ai_platform": true,
+	"volcengine": true, "minimax": true, "ai21": true, "cohere": true,
+	"meta_llama": true, "nvidia_nim": true,
+}
 
 // Source 官方价目同步源（名称 + 链接，供管理界面展示）
 type Source struct {
@@ -73,6 +97,7 @@ func mergeSources(dst map[string]ModelPrice, src []ModelPrice) map[string]ModelP
 type Result struct {
 	Added     int      `json:"added"`     // 远程源收录、价目表缺失而新增的条目数
 	Refreshed int      `json:"refreshed"` // 已存在且被刷新的条目数（远程来源/目录关联）
+	Pruned    int      `json:"pruned"`    // 清理的条目数（非官方白名单/远程已下架的远程来源条目）
 	Warnings  []string `json:"warnings,omitempty"`
 }
 
@@ -108,7 +133,7 @@ func SyncRemote(db *gorm.DB, timeout time.Duration) (*Result, error) {
 	for _, p := range merged {
 		prices = append(prices, p)
 	}
-	res.Added, res.Refreshed = upsertRemote(db, prices)
+	res.Added, res.Refreshed, res.Pruned = upsertRemote(db, prices)
 
 	// 记录最近一次同步完成时间（至少单源成功才记录）
 	if err := markSynced(db); err != nil {
@@ -142,7 +167,7 @@ func StartSyncLoop(db *gorm.DB, hours int, stop <-chan struct{}) {
 			fmt.Printf("[keyway] 价目同步失败: %v\n", err)
 			return
 		}
-		fmt.Printf("[keyway] 价目同步完成：新增 %d、刷新 %d\n", res.Added, res.Refreshed)
+		fmt.Printf("[keyway] 价目同步完成：新增 %d、刷新 %d、清理 %d\n", res.Added, res.Refreshed, res.Pruned)
 	}
 	run()
 	ticker := time.NewTicker(time.Duration(hours) * time.Hour)
@@ -157,16 +182,17 @@ func StartSyncLoop(db *gorm.DB, hours int, stop <-chan struct{}) {
 	}
 }
 
-// upsertRemote 全量 upsert（v1.5.70）：对远程源收录的每个条目——
+// upsertRemote 全量 upsert（v1.5.70）+ 官方白名单清理（v1.5.75）：对远程源收录的每个条目——
 //   - 价目表缺失 → Create（source 记命中源）
 //   - 已存在且来源为远程（models.dev/LiteLLM）或被目录关联 → 刷新四档单价与 source
 //   - 已存在且为 manual/import 且未被目录关联 → 跳过（人工维护优先，不覆盖）
 //
-// 同步永不删除：manual/import 条目（含远程源没有的同名条目）原样保留。
-// 返回 (新增数, 刷新数)
-func upsertRemote(db *gorm.DB, prices []ModelPrice) (added, refreshed int) {
+// 清理：来源为远程但不在本次远程收录集（白名单过滤/远程下架）且未被目录关联的条目
+// 一并删除（保持价目表 = 官方集 + 人工条目）；manual/import 条目永不删除。
+// 返回 (新增数, 刷新数, 清理数)
+func upsertRemote(db *gorm.DB, prices []ModelPrice) (added, refreshed, pruned int) {
 	if len(prices) == 0 {
-		return 0, 0
+		return 0, 0, 0
 	}
 	var rows []store.ModelPricing
 	db.Find(&rows)
@@ -175,6 +201,10 @@ func upsertRemote(db *gorm.DB, prices []ModelPrice) (added, refreshed int) {
 		existing[rows[i].Model] = rows[i]
 	}
 	linked := linkedPricingModels(db)
+	remoteSet := make(map[string]bool, len(prices))
+	for _, p := range prices {
+		remoteSet[p.Model] = true
+	}
 	now := time.Now().Unix()
 	db.Transaction(func(tx *gorm.DB) error {
 		for _, p := range prices {
@@ -204,9 +234,19 @@ func upsertRemote(db *gorm.DB, prices []ModelPrice) (added, refreshed int) {
 			}
 			refreshed++
 		}
+		// 清理（v1.5.75）：远程来源但不在本次收录集（白名单外/已下架）且未被目录关联
+		for name, row := range existing {
+			if remoteSet[name] || (row.Source != SrcLiteLLM && row.Source != SrcModelsDev) || linked[name] {
+				continue // 在收录集 / 人工条目 / 目录关联：保留
+			}
+			if err := tx.Where("model = ?", name).Delete(&store.ModelPricing{}).Error; err != nil {
+				continue // 单条失败跳过
+			}
+			pruned++
+		}
 		return nil
 	})
-	return added, refreshed
+	return added, refreshed, pruned
 }
 
 // linkedPricingModels 被模型目录 pricing_model 引用的价目名集合（这些条目同步时刷新）
@@ -257,6 +297,9 @@ func parseLiteLLM(body []byte) ([]ModelPrice, error) {
 	for name, e := range raw {
 		if name == "" || e.Mode != "chat" {
 			continue
+		}
+		if !officialLiteLLMProviders[e.LitellmProvider] {
+			continue // 仅官方厂商条目（v1.5.75）
 		}
 		if e.InputCostPerToken <= 0 || e.OutputCostPerToken <= 0 {
 			continue // 免费或未定价条目
@@ -312,6 +355,9 @@ func parseModelsDev(body []byte) ([]ModelPrice, error) {
 	for pid, p := range raw {
 		if pid == "" {
 			continue
+		}
+		if !officialModelsDevProviders[pid] {
+			continue // 仅官方厂商条目（v1.5.75）
 		}
 		for mid, m := range p.Models {
 			if mid == "" || m.Modalities == nil || m.Cost == nil {

@@ -1,12 +1,24 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.74
+- 版本：v1.5.75
 - 日期：2026-09-23
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.75：**价目同步只保留官方厂商条目**——双源（models.dev 6971 + LiteLLM 2230）
+>   中大量条目来自聚合商/转售商（openrouter、nano-gpt、kilo、zenmux、302ai…）与云托管
+>   （azure、amazon-bedrock、google-vertex…），非"官方牌价"。现加**官方厂商白名单**
+>   （models.dev 按 provider id：openai/anthropic/google/xai/mistral/cohere/ai21/
+>   perplexity/deepseek/zhipuai/zai/moonshotai(-cn)/alibaba(-cn)/minimax(-cn)/
+>   stepfun(-ai)/sensenova/volcengine/longcat/xiaomi/nvidia/meta/upstage/sarvam；
+>   LiteLLM 按 litellm_provider：openai/anthropic/gemini/mistral/xai/perplexity/
+>   deepseek/zhipu/moonshot/dashscope/qwencloud/qwen_ai_platform/volcengine/minimax/
+>   ai21/cohere/meta_llama/nvidia_nim），聚合商/云托管/订阅计划一律排除。
+>   同步新增**清理**：来源为远程但不在收录集（白名单外/远程下架）且未被目录关联的
+>   条目随同步删除；manual/import 与目录关联条目永不删除。同步结果增 `pruned`，
+>   管理页提示「清理非官方/已下架 N 条」
 > - v1.5.74：**关联价目点选卡顿修复**——价目表全量灌入 9k+ 条后，「关联价目」下拉
 >   为全部条目构造组件选项节点导致点击卡顿。现改手动过滤（onSearch + 本地包含匹配）
 >   并**截断前 50 条**，候选标签价格摘要改 `fmtPrice` 纯文本（去掉逐条 Money 组件

@@ -28,6 +28,7 @@ export default {
   'admin.warningsSuffix': ' ({warnings})',
   'admin.syncAdded': '{count} entries added',
   'admin.syncRefreshed': '{count} entries refreshed',
+  'admin.syncPruned': '{count} non-official/removed entries pruned',
   'admin.lastSyncedAt': 'Last official pricing sync: {time}',
   'admin.notSyncedYet': 'Official pricing not synced yet',
   'admin.syncConfirmTitle': 'Sync official pricing from LiteLLM / models.dev?',

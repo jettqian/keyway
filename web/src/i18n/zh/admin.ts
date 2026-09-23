@@ -29,6 +29,7 @@ export default {
   'admin.warningsSuffix': '（{warnings}）',
   'admin.syncAdded': '价目新增 {count} 条',
   'admin.syncRefreshed': '刷新 {count} 条',
+  'admin.syncPruned': '清理非官方/已下架 {count} 条',
   'admin.lastSyncedAt': '上次官方价目同步：{time}',
   'admin.notSyncedYet': '尚未同步官方价目',
   'admin.syncConfirmTitle': '从 LiteLLM / models.dev 同步官方价目？',

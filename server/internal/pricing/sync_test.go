@@ -15,14 +15,16 @@ func TestParseLiteLLM(t *testing.T) {
 		"claude-sonnet-4-6": {"mode": "chat", "input_cost_per_token": 0.000003, "output_cost_per_token": 0.000015, "cache_read_input_token_cost": 0.0000003, "cache_creation_input_token_cost": 0.00000375, "litellm_provider": "anthropic"},
 		"text-embedding-3-small": {"mode": "embedding", "input_cost_per_token": 0.00000002, "output_cost_per_token": 0},
 		"some-free-model": {"mode": "chat", "input_cost_per_token": 0, "output_cost_per_token": 0},
-		"glm-5.3": {"mode": "chat", "input_cost_per_token": 0.00000111, "output_cost_per_token": 0.00000389, "litellm_provider": "zhipu"}
+		"glm-5.3": {"mode": "chat", "input_cost_per_token": 0.00000111, "output_cost_per_token": 0.00000389, "litellm_provider": "zhipu"},
+		"openrouter/gpt-4o": {"mode": "chat", "input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001, "litellm_provider": "openrouter"},
+		"bedrock/claude": {"mode": "chat", "input_cost_per_token": 0.000003, "output_cost_per_token": 0.000015, "litellm_provider": "bedrock"}
 	}`)
 	out, err := parseLiteLLM(body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(out) != 2 {
-		t.Fatalf("期望 2 条，实际 %d", len(out))
+		t.Fatalf("期望 2 条（非官方白名单 provider 应剔除），实际 %d", len(out))
 	}
 	byName := map[string]ModelPrice{}
 	for _, p := range out {
@@ -60,6 +62,9 @@ func TestParseModelsDev(t *testing.T) {
 		}},
 		"zhipuai": {"models": {
 			"glm-5.3": {"modalities": {"input": ["text"], "output": ["text"]}, "cost": {"input": 1.11, "output": 3.89, "cache_read": 0.2, "cache_write": 0}}
+		}},
+		"kilo": {"models": {
+			"z-ai/glm-5.3": {"modalities": {"input": ["text"], "output": ["text"]}, "cost": {"input": 1, "output": 2}}
 		}}
 	}`)
 	out, err := parseModelsDev(body)
@@ -67,7 +72,7 @@ func TestParseModelsDev(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(out) != 2 {
-		t.Fatalf("期望 2 条，实际 %d", len(out))
+		t.Fatalf("期望 2 条（非官方白名单 provider 应剔除），实际 %d", len(out))
 	}
 	byName := map[string]ModelPrice{}
 	for _, p := range out {
@@ -189,24 +194,27 @@ func TestSyncUpsertRemote(t *testing.T) {
 	if err := db.Create(&store.ModelPricing{Model: "prov/linked-manual", InputPerM: 1, OutputPerM: 1, Currency: "USD", Source: "manual"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	// 远程来源条目 → 刷新；人工未关联条目 → 跳过
+	// 远程来源条目 → 刷新；人工未关联条目 → 跳过；非官方远程条目（不在收录集）→ 清理
 	if err := db.Create(&store.ModelPricing{Model: "prov/remote", InputPerM: 1, OutputPerM: 1, Currency: "USD", Source: SrcLiteLLM}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&store.ModelPricing{Model: "my-manual", InputPerM: 8, OutputPerM: 28, Currency: "USD", Source: "manual"}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&store.ModelPricing{Model: "prov/gone-official", InputPerM: 1, OutputPerM: 1, Currency: "USD", Source: SrcModelsDev}).Error; err != nil {
+		t.Fatal(err)
+	}
 	// 人工条目远程源没有同名 → 不得删除
 
 	cr := 0.1
-	added, refreshed := upsertRemote(db, []ModelPrice{
+	added, refreshed, pruned := upsertRemote(db, []ModelPrice{
 		{Model: "prov/linked-manual", InputPerM: 3, OutputPerM: 7, CachedInputPerM: &cr, Source: SrcModelsDev},
 		{Model: "prov/remote", InputPerM: 2, OutputPerM: 5, Source: SrcModelsDev},
 		{Model: "prov/new", InputPerM: 0.5, OutputPerM: 2, Source: SrcModelsDev}, // 缺失 → 新增
 		{Model: "other/new", InputPerM: 1, OutputPerM: 1, Source: SrcLiteLLM},    // 缺失 → 新增
 	})
-	if added != 2 || refreshed != 2 {
-		t.Fatalf("期望 新增2/刷新2，实际 %d/%d", added, refreshed)
+	if added != 2 || refreshed != 2 || pruned != 1 {
+		t.Fatalf("期望 新增2/刷新2/清理1，实际 %d/%d/%d", added, refreshed, pruned)
 	}
 
 	var linkedManual store.ModelPricing
@@ -240,6 +248,9 @@ func TestSyncUpsertRemote(t *testing.T) {
 	var n int64
 	db.Model(&store.ModelPricing{}).Count(&n)
 	if n != 5 {
-		t.Fatalf("人工条目不得被删除（期望总数 5），实际 %d 条", n)
+		t.Fatalf("清理后期望总数 5（人工条目保留、非官方远程条目清理），实际 %d 条", n)
+	}
+	if err := db.First(&store.ModelPricing{}, "model = ?", "prov/gone-official").Error; err == nil {
+		t.Fatal("不在收录集的远程来源条目应被清理")
 	}
 }
