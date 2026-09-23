@@ -113,34 +113,28 @@ const PricingTab: React.FC = () => {
   const [sourceFilter, setSourceFilter] = React.useState('')
   const [syncedAt, setSyncedAt] = React.useState('')
   const [sources, setSources] = React.useState<PricingSource[]>([])
-  const [catalogNames, setCatalogNames] = React.useState<Set<string>>(new Set())
   const [form] = Form.useForm()
   const refresh = React.useCallback(() => {
     setLoading(true)
-    Promise.all([adminPricing(), adminCatalogModels()])
-      .then(([p, m]) => {
+    adminPricing()
+      .then((p) => {
         setPricing(p.pricing)
         setSyncedAt(p.syncedAt ?? '')
         setSources(p.sources ?? [])
-        setCatalogNames(new Set(m.models.map((c) => c.name)))
       })
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
   }, [])
   React.useEffect(refresh, [refresh])
 
-  // 目录内模型置前显示，其余按名称排后；支持按模型名搜索与按来源筛选
+  // 按模型名排序；支持按模型名搜索与按来源筛选（目录关联在模型目录侧表达，此处不标目录）
   const rows = React.useMemo(() => {
     const kw = search.trim().toLowerCase()
     return pricing
       .filter((p) => !kw || p.model.toLowerCase().includes(kw))
       .filter((p) => !sourceFilter || (p.source ?? '') === sourceFilter)
-      .sort((a, b) => {
-        const inA = catalogNames.has(a.model) ? 0 : 1
-        const inB = catalogNames.has(b.model) ? 0 : 1
-        return inA - inB || a.model.localeCompare(b.model)
-      })
-  }, [pricing, search, sourceFilter, catalogNames])
+      .sort((a, b) => a.model.localeCompare(b.model))
+  }, [pricing, search, sourceFilter])
 
   const openCreate = () => {
     setEditing(null)
@@ -280,7 +274,6 @@ const PricingTab: React.FC = () => {
         <span className="text-tertiary" style={{ fontSize: 12, marginLeft: 12 }}>
           {t('admin.totalEntries', { count: pricing.length })}
           {search.trim() || sourceFilter ? t('admin.matchedEntries', { count: rows.length }) : ''}
-          {t('admin.catalogFirstNote')}
         </span>
       </div>
       <Table<ModelPricing>
@@ -296,7 +289,6 @@ const PricingTab: React.FC = () => {
             render: (n: string, p: ModelPricing) => (
               <Space>
                 {n}
-                {catalogNames.has(n) ? <Tag color="blue">{t('admin.catalogTag')}</Tag> : null}
                 <SourceTag source={p.source} />
               </Space>
             ),
@@ -516,25 +508,7 @@ const CatalogModelsTab: React.FC = () => {
       .finally(() => setLoading(false))
   }, [])
   React.useEffect(refresh, [refresh])
-  // 价目表候选（新增弹窗搜索点选用）：排除已收录条目，右侧显示来源 + 价格摘要
-  const priceOptions = React.useMemo(() => {
-    const existing = new Set(models.map((m) => m.name))
-    return pricingList
-      .filter((p) => !existing.has(p.model))
-      .map((p) => ({
-        value: p.model,
-        label: (
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {p.model} <SourceTag source={p.source} />
-            </span>
-            <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-              {t('common.input')} <Money value={p.inputPerM} /> / {t('common.output')} <Money value={p.outputPerM} />
-            </span>
-          </div>
-        ),
-      }))
-  }, [pricingList, models, t])
+  // 关联价目候选（关联价目输入框点选用）：右侧显示来源 + 价格摘要
   const pricingModelOptions = React.useMemo(() => pricingList.map((p) => ({
     value: p.model,
     label: (
@@ -649,22 +623,7 @@ const CatalogModelsTab: React.FC = () => {
             {editing ? (
               <Input placeholder={t('admin.catalogEditPlaceholder')} />
             ) : (
-              <AutoComplete
-                allowClear
-                options={priceOptions}
-                onClear={() => setPicked(null)}
-                onSelect={(v: string) => {
-                  setPicked(pricingList.find((p) => p.model === v) ?? null)
-                  form.setFieldsValue({ pricingModel: v })
-                }}
-                onChange={(v: string) => {
-                  if (picked && picked.model !== v) setPicked(null)
-                }}
-                filterOption={(input, option) =>
-                  String(option?.value ?? '').toLowerCase().includes(input.trim().toLowerCase())
-                }
-                placeholder={t('admin.catalogPickPlaceholder')}
-              />
+              <Input placeholder={t('admin.catalogNamePlaceholder')} />
             )}
           </Form.Item>
           <Form.Item name="pricingModel" label={t('admin.pricingModelName')} extra={t('admin.pricingModelHint')}>
