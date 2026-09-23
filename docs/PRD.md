@@ -1,12 +1,15 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.75
+- 版本：v1.5.76
 - 日期：2026-09-23
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.76：**关联价目下拉超出弹窗修复**——v1.5.73 的 popupMatchSelectWidth=false
+>   使下拉跟最宽候选项等宽、溢出弹窗边界。现恢复下拉=输入框宽度，长模型名在候选内
+>   **换行**显示（flex+overflowWrap，不截断），价格摘要右对齐不动
 > - v1.5.75：**价目同步只保留官方厂商条目**——双源（models.dev 6971 + LiteLLM 2230）
 >   中大量条目来自聚合商/转售商（openrouter、nano-gpt、kilo、zenmux、302ai…）与云托管
 >   （azure、amazon-bedrock、google-vertex…），非"官方牌价"。现加**官方厂商白名单**

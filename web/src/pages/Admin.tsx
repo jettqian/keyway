@@ -527,7 +527,7 @@ const CatalogModelsTab: React.FC = () => {
       value: p.model,
       label: (
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-          <span style={{ whiteSpace: 'nowrap' }}>
+          <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
             {p.model} <SourceTag source={p.source} />
           </span>
           <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
@@ -645,7 +645,6 @@ const CatalogModelsTab: React.FC = () => {
           <Form.Item name="pricingModel" label={t('admin.pricingModelName')} extra={t('admin.pricingModelHint')}>
             <AutoComplete
               options={pricingModelOptions}
-              popupMatchSelectWidth={false}
               filterOption={false}
               onSearch={(v: string) => setPmSearch(v)}
               onSelect={(v: string) => setPicked(pricingList.find((p) => p.model === v) ?? null)}

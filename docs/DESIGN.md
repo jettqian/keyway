@@ -1,6 +1,9 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.72（与 PRD v1.5.75 对应；**价目同步只保留官方厂商条目**——解析层白名单
+- 版本：v1.73（与 PRD v1.5.76 对应；**关联价目下拉超出弹窗修复**——去掉
+  popupMatchSelectWidth=false（下拉恢复输入框等宽、不溢出弹窗），候选模型名
+  flex+overflowWrap 换行完整显示）；
+  前版 v1.72：与 PRD v1.5.75 对应；**价目同步只保留官方厂商条目**——解析层白名单
   `officialModelsDevProviders`（28 家厂商 provider id）与 `officialLiteLLMProviders`
   （19 个 litellm_provider），聚合商/云托管/订阅计划排除；`upsertRemote` 增清理：
   source 为远程但不在收录集且未被目录关联 → Delete（`Result.Pruned` 计数），
