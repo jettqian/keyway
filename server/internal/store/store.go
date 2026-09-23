@@ -26,7 +26,7 @@ const (
 )
 
 // Open 打开 DataDir 下的 keyway.db（启用 WAL、busy_timeout、foreign_keys），
-// 执行 AutoMigrate、补建 logs 索引并写入内置价目种子
+// 执行 AutoMigrate 并补建 logs 索引
 func Open(opts Options) (*Store, error) {
 	var dsn string
 	if opts.DataDir == ":memory:" {
@@ -56,9 +56,6 @@ func Open(opts Options) (*Store, error) {
 		return nil, fmt.Errorf("迁移失败: %w", err)
 	}
 	if err := ensureLogsIndexes(db); err != nil {
-		return nil, err
-	}
-	if err := seedModelPricing(db); err != nil {
 		return nil, err
 	}
 	// restricted 列迁移后回填：启用集合非空的存量令牌必然是限定语义。

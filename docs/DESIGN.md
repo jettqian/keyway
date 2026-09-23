@@ -1,6 +1,12 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.58（与 PRD v1.5.61 对应；统计**移除按推理强度分组**——`usage.Stats`
+- 版本：v1.59（与 PRD v1.5.62 对应；**移除内置价目种子**——删除 `store/pricing.go`
+  种子清单与 `store.Open` 的 `seedModelPricing` 调用：种子按"冲突跳过"每次启动重插，
+  价目表删掉的条目（模型目录改名后的老模型价等）重启即复活。价目来源只剩手工录入/
+  JSON 导入/远程同步（StartSyncLoop「只补缺」不变），新部署价目表为空、费用显示
+  未定价，需同步/导入/录入；`TestPricingSeed` 改为 `TestPricingNoReseed`（新库为空、
+  手工条目重开保留、删除后重开不补回））；
+  前版 v1.58：与 PRD v1.5.61 对应；统计**移除按推理强度分组**——`usage.Stats`
   删 `ByEffort` 字段，`QueryStats` 删 `group("reasoning_effort")` 与价目补算
   recompute 的 byEffort 维度（补算 Select 一并去掉 reasoning_effort），统计 CSV
   删「推理强度」行，前端 `StatsResponse.byEffort`、统计页/管理页「按推理强度」
@@ -519,8 +525,9 @@ CREATE TABLE invite_codes (
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
 ```
 
-迁移：启动时 GORM AutoMigrate + 内置价目表种子数据（常见模型默认价，含主流供应商
-缓存读/写价，随版本更新）。
+迁移：启动时 GORM AutoMigrate + logs 复合索引补建；价目表**无种子数据**
+（v1.5.62 移除内置种子——种子按冲突跳过每次启动重插，会让价目表删除的条目
+重启后复活；价目由远程同步/导入/手工录入填充）。
 
 ## 4. 认证与安全设计
 

@@ -363,62 +363,63 @@ func TestSettings(t *testing.T) {
 	}
 }
 
-func TestPricingSeed(t *testing.T) {
-	st := openTestStore(t)
-
-	var n int64
-	st.db.Model(&ModelPricing{}).Count(&n)
-	if n < 10 {
-		t.Fatalf("内置价目不足 10 条，实际 %d", n)
-	}
-
-	var p ModelPricing
-	if err := st.db.First(&p, "model = ?", "claude-sonnet-4-20250514").Error; err != nil {
-		t.Fatalf("查询价目失败: %v", err)
-	}
-	if p.InputPerM != 3 || p.OutputPerM != 15 || p.Currency != "USD" ||
-		p.CachedInputPerM == nil || *p.CachedInputPerM != 0.3 ||
-		p.CacheWritePerM == nil || *p.CacheWritePerM != 3.75 {
-		t.Fatalf("claude 价目不符: %+v", p)
-	}
-
-	var pm ModelPricing
-	if err := st.db.First(&pm, "model = ?", "kimi-k3").Error; err != nil {
-		t.Fatalf("查询 kimi 价目失败: %v", err)
-	}
-	if pm.InputPerM != 2.78 || pm.OutputPerM != 13.89 {
-		t.Fatalf("kimi-k3 折算价不符: %+v", pm)
-	}
-
-	// 管理员改价后重开，种子不得覆盖
+// TestPricingNoReseed 价目表不内置种子：新库初始为空；手工写入的条目重开存储后
+// 原样保留，启动路径不得自动补插（价目删除后"复活"的回归防护）
+func TestPricingNoReseed(t *testing.T) {
 	dir := t.TempDir()
-	st2, err := Open(Options{DataDir: dir})
+	st, err := Open(Options{DataDir: dir})
 	if err != nil {
 		t.Fatalf("打开存储失败: %v", err)
 	}
-	if err := st2.db.Model(&ModelPricing{}).Where("model = ?", "gpt-4o").Update("input_per_m", 9.9).Error; err != nil {
-		t.Fatalf("改价失败: %v", err)
+
+	var n int64
+	st.db.Model(&ModelPricing{}).Count(&n)
+	if n != 0 {
+		t.Fatalf("新库价目表应为空（无内置种子），实际 %d 条", n)
+	}
+
+	seed := ModelPricing{Model: "gpt-4o", InputPerM: 2.5, OutputPerM: 10, Currency: "USD"}
+	if err := st.db.Create(&seed).Error; err != nil {
+		t.Fatalf("写入价目失败: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("关闭存储失败: %v", err)
+	}
+
+	// 重开：启动路径不得补插或改动任何价目
+	st2, err := Open(Options{DataDir: dir})
+	if err != nil {
+		t.Fatalf("重开存储失败: %v", err)
+	}
+	var p ModelPricing
+	if err := st2.db.First(&p, "model = ?", "gpt-4o").Error; err != nil {
+		t.Fatalf("重查价目失败: %v", err)
+	}
+	if p.InputPerM != 2.5 || p.OutputPerM != 10 {
+		t.Fatalf("重开后价目被改动: %+v", p)
+	}
+	var n2 int64
+	st2.db.Model(&ModelPricing{}).Count(&n2)
+	if n2 != 1 {
+		t.Fatalf("重开后价目条数变化: %d != 1", n2)
+	}
+
+	// 删除后重开：已删条目不得自动补回
+	if err := st2.db.Where("model = ?", "gpt-4o").Delete(&ModelPricing{}).Error; err != nil {
+		t.Fatalf("删除价目失败: %v", err)
 	}
 	if err := st2.Close(); err != nil {
 		t.Fatalf("关闭存储失败: %v", err)
 	}
-
 	st3, err := Open(Options{DataDir: dir})
 	if err != nil {
 		t.Fatalf("重开存储失败: %v", err)
 	}
 	defer st3.Close()
-	var p3 ModelPricing
-	if err := st3.db.First(&p3, "model = ?", "gpt-4o").Error; err != nil {
-		t.Fatalf("重查价目失败: %v", err)
-	}
-	if p3.InputPerM != 9.9 {
-		t.Fatalf("重开后种子覆盖了管理员改价: %+v", p3)
-	}
 	var n3 int64
 	st3.db.Model(&ModelPricing{}).Count(&n3)
-	if n3 != n {
-		t.Fatalf("重开后价目条数变化: %d != %d", n3, n)
+	if n3 != 0 {
+		t.Fatalf("删除的价目在重开后被自动补回: %d 条", n3)
 	}
 }
 
