@@ -1,6 +1,14 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.61（与 PRD v1.5.64 对应；**计价只按目录关联 + 关联价目定时网络刷新**——
+- 版本：v1.62（与 PRD v1.5.65 对应；**同步去除补缺，删除永久生效**——补缺无删除记忆，
+  价目表删掉的条目（含关联条目）会被按"缺失"补插回来。按管理员决策移除补缺：
+  `SyncRemote` 双源合并（LiteLLM 先到先得）后只调 `refreshLinked`——被
+  `linkedPricingModels`（catalog_models.pricing_model 去重集）引用的**已存在**条目
+  Updates 四档单价为网络最新价，不 Create 任何条目；`Result` 改为
+  {refreshed, missing}（missing = 关联名不在价目表计数提示，删除 litellmAdded/
+  openrouterAdded/skippedExisting）；管理页提示 admin.syncRefreshed/syncMissing；
+  `TestSyncRefreshLinked` 断言 刷新1/缺失1/总数不变）；
+  前版 v1.61：与 PRD v1.5.64 对应；**计价只按目录关联 + 关联价目定时网络刷新**——
   ① `priceSnapshot` 增 `alias map[string]string`（目录名→关联价目名）与
   `lookup(model, upstream)`：**关联价优先于上游名/裸名直查**（v1.5.63 的"裸名优先只补缺"
   与预期相反，现命中关联即按关联价，关联名未定价才回退 `lookupPricing`），
@@ -543,7 +551,7 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
 
 迁移：启动时 GORM AutoMigrate + logs 复合索引补建；价目表**无种子数据**
 （v1.5.62 移除内置种子——种子按冲突跳过每次启动重插，会让价目表删除的条目
-重启后复活；价目由远程同步/导入/手工录入填充）。
+重启后复活；价目由导入/手工录入填充，同步仅刷新目录关联条目，v1.5.65）。
 
 ## 4. 认证与安全设计
 
@@ -1253,11 +1261,12 @@ new-api 的已知语义（仅参考行为，代码自研）。
 ### 8.6 官方价目远程同步与同步元信息（FR-M4.2）
 
 - **同步**：LiteLLM（`model_prices_and_context_window.json`）与 OpenRouter
-  （`/api/v1/models`）双源，归一化 USD/百万 token（含缓存读/写档）。语义（v1.5.64）：
-  **目录关联条目刷新 + 其余只补缺**——applyMissing 事务内：已存在且被
-  `linkedPricingModels`（catalog_models.pricing_model 去重集）引用 → Updates 四档
-  单价为网络最新价（refreshed 计数）；已存在未引用 → 跳过（skipped 计数）；
-  缺失 → 补插（added 计数）。手动 `POST /api/admin/pricing/sync_remote` 与
+  （`/api/v1/models`）双源，归一化 USD/百万 token（含缓存读/写档），合并去重
+  （LiteLLM 先到先得）。语义（v1.5.65）：**只刷新目录关联的价目条目，不补缺**——
+  `refreshLinked` 事务内：已存在且被 `linkedPricingModels`（catalog_models.pricing_model
+  去重集）引用 → Updates 四档单价为网络最新价（refreshed 计数）；远端源没有的关联名
+  保持现状；**不 Create 任何条目**（删除永久生效）；关联名不在价目表仅 missing 计数。
+  手动 `POST /api/admin/pricing/sync_remote` 与
   定时 `StartSyncLoop`（`KEYWAY_PRICING_SYNC_HOURS`，0 关闭）共用 `SyncRemote`
   （mutex 串行化），单源失败降级为警告，双源失败报错。
 - **同步元信息**：至少单源成功时把完成时间写入 `settings.pricing_synced_at`

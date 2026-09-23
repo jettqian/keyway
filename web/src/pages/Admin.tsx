@@ -210,11 +210,10 @@ const PricingTab: React.FC = () => {
     setSyncing(true)
     try {
       const r = await adminSyncRemotePricing()
-      const { litellmAdded, openrouterAdded, refreshed, skippedExisting, warnings } = r.result
+      const { refreshed, missing, warnings } = r.result
       const sep = t('admin.listSeparator')
-      const parts = [t('admin.syncAdded', { litellm: litellmAdded, openrouter: openrouterAdded })]
-      if (refreshed) parts.push(t('admin.syncRefreshed', { count: refreshed }))
-      if (skippedExisting) parts.push(t('admin.syncSkipped', { count: skippedExisting }))
+      const parts = [t('admin.syncRefreshed', { count: refreshed })]
+      if (missing) parts.push(t('admin.syncMissing', { count: missing }))
       const head = parts.join(sep)
       message.success(warnings?.length ? head + t('admin.warningsSuffix', { warnings: warnings.join(sep) }) : head)
       refresh()

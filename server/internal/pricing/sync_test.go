@@ -122,9 +122,9 @@ func TestSyncedAtRoundTrip(t *testing.T) {
 	}
 }
 
-// 同步落库语义（v1.5.64）：目录关联条目刷新为网络最新价；其余已存在条目跳过；
-// 缺失条目补插
-func TestApplyMissingRefresh(t *testing.T) {
+// 同步落库语义（v1.5.65）：只刷新目录关联的价目条目；不补缺、不新增任何模型，
+// 未关联条目不动；关联名不在价目表仅计数提示
+func TestSyncRefreshLinked(t *testing.T) {
 	st, err := store.Open(store.Options{DataDir: ":memory:"})
 	if err != nil {
 		t.Fatal(err)
@@ -132,8 +132,11 @@ func TestApplyMissingRefresh(t *testing.T) {
 	defer st.Close()
 	db := st.DB()
 
-	// 目录关联 prov/m；plain 存在但无关联
+	// 目录关联 prov/m（在表）；prov/gone（不在表，验证不补插）
 	if err := db.Create(&store.CatalogModel{Name: "cm", PricingModel: "prov/m", Enabled: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&store.CatalogModel{Name: "cm2", PricingModel: "prov/gone", Enabled: 1}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&store.ModelPricing{Model: "prov/m", InputPerM: 1, OutputPerM: 1, Currency: "USD"}).Error; err != nil {
@@ -144,13 +147,13 @@ func TestApplyMissingRefresh(t *testing.T) {
 	}
 
 	cr := 0.1
-	added, refreshed, skipped := applyMissing(db, []ModelPrice{
+	refreshed, missing := refreshLinked(db, []ModelPrice{
 		{Model: "prov/m", InputPerM: 3, OutputPerM: 7, CachedInputPerM: &cr},
+		{Model: "prov/gone", InputPerM: 9, OutputPerM: 9},
 		{Model: "plain", InputPerM: 4, OutputPerM: 4},
-		{Model: "brandnew", InputPerM: 5, OutputPerM: 5},
 	})
-	if added != 1 || refreshed != 1 || skipped != 1 {
-		t.Fatalf("期望 新增1/刷新1/跳过1，实际 %d/%d/%d", added, refreshed, skipped)
+	if refreshed != 1 || missing != 1 {
+		t.Fatalf("期望 刷新1/缺失1，实际 %d/%d", refreshed, missing)
 	}
 
 	var pm store.ModelPricing
@@ -167,11 +170,9 @@ func TestApplyMissingRefresh(t *testing.T) {
 	if plain.InputPerM != 2 || plain.OutputPerM != 2 {
 		t.Fatalf("未关联条目不应被覆盖: %+v", plain)
 	}
-	var bn store.ModelPricing
-	if err := db.First(&bn, "model = ?", "brandnew").Error; err != nil {
-		t.Fatal(err)
-	}
-	if bn.InputPerM != 5 || bn.Currency != "USD" {
-		t.Fatalf("缺失条目应补插: %+v", bn)
+	var n int64
+	db.Model(&store.ModelPricing{}).Count(&n)
+	if n != 2 {
+		t.Fatalf("同步不得新增条目（含关联缺失名），实际 %d 条", n)
 	}
 }
