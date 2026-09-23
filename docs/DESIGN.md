@@ -1303,8 +1303,10 @@ new-api 的已知语义（仅参考行为，代码自研）。
   置前**（前端按 catalog_models 名称集合排序并打"目录"标签），并支持按模型名搜索筛选。
   条目**来源标签**（v1.5.68）：`source` 列——手工/导入灰标、远程源（LiteLLM/models.dev）
   紫标、历史空串不显示；筛选栏来源 Select（全部/LiteLLM/models.dev/手工/导入）与
-  模型名搜索叠加过滤；`PUT /pricing/:model` 的来源由服务端裁定（仅接受 `import`，
-  其余强制 `manual`）。
+  模型名搜索叠加过滤；  `PUT /pricing/:model` 的来源由服务端裁定（仅接受 `import`，
+  其余强制 `manual`）。模型目录同样标识来源：`catalogModelDTOWithPricing` DTO 增
+  `source`（关联价目条目的来源），CatalogPrice「价格模型」行与目录表单
+  「关联价目」点选候选/选中预览附来源标签（共用 `SourceTag` 组件）。
 - **模型目录关联单价**：目录（用户页与管理员页）单价列直接展示完整四档价
   （"标签 + $ 数值"两行：输入/输出主行 + 缓存读/缓存写副行，缓存档未配置时直接显示
   回退生效数值），数据来自 `catalogModelDTOWithPricing` 按模型名精确匹配

@@ -32,6 +32,7 @@ func catalogModelDTOWithPricing(m *store.CatalogModel, p *store.ModelPricing) gi
 	dto["outputPerM"] = p.OutputPerM
 	dto["cachedInputPerM"] = p.CachedInputPerM
 	dto["cacheWritePerM"] = p.CacheWritePerM
+	dto["source"] = p.Source
 	return dto
 }
 

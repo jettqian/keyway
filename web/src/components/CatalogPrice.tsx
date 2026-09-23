@@ -2,6 +2,7 @@ import React from 'react'
 import { Tooltip } from 'antd'
 import type { CatalogModel } from '../api/types'
 import Money from './Money'
+import SourceTag from './SourceTag'
 import { useI18n } from '../i18n'
 
 /**
@@ -21,7 +22,7 @@ const CatalogPrice: React.FC<{ m: CatalogModel }> = ({ m }) => {
   return (
     <div className="catalog-price" style={{ lineHeight: 1.7 }}>
       <div className="text-tertiary" style={{ fontSize: 12, lineHeight: 1.5 }}>
-        {t('models.pricingModel')}: {m.pricingModel || m.name}
+        {t('models.pricingModel')}: {m.pricingModel || m.name} <SourceTag source={m.source} />
       </div>
       <div>
         <span className="catalog-price-label">{t('common.input')}</span> <Money value={m.inputPerM} />

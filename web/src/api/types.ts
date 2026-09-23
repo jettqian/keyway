@@ -232,6 +232,8 @@ export interface CatalogModel {
   outputPerM?: number
   cachedInputPerM?: number | null
   cacheWritePerM?: number | null
+  /** 关联价目的来源：LiteLLM / models.dev / manual / import；'' 为历史数据 */
+  source?: string
 }
 
 export interface Proxy {

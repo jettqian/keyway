@@ -36,6 +36,7 @@ import CatalogPrice from '../components/CatalogPrice'
 import LinksTable from '../components/LinksTable'
 import Money from '../components/Money'
 import ModelTags from '../components/ModelTags'
+import SourceTag from '../components/SourceTag'
 import { rangePresets } from './Stats'
 
 const UsersTab: React.FC = () => {
@@ -297,9 +298,7 @@ const PricingTab: React.FC = () => {
               <Space>
                 {n}
                 {catalogNames.has(n) ? <Tag color="blue">{t('admin.catalogTag')}</Tag> : null}
-                {p.source === 'manual' ? <Tag>{t('admin.srcManual')}</Tag> : null}
-                {p.source === 'import' ? <Tag>{t('admin.srcImport')}</Tag> : null}
-                {p.source && p.source !== 'manual' && p.source !== 'import' ? <Tag color="purple">{p.source}</Tag> : null}
+                <SourceTag source={p.source} />
               </Space>
             ),
           },
@@ -518,7 +517,7 @@ const CatalogModelsTab: React.FC = () => {
       .finally(() => setLoading(false))
   }, [])
   React.useEffect(refresh, [refresh])
-  // 价目表候选（新增弹窗搜索点选用）：排除已收录条目，右侧显示价格摘要
+  // 价目表候选（新增弹窗搜索点选用）：排除已收录条目，右侧显示来源 + 价格摘要
   const priceOptions = React.useMemo(() => {
     const existing = new Set(models.map((m) => m.name))
     return pricingList
@@ -527,7 +526,9 @@ const CatalogModelsTab: React.FC = () => {
         value: p.model,
         label: (
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.model}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {p.model} <SourceTag source={p.source} />
+            </span>
             <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
               {t('common.input')} <Money value={p.inputPerM} /> / {t('common.output')} <Money value={p.outputPerM} />
             </span>
@@ -539,7 +540,9 @@ const CatalogModelsTab: React.FC = () => {
     value: p.model,
     label: (
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.model}</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {p.model} <SourceTag source={p.source} />
+        </span>
         <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
           {t('common.input')} <Money value={p.inputPerM} /> / {t('common.output')} <Money value={p.outputPerM} />
         </span>
@@ -637,6 +640,7 @@ const CatalogModelsTab: React.FC = () => {
                   {t('admin.priceLinked')}{t('common.input')} <Money value={picked.inputPerM} /> · {t('common.output')} <Money value={picked.outputPerM} /> ·
                   {t('common.cacheRead')} <Money value={picked.cachedInputPerM ?? picked.inputPerM} /> ·
                   {t('common.cacheWrite')} <Money value={picked.cacheWritePerM ?? picked.inputPerM} />
+                  {' '}<SourceTag source={picked.source} />
                 </span>
               ) : (
                 <span className="form-hint">{t('admin.catalogNameHint')}</span>
