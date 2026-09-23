@@ -1,6 +1,13 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.57（与 PRD v1.5.60 对应；新增**通用通知中心**——前端派生结构不落库：
+- 版本：v1.58（与 PRD v1.5.61 对应；统计**移除按推理强度分组**——`usage.Stats`
+  删 `ByEffort` 字段，`QueryStats` 删 `group("reasoning_effort")` 与价目补算
+  recompute 的 byEffort 维度（补算 Select 一并去掉 reasoning_effort），统计 CSV
+  删「推理强度」行，前端 `StatsResponse.byEffort`、统计页/管理页「按推理强度」
+  Card 与 i18n stats.byEffort/stats.effort 全部移除，用户页「按密钥」表改独占
+  整行；`logs.reasoning_effort` 落库、日志页展示与 `stats.recent` 强度标识
+  保留，effort E2E 测试改为仅断言落库）；
+  前版 v1.57：与 PRD v1.5.60 对应；新增**通用通知中心**——前端派生结构不落库：
   `components/NotificationCenter.tsx` 提供 Provider（通知生成器 + 已读集合）与
   NotificationBell（Badge dot 铃铛 + Popover 面板）；当前唯一通知类型 =
   模型目录启用模型 ∖ 本人渠道模型并集（id 取排序模型名集合，内容变化即换 id 驱动

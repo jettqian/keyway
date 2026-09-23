@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -29,10 +28,10 @@ func waitLastLog(t *testing.T, c *ctx, match func(l *store.Log) bool) store.Log 
 	return last
 }
 
-// TestE2E推理强度落库与统计：三协议入站的推理强度抓取（chat 顶层
+// TestE2E推理强度落库：三协议入站的推理强度抓取（chat 顶层
 // reasoning_effort / responses reasoning.effort / anthropic thinking 预算归一
-// thinking:N），未开启为 NULL；统计接口 byEffort 分组可见
-func TestE2E推理强度落库与统计(t *testing.T) {
+// thinking:N），未开启为 NULL
+func TestE2E推理强度落库(t *testing.T) {
 	c, upstream := setupApp(t)
 	defer upstream.Close()
 	c.bootstrap(t, upstream.URL)
@@ -76,27 +75,5 @@ func TestE2E推理强度落库与统计(t *testing.T) {
 	}, false)
 	if l := waitLastLog(t, c, func(l *store.Log) bool { return l.ReasoningEffort == nil }); l.ReasoningEffort != nil {
 		t.Fatalf("未开启推理应为 NULL，实际 %v", *l.ReasoningEffort)
-	}
-
-	// 统计：byEffort 分组包含各强度与 '-'（未开启）行
-	w = c.do("GET", "/api/stats?days=7", nil, true)
-	if w.Code != 200 {
-		t.Fatalf("统计接口失败: %d %s", w.Code, w.Body.String())
-	}
-	var resp struct {
-		ByEffort []struct {
-			Dim      string `json:"dim"`
-			Requests int64  `json:"requests"`
-		} `json:"byEffort"`
-	}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	dims := map[string]int64{}
-	for _, g := range resp.ByEffort {
-		dims[g.Dim] = g.Requests
-	}
-	for _, want := range []string{"high", "low", "thinking:2048", "-"} {
-		if dims[want] == 0 {
-			t.Fatalf("byEffort 缺少 %q 行: %+v", want, dims)
-		}
 	}
 }

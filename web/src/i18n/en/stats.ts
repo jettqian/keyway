@@ -23,8 +23,6 @@ export default {
   'stats.byModel': 'By Model',
   'stats.byKey': 'By Key (multi-account cost split)',
   'stats.key': 'Key',
-  'stats.byEffort': 'By Reasoning Effort',
-  'stats.effort': 'Reasoning Effort',
   'stats.token': 'Token',
   'stats.links': 'Link Status (Channel × Model)',
   'stats.linksHint': 'Channels of the same model are ranked by error rate then latency; quality grading reflects reliability only (Good <5%, Fair <20%, Poor ≥20%, fewer than 5 attempts not graded) — check the latency column for speed. Broken combos are shown even with zero attempts in the window.',

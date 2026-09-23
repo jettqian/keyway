@@ -212,18 +212,9 @@ const StatsPage: React.FC = () => {
           </Card>
         </Col>
       </Row>
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col xs={24} span={12}>
-          <Card title={t('stats.byKey')} loading={loading}>
-            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byKey ?? []} columns={groupColumns(t('stats.key'))} />
-          </Card>
-        </Col>
-        <Col xs={24} span={12}>
-          <Card title={t('stats.byEffort')} loading={loading}>
-            <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byEffort ?? []} columns={groupColumns(t('stats.effort'))} />
-          </Card>
-        </Col>
-      </Row>
+      <Card title={t('stats.byKey')} loading={loading} style={{ marginTop: 16 }}>
+        <Table<StatsGroup> rowKey="dim" size="small" pagination={false} scroll={{ x: 'max-content' }} dataSource={data?.byKey ?? []} columns={groupColumns(t('stats.key'))} />
+      </Card>
     </div>
   )
 }

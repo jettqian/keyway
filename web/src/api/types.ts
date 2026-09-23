@@ -165,7 +165,6 @@ export interface StatsResponse {
   byChannel: StatsGroup[]
   byModel: StatsGroup[]
   byKey: StatsGroup[]
-  byEffort?: StatsGroup[]
   recent?: LatestUsage[]
 }
 

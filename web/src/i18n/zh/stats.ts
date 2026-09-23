@@ -24,8 +24,6 @@ export default {
   'stats.byModel': '按模型',
   'stats.byKey': '按密钥（多账号分账）',
   'stats.key': '密钥',
-  'stats.byEffort': '按推理强度',
-  'stats.effort': '推理强度',
   'stats.token': '令牌',
   'stats.links': '链路状态（渠道 × 模型）',
   'stats.linksHint': '同模型渠道按 错误率 → 延迟 排序对比；质量分级只看错误率（优 <5%、良 <20%、差 ≥20%，样本 <5 次不评级），速度看延迟列的相对倍数。熔断中的组合即使窗口内零尝试也会展示。',
