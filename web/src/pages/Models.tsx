@@ -174,7 +174,6 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () 
           { title: t('common.model'), dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
           {
             title: t('models.unitPrice'),
-            width: 230,
             render: (_: unknown, m: CatalogModel) => <CatalogPrice m={m} />,
           },
           { title: t('common.note'), dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },

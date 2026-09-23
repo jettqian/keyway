@@ -516,12 +516,12 @@ const CatalogModelsTab: React.FC = () => {
       .finally(() => setLoading(false))
   }, [])
   React.useEffect(refresh, [refresh])
-  // 关联价目候选（关联价目输入框点选用）：右侧显示来源 + 价格摘要
+  // 关联价目候选（关联价目输入框点选用）：右侧显示来源 + 价格摘要；长模型名完整展示
   const pricingModelOptions = React.useMemo(() => pricingList.map((p) => ({
     value: p.model,
     label: (
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <span style={{ whiteSpace: 'nowrap' }}>
           {p.model} <SourceTag source={p.source} />
         </span>
         <span className="text-tertiary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
@@ -577,7 +577,6 @@ const CatalogModelsTab: React.FC = () => {
           { title: t('common.model'), dataIndex: 'name' },
           {
             title: t('admin.unitPrice'),
-            width: 230,
             render: (_: unknown, m: CatalogModel) => <CatalogPrice m={m} />,
           },
           { title: t('common.note'), dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
@@ -637,6 +636,7 @@ const CatalogModelsTab: React.FC = () => {
           <Form.Item name="pricingModel" label={t('admin.pricingModelName')} extra={t('admin.pricingModelHint')}>
             <AutoComplete
               options={pricingModelOptions}
+              popupMatchSelectWidth={false}
               onSelect={(v: string) => setPicked(pricingList.find((p) => p.model === v) ?? null)}
               filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.trim().toLowerCase())}
               placeholder={t('admin.pricingModelPlaceholder')}

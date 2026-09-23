@@ -1,6 +1,9 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.69（与 PRD v1.5.72 对应；**价目表被关联条目置前**——恢复目录关联排序：
+- 版本：v1.70（与 PRD v1.5.73 对应；**长模型名显示不全修复**——CatalogPrice
+  「价格模型」行 whiteSpace normal + overflowWrap anywhere，单价列去 230 限宽；
+  关联价目候选 AutoComplete popupMatchSelectWidth=false + 去 ellipsis）；
+  前版 v1.69：与 PRD v1.5.72 对应；**价目表被关联条目置前**——恢复目录关联排序：
   `catalogNames` 集合改按 `pricing_model || name`（被关联的价目条目名）判定，
   修正旧实现按目录名匹配的偏差；仍不打「目录」标签，提示
   admin.linkedFirstNote）；

@@ -21,7 +21,7 @@ const CatalogPrice: React.FC<{ m: CatalogModel }> = ({ m }) => {
   }
   return (
     <div className="catalog-price" style={{ lineHeight: 1.7 }}>
-      <div className="text-tertiary" style={{ fontSize: 12, lineHeight: 1.5 }}>
+      <div className="text-tertiary" style={{ fontSize: 12, lineHeight: 1.5, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
         {t('models.pricingModel')}: {m.pricingModel || m.name} <SourceTag source={m.source} />
       </div>
       <div>
