@@ -196,6 +196,12 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
 .ant-picker-range .ant-picker-input { min-width: 72px; }
 .ant-picker-range .ant-picker-range-separator { display: inline-flex; align-items: center; }
 
+/* antd 默认两个日期输入等分拉伸（flex:auto），日期文本左对齐后中间箭头
+   远离前一日期、贴近后一日期，视觉上不在两日期正中；把输入收缩到日期
+   实际宽度（YYYY-MM-DD 共 10 字符），左右间距对称、箭头落在正中 */
+.ant-picker-range .ant-picker-input { flex: none; width: auto; }
+.ant-picker-range .ant-picker-input > input { width: 10ch; }
+
 /* 链路状态表：模型分组头行（表内二级标题，主题变量适配亮暗） */
 .links-group-header > td {
   background: var(--kw-soft-bg) !important;

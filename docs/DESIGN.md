@@ -3,10 +3,12 @@
 - 版本：v1.74（与 PRD v1.5.77 对应；**统计时间筛选修复**——新增 `web/src/statsRange.ts`
   的 `useStatsRange`：localStorage key `kw-stats-range` 存 `{start,end}`（YYYY-MM-DD），
   读取校验字符串/日期合法且 start≤end，否则回退默认近 7 天；Stats 页与管理端统计 Tab
-  共用。区间分隔箭头保持 antd 原生（字体箭头/自绘 SVG 三轮尝试均回退）；仅
-  `.ant-picker-range-separator` 补 `display: inline-flex` 使 antd 失效的 align-items
-  真正垂直居中，`.ant-picker-input` min-width 72px 防窄屏压缩；标题操作区
-  `<Space>` 改 `page-actions`（可换行））；
+  共用。区间分隔箭头保持 antd 原生（字体箭头/自绘 SVG 尝试均回退）；真正问题是
+  **水平不居中**：antd 日期输入 flex:auto 等分拉伸 + 文本左对齐，箭头偏右——CSS 收缩
+  `.ant-picker-input`（flex:none, width:auto，input 10ch）使两侧间距对称；另补
+  `.ant-picker-range-separator` display:inline-flex（antd 的 align-items 原本不生效）
+  与 input min-width 72px 防窄屏压缩；标题操作区 `<Space>` 改 `page-actions`
+  （可换行））；
   前版 v1.73：与 PRD v1.5.76 对应；**关联价目下拉超出弹窗修复**——去掉
   popupMatchSelectWidth=false（下拉恢复输入框等宽、不溢出弹窗），候选模型名
   flex+overflowWrap 换行完整显示）；

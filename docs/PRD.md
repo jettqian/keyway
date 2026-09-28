@@ -7,13 +7,14 @@
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
-> - v1.5.77：**统计时间筛选修复**——① 窄屏下区间选择器被 flex 压缩、日期消失只剩
->   中间箭头线：标题操作区改用可换行的 page-actions（与其他页一致），CSS 给区间输入
->   加最小可读宽度；分隔符容器补 `display: inline-flex` 使 antd 失效的 align-items
->   对齐规则真正生效。区间分隔箭头保持 antd 原生样式（曾试字体箭头/自绘 SVG 三轮
->   均回退，不自定义标准组件展示细节）；② 时间范围选择不持久化、刷新即丢：新增
->   useStatsRange hook 写入 localStorage（kw-stats-range，YYYY-MM-DD 字符串 + 合法性
->   校验，非法回退近 7 天），统计页与管理端统计 Tab 共用
+> - v1.5.77：**统计时间筛选修复**——① 区间选择器中间箭头不在两日期正中（水平方向）：
+>   antd 默认两个日期输入等分拉伸（flex:auto），日期文本左对齐后箭头远离前一日期、
+>   贴近后一日期；CSS 把输入收缩到日期实际宽度（YYYY-MM-DD=10ch），左右间距对称、
+>   箭头精确居中，同时补分隔符容器 `display: inline-flex` 使 antd 失效的 align-items
+>   垂直对齐规则生效、输入保留最小可读宽度防窄屏压缩；② 时间范围选择不持久化、
+>   刷新即丢：新增 useStatsRange hook 写入 localStorage（kw-stats-range，YYYY-MM-DD
+>   字符串 + 合法性校验，非法回退近 7 天），统计页与管理端统计 Tab 共用。分隔箭头
+>   保持 antd 原生图标（曾试字体箭头/自绘 SVG 均回退，不自定义标准组件展示细节）
 > - v1.5.76：**关联价目下拉超出弹窗修复**——v1.5.73 的 popupMatchSelectWidth=false
 >   使下拉跟最宽候选项等宽、溢出弹窗边界。现恢复下拉=输入框宽度，长模型名在候选内
 >   **换行**显示（flex+overflowWrap，不截断），价格摘要右对齐不动
