@@ -7,15 +7,15 @@
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
-> - v1.5.77：**统计时间筛选修复**——① 区间选择器中间箭头显示发虚断裂：antd 默认
->   SwapRight SVG 图标线宽不足 1px，1x 桌面屏抗锯齿后成断裂残迹（高分屏不复现，故
->   初修未命中）；现以 `separator` prop 换字体渲染箭头（kw-range-sep， tertiary 色，
->   任何缩放系数下连贯清晰），并补分隔符容器 `display: inline-flex` 使 antd 失效的
->   align-items 真正垂直居中；② 窄屏下选择器被 flex 压缩、日期消失只剩箭头线：标题
->   操作区改用可换行的 page-actions（与其他页一致），CSS 给区间输入加最小可读宽度；
->   ③ 时间范围选择不持久化、刷新即丢：新增 useStatsRange hook 写入 localStorage
->   （kw-stats-range，YYYY-MM-DD 字符串 + 合法性校验，非法回退近 7 天），统计页与
->   管理端统计 Tab 共用
+> - v1.5.77：**统计时间筛选修复**——① 区间选择器中间箭头显示异常：antd 默认
+>   SwapRight SVG 图标线宽不足 1px，1x 桌面屏抗锯齿后断裂发虚；字体箭头又受平台
+>   字体基线影响垂直不居中。现以 `separator` prop 换**自绘描边箭头**（kw-range-sep：
+>   viewBox 几何居中保证垂直居中，1.5px 圆头描边保证 1x 屏连贯清晰），并补分隔符
+>   容器 `display: inline-flex` 使 antd 失效的 align-items 真正生效；② 窄屏下选择器
+>   被 flex 压缩、日期消失只剩箭头线：标题操作区改用可换行的 page-actions（与其他页
+>   一致），CSS 给区间输入加最小可读宽度；③ 时间范围选择不持久化、刷新即丢：新增
+>   useStatsRange hook 写入 localStorage（kw-stats-range，YYYY-MM-DD 字符串 + 合法性
+>   校验，非法回退近 7 天），统计页与管理端统计 Tab 共用
 > - v1.5.76：**关联价目下拉超出弹窗修复**——v1.5.73 的 popupMatchSelectWidth=false
 >   使下拉跟最宽候选项等宽、溢出弹窗边界。现恢复下拉=输入框宽度，长模型名在候选内
 >   **换行**显示（flex+overflowWrap，不截断），价格摘要右对齐不动

@@ -196,8 +196,9 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
 .ant-picker-range .ant-picker-input { min-width: 72px; }
 .ant-picker-range .ant-picker-range-separator { display: inline-flex; align-items: center; }
 
-/* 区间分隔符字体箭头（见 Stats.tsx rangeSeparator）：替代 1x 屏断裂发虚的 SVG 图标 */
-.kw-range-sep { color: var(--kw-tertiary); font-size: 16px; line-height: 1; user-select: none; }
+/* 区间分隔符自绘描边箭头（见 Stats.tsx rangeSeparator）：viewBox 几何居中 +
+   1.5px 圆头描边，任何平台/缩放系数下都垂直居中且连贯清晰 */
+.kw-range-sep { display: block; flex: none; color: var(--kw-tertiary); }
 
 /* 链路状态表：模型分组头行（表内二级标题，主题变量适配亮暗） */
 .links-group-header > td {
