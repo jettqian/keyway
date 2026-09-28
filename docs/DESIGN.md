@@ -3,11 +3,9 @@
 - 版本：v1.74（与 PRD v1.5.77 对应；**统计时间筛选修复**——新增 `web/src/statsRange.ts`
   的 `useStatsRange`：localStorage key `kw-stats-range` 存 `{start,end}`（YYYY-MM-DD），
   读取校验字符串/日期合法且 start≤end，否则回退默认近 7 天；Stats 页与管理端统计 Tab
-  共用。区间分隔箭头：antd 默认 SwapRight SVG 线宽 <1px，1x 屏抗锯齿断裂，改
-  `separator` prop 传自绘描边箭头 `rangeSeparator`（Stats.tsx 导出：viewBox 几何
-  居中 + 1.5px 圆头描边，kw-range-sep，tertiary 色）；`.ant-picker-range-separator`
-  补 `display: inline-flex` 使 antd 失效的 align-items 真正垂直居中，
-  `.ant-picker-input` min-width 72px 防窄屏压缩；标题操作区
+  共用。区间分隔箭头保持 antd 原生（字体箭头/自绘 SVG 三轮尝试均回退）；仅
+  `.ant-picker-range-separator` 补 `display: inline-flex` 使 antd 失效的 align-items
+  真正垂直居中，`.ant-picker-input` min-width 72px 防窄屏压缩；标题操作区
   `<Space>` 改 `page-actions`（可换行））；
   前版 v1.73：与 PRD v1.5.76 对应；**关联价目下拉超出弹窗修复**——去掉
   popupMatchSelectWidth=false（下拉恢复输入框等宽、不溢出弹窗），候选模型名

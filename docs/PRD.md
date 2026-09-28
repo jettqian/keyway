@@ -7,13 +7,11 @@
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
-> - v1.5.77：**统计时间筛选修复**——① 区间选择器中间箭头显示异常：antd 默认
->   SwapRight SVG 图标线宽不足 1px，1x 桌面屏抗锯齿后断裂发虚；字体箭头又受平台
->   字体基线影响垂直不居中。现以 `separator` prop 换**自绘描边箭头**（kw-range-sep：
->   viewBox 几何居中保证垂直居中，1.5px 圆头描边保证 1x 屏连贯清晰），并补分隔符
->   容器 `display: inline-flex` 使 antd 失效的 align-items 真正生效；② 窄屏下选择器
->   被 flex 压缩、日期消失只剩箭头线：标题操作区改用可换行的 page-actions（与其他页
->   一致），CSS 给区间输入加最小可读宽度；③ 时间范围选择不持久化、刷新即丢：新增
+> - v1.5.77：**统计时间筛选修复**——① 窄屏下区间选择器被 flex 压缩、日期消失只剩
+>   中间箭头线：标题操作区改用可换行的 page-actions（与其他页一致），CSS 给区间输入
+>   加最小可读宽度；分隔符容器补 `display: inline-flex` 使 antd 失效的 align-items
+>   对齐规则真正生效。区间分隔箭头保持 antd 原生样式（曾试字体箭头/自绘 SVG 三轮
+>   均回退，不自定义标准组件展示细节）；② 时间范围选择不持久化、刷新即丢：新增
 >   useStatsRange hook 写入 localStorage（kw-stats-range，YYYY-MM-DD 字符串 + 合法性
 >   校验，非法回退近 7 天），统计页与管理端统计 Tab 共用
 > - v1.5.76：**关联价目下拉超出弹窗修复**——v1.5.73 的 popupMatchSelectWidth=false
