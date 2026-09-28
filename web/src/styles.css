@@ -191,14 +191,10 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
 }
 
 /* 区间选择器：日期输入最小保持一个日期文本的宽度——窄屏下被 flex 压缩时
-   日期会整体消失只剩中间箭头线；同时修正分隔符容器：antd 只声明 align-items
-   未声明 display，规则不生效，箭头垂直方向易偏移 */
+   日期会整体消失只剩中间箭头线；分隔符容器补 display 使 antd 失效的
+   align-items 规则真正生效（箭头垂直居中） */
 .ant-picker-range .ant-picker-input { min-width: 72px; }
 .ant-picker-range .ant-picker-range-separator { display: inline-flex; align-items: center; }
-
-/* 区间分隔符自绘描边箭头（见 Stats.tsx rangeSeparator）：viewBox 几何居中 +
-   1.5px 圆头描边，任何平台/缩放系数下都垂直居中且连贯清晰 */
-.kw-range-sep { display: block; flex: none; color: var(--kw-tertiary); }
 
 /* 链路状态表：模型分组头行（表内二级标题，主题变量适配亮暗） */
 .links-group-header > td {
