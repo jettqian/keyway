@@ -1,6 +1,12 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.73（与 PRD v1.5.76 对应；**关联价目下拉超出弹窗修复**——去掉
+- 版本：v1.74（与 PRD v1.5.77 对应；**统计时间筛选修复**——新增 `web/src/statsRange.ts`
+  的 `useStatsRange`：localStorage key `kw-stats-range` 存 `{start,end}`（YYYY-MM-DD），
+  读取校验字符串/日期合法且 start≤end，否则回退默认近 7 天；Stats 页与管理端统计 Tab
+  共用。标题操作区 `<Space>` 改 `page-actions`（可换行），CSS：`.ant-picker-range
+  .ant-picker-input` min-width 72px 防日期被压缩消失，`.ant-picker-range-separator`
+  补 `display: inline-flex` 使 antd 失效的 align-items 真正垂直居中）；
+  前版 v1.73：与 PRD v1.5.76 对应；**关联价目下拉超出弹窗修复**——去掉
   popupMatchSelectWidth=false（下拉恢复输入框等宽、不溢出弹窗），候选模型名
   flex+overflowWrap 换行完整显示）；
   前版 v1.72：与 PRD v1.5.75 对应；**价目同步只保留官方厂商条目**——解析层白名单

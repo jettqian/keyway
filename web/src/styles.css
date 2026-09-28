@@ -190,6 +190,12 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
   .stat-strip .ant-statistic-content { font-size: 20px; }
 }
 
+/* 区间选择器：日期输入最小保持一个日期文本的宽度——窄屏下被 flex 压缩时
+   日期会整体消失只剩中间箭头线；同时修正分隔符容器：antd 只声明 align-items
+   未声明 display，规则不生效，箭头垂直方向易偏移 */
+.ant-picker-range .ant-picker-input { min-width: 72px; }
+.ant-picker-range .ant-picker-range-separator { display: inline-flex; align-items: center; }
+
 /* 链路状态表：模型分组头行（表内二级标题，主题变量适配亮暗） */
 .links-group-header > td {
   background: var(--kw-soft-bg) !important;

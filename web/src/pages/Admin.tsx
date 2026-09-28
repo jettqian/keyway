@@ -1,7 +1,6 @@
 import React from 'react'
 import { Tabs, Table, Form, Switch, Input, Button, message, Modal, Popconfirm, Tag, Space, Select, InputNumber, Typography, Radio, Tooltip, AutoComplete, Card, DatePicker, Statistic } from 'antd'
 import { SearchOutlined, ReloadOutlined, DownloadOutlined } from '@ant-design/icons'
-import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import {
   adminUsers,
@@ -38,6 +37,7 @@ import Money from '../components/Money'
 import ModelTags from '../components/ModelTags'
 import SourceTag from '../components/SourceTag'
 import { rangePresets } from './Stats'
+import { useStatsRange } from '../statsRange'
 
 const UsersTab: React.FC = () => {
   const { t } = useI18n()
@@ -848,7 +848,7 @@ const TemplatesTab: React.FC = () => {
 
 const StatsTab: React.FC = () => {
   const { t } = useI18n()
-  const [range, setRange] = React.useState<[Dayjs, Dayjs]>([dayjs().subtract(6, 'day'), dayjs()])
+  const [range, setRange] = useStatsRange()
   const [data, setData] = React.useState<StatsResponse | null>(null)
   const [links, setLinks] = React.useState<LinkStat[]>([])
   const [loading, setLoading] = React.useState(true)

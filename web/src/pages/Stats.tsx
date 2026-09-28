@@ -1,5 +1,5 @@
 import React from 'react'
-import { Button, Card, Col, DatePicker, Empty, Row, Select, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
+import { Button, Card, Col, DatePicker, Empty, Row, Select, Statistic, Table, Tag, Tooltip, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
@@ -9,6 +9,7 @@ import Money from '../components/Money'
 import LineUrl from '../components/LineUrl'
 import LinksTable from '../components/LinksTable'
 import { formatDateTime, fmtInt, fmtTokens } from '../format'
+import { useStatsRange } from '../statsRange'
 import { useI18n } from '../i18n'
 import type { DictKey } from '../i18n/zh'
 
@@ -28,7 +29,7 @@ export const rangePresets: { label: React.ReactNode; value: [Dayjs, Dayjs] }[] =
 
 const StatsPage: React.FC = () => {
   const { t } = useI18n()
-  const [range, setRange] = React.useState<[Dayjs, Dayjs]>([dayjs().subtract(6, 'day'), dayjs()])
+  const [range, setRange] = useStatsRange()
   const [tokenId, setTokenId] = React.useState<number | undefined>(undefined)
   const [tokens, setTokens] = React.useState<GatewayToken[]>([])
   const [data, setData] = React.useState<StatsResponse | null>(null)
@@ -92,7 +93,7 @@ const StatsPage: React.FC = () => {
     <div>
       <div className="page-heading">
         <div><h2>{t('stats.title')}</h2><p>{t('stats.subtitle')}</p></div>
-        <Space>
+        <div className="page-actions">
           <Select
             allowClear
             placeholder={t('stats.token')}
@@ -113,7 +114,7 @@ const StatsPage: React.FC = () => {
             allowClear={false}
           />
           <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>{t('stats.refresh')}</Button>
-        </Space>
+        </div>
       </div>
       <Card loading={loading} style={{ marginBottom: 16 }}>
         <div className="stat-strip">
