@@ -36,7 +36,7 @@ import LinksTable from '../components/LinksTable'
 import Money from '../components/Money'
 import ModelTags from '../components/ModelTags'
 import SourceTag from '../components/SourceTag'
-import { rangePresets } from './Stats'
+import { rangePresets, rangeSeparator } from './Stats'
 import { useStatsRange } from '../statsRange'
 
 const UsersTab: React.FC = () => {
@@ -887,6 +887,7 @@ const StatsTab: React.FC = () => {
           }}
           disabledDate={(d) => d.isAfter(dayjs(), 'day')}
           presets={rangePresets}
+          separator={rangeSeparator}
           allowClear={false}
         />
         <Space>

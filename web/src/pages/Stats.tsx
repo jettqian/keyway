@@ -27,6 +27,10 @@ export const rangePresets: { label: React.ReactNode; value: [Dayjs, Dayjs] }[] =
   { label: <LocaleText k="stats.last30Days" />, value: [dayjs().subtract(29, 'day'), dayjs()] },
 ]
 
+// 区间分隔符：antd 默认的 SwapRight SVG 线宽不足 1px，1x 屏抗锯齿后断裂发虚；
+// 改用字体箭头（字形经屏幕渲染优化，任何缩放系数下都连贯清晰），供本页与 Admin 页共享
+export const rangeSeparator = <span className="kw-range-sep">→</span>
+
 const StatsPage: React.FC = () => {
   const { t } = useI18n()
   const [range, setRange] = useStatsRange()
@@ -111,6 +115,7 @@ const StatsPage: React.FC = () => {
             }}
             disabledDate={(d) => d.isAfter(dayjs(), 'day')}
             presets={rangePresets}
+            separator={rangeSeparator}
             allowClear={false}
           />
           <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>{t('stats.refresh')}</Button>
