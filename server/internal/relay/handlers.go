@@ -177,9 +177,12 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 	view := s.breakerView(viable, probe.Model)
 	now := time.Now().Unix()
 	var (
-		lastStatus int
-		lastBody   []byte
-		lastErr    string
+		lastStatus     int
+		lastBody       []byte
+		lastErr        string
+		lastRetryAfter string // 上游 429/503 的 Retry-After（FR-R10）
+		lastSrc        string // 最后一次失败尝试的来源（渠道名·线路 host，FR-R10）
+		lastFused      bool   // 失败尝试发生时该渠道是否熔断中（FR-R10）
 	)
 	recorded := map[int64]bool{} // 熔断失败只按渠道记一次（matched+defaults 可能重复命中）
 	for _, rc := range viable {
@@ -205,6 +208,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, "/responses"), sendBody, probe.Stream)
 			if err != nil {
 				lastErr = err.Error()
+				lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(rc.Channel.ID)
 				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
 				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, err.Error(), reqStart)
 				continue
@@ -214,6 +218,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 				lastErr = "上游 /responses 返回 HTML（端点不存在）"
+				lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(rc.Channel.ID)
 				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, lastErr)
 				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, lastErr, reqStart)
 				continue
@@ -227,6 +232,10 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				resp.Body.Close()
 				lastErr = upstreamStatusError(resp.StatusCode, lastBody)
+				lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(rc.Channel.ID)
+				if resp.StatusCode == http.StatusTooManyRequests {
+					lastRetryAfter = resp.Header.Get("Retry-After")
+				}
 				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, lastErr, reqStart)
 				continue
 			}
@@ -235,6 +244,10 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				resp.Body.Close()
 				lastErr = upstreamStatusError(resp.StatusCode, lastBody)
+				lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(rc.Channel.ID)
+				if resp.StatusCode == http.StatusServiceUnavailable {
+					lastRetryAfter = resp.Header.Get("Retry-After")
+				}
 				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, fmt.Sprintf("上游 %d", resp.StatusCode))
 				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, resp.StatusCode, lastErr, reqStart)
 				continue
@@ -244,6 +257,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 				u, ttft, total, fate, summary, committed := s.streamResponse(c, a, "openai", resp, reqStart, 0, dialectResponses)
 				if !committed {
 					lastErr = summary
+					lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(rc.Channel.ID)
 					s.Routing.MarkChannelStatus(rc.Channel.ID, false, summary)
 					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, summary, reqStart)
 					continue
@@ -271,11 +285,15 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 		}
 	}
 	// 全部组合耗尽：每次失败尝试已逐条落日志，这里透传最后一次上游错误
+	// （v1.5.78 起附来源标注与 Retry-After，FR-R10）
 	if lastStatus > 0 {
-		respondRawOrConverted(c, "openai", lastStatus, lastBody, false)
+		respondRawOrConverted(c, "openai", lastStatus, lastBody, false, lastRetryAfter, lastSrc, lastFused)
 		return
 	}
 	msg := "全部上游不可达（responses 仅支持 openai 型渠道）"
+	if lastSrc != "" {
+		msg = srcTag(lastSrc, lastFused) + msg
+	}
 	if lastErr != "" {
 		msg += "：" + lastErr
 	}
@@ -399,7 +417,10 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		lastStatus     int
 		lastBody       []byte
 		lastErr        string
-		lastCrossProto bool // 最后一次失败尝试是否跨协议（决定错误体是否需要转换）
+		lastCrossProto bool   // 最后一次失败尝试是否跨协议（决定错误体是否需要转换）
+		lastRetryAfter string // 上游 429/503 的 Retry-After（透传给客户端正确退避，FR-R10）
+		lastSrc        string // 最后一次失败尝试的来源（渠道名·线路 host，FR-R10）
+		lastFused      bool   // 失败尝试发生时该渠道是否熔断中（旁路/试探，FR-R10）
 	)
 	// 熔断记录：按渠道分段，段落内全部尝试耗尽 → 记一次「渠道×模型」失败（FR-B1）
 	var (
@@ -439,6 +460,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastErr = err.Error()
 			lastCrossProto = cross
 			segErr = err.Error()
+			lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(a.rc.Channel.ID)
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
 			s.submitFailureLog(c, a, inbound, model, upstreamModel, http.StatusBadGateway, err.Error(), reqStart)
 			continue // 网络错误 → 下一组合
@@ -451,6 +473,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastErr = "上游返回 HTML（端点不存在）"
 			lastCrossProto = cross
 			segErr = lastErr
+			lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(a.rc.Channel.ID)
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, lastErr)
 			s.submitFailureLog(c, a, inbound, model, upstreamModel, http.StatusBadGateway, lastErr, reqStart)
 			continue
@@ -466,6 +489,10 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 			lastCrossProto = cross
 			segErr = upstreamStatusError(resp.StatusCode, lastBody)
+			lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(a.rc.Channel.ID)
+			if resp.StatusCode == http.StatusTooManyRequests {
+				lastRetryAfter = resp.Header.Get("Retry-After") // 透传给客户端正确退避（FR-R10）
+			}
 			resp.Body.Close()
 			s.submitFailureLog(c, a, inbound, model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
 			continue
@@ -477,6 +504,10 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastCrossProto = cross
 			resp.Body.Close()
 			segErr = upstreamStatusError(resp.StatusCode, lastBody)
+			lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(a.rc.Channel.ID)
+			if resp.StatusCode == http.StatusServiceUnavailable {
+				lastRetryAfter = resp.Header.Get("Retry-After")
+			}
 			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, fmt.Sprintf("上游 %d", resp.StatusCode))
 			s.submitFailureLog(c, a, inbound, model, upstreamModel, resp.StatusCode, upstreamStatusError(resp.StatusCode, lastBody), reqStart)
 			continue
@@ -497,6 +528,7 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			if !committed {
 				segErr = summary
 				lastErr = summary
+				lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(a.rc.Channel.ID)
 				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, summary)
 				s.submitFailureLog(c, a, inbound, model, upstreamModel, http.StatusBadGateway, summary, reqStart)
 				continue
@@ -527,11 +559,15 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 	closeSeg()
 
 	// 全部组合耗尽：每次失败尝试已逐条落日志，这里透传最后一次上游错误
+	// （v1.5.78 起附来源标注与 Retry-After，FR-R10）
 	if lastStatus > 0 {
-		respondRawOrConverted(c, inbound, lastStatus, lastBody, lastCrossProto)
+		respondRawOrConverted(c, inbound, lastStatus, lastBody, lastCrossProto, lastRetryAfter, lastSrc, lastFused)
 		return
 	}
 	msg := "全部上游不可达"
+	if lastSrc != "" {
+		msg = srcTag(lastSrc, lastFused) + msg
+	}
 	if lastErr != "" {
 		msg += "：" + lastErr
 	}
@@ -1179,21 +1215,26 @@ func respondProtocolError(c *gin.Context, inbound string, status int, msg string
 	respondOpenAIError(c, status, msg)
 }
 
-// respondRawOrConverted 上游错误透传（跨协议失败时才转换错误结构，同协议保持原文）
-func respondRawOrConverted(c *gin.Context, inbound string, status int, body []byte, crossProto bool) {
+// respondRawOrConverted 上游错误透传（跨协议失败时才转换错误结构，同协议保持原文）。
+// v1.5.78 起错误可识别（FR-R10）：① 上游 429/503 的 Retry-After 头透传（此前
+// 丢弃，客户端只能按默认策略盲退避）；② body 为 JSON 错误结构时 message 前缀
+// [keyway·渠道·线路(·熔断中)] 标注来源（非 JSON 结构保持原文不动）
+func respondRawOrConverted(c *gin.Context, inbound string, status int, body []byte, crossProto bool, retryAfter, src string, fused bool) {
 	if len(body) == 0 {
 		respondProtocolError(c, inbound, status, "上游错误（无响应体）")
 		return
 	}
+	if retryAfter != "" {
+		c.Header("Retry-After", retryAfter)
+	}
 	if crossProto {
 		if inbound == "anthropic" {
-			c.Data(status, "application/json", convert.OpenAIErrorToAnthropic(body))
-			return
+			body = convert.OpenAIErrorToAnthropic(body)
+		} else {
+			body = convert.AnthropicErrorToOpenAI(body)
 		}
-		c.Data(status, "application/json", convert.AnthropicErrorToOpenAI(body))
-		return
 	}
-	c.Data(status, "application/json", body)
+	c.Data(status, "application/json", annotateUpstreamError(body, src, fused))
 }
 
 // sniffUsage 从透传字节中嗅探 usage（尽力而为；兼容 SSE 行前缀）。

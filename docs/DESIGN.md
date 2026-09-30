@@ -1,6 +1,16 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.74（与 PRD v1.5.77 对应；**统计时间筛选修复**——新增 `web/src/statsRange.ts`
+- 版本：v1.75（与 PRD v1.5.78 对应；**错误透传可识别**——`respondRawOrConverted`
+  增 `retryAfter/src/fused` 参数：① 上游 429/503 的 Retry-After 头透传（此前
+  c.Data 只写状态码+体，头被丢弃，Agent 只能按默认策略盲退避）；② chat/responses
+  两管线各失败分支（网络错误/HTML 回退/密钥级 429/5xx/流式未提交）记录最后一次
+  失败尝试的来源 `attemptSrc`（渠道名·线路 host）与熔断态（`view.Open`——唯一候选
+  旁路/半开试探时为真），透传前 `annotateUpstreamError` 仅对 JSON 对象的
+  error.message/顶层 message 加前缀 `[keyway·渠道·线路(·熔断中)]`（UseNumber 保
+  数字精度；非 JSON/无 message 原样返回，不破坏透传语义）；「全部上游不可达」502
+  消息同前缀；errannotate_test.go 覆盖三种 JSON 形状、六类保持原文路径、Retry-After
+  空头不写）；
+  前版 v1.74：与 PRD v1.5.77 对应；**统计时间筛选修复**——新增 `web/src/statsRange.ts`
   的 `useStatsRange`：localStorage key `kw-stats-range` 存 `{start,end}`（YYYY-MM-DD），
   读取校验字符串/日期合法且 start≤end，否则回退默认近 7 天；Stats 页与管理端统计 Tab
   共用。区间分隔箭头保持 antd 原生（字体箭头/自绘 SVG 尝试均回退）；真正问题是
