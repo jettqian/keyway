@@ -18,8 +18,9 @@ import type {
   CatalogModel,
   Proxy,
   ProxyInput,
-  AdminSettings,
-  ExchangeRateSyncResult,
+   AdminSettings,
+   ExchangeRateSyncResult,
+   ExchangeRateInfo,
   PublicInfo,
   BreakerInfo,
   ConfigImportResult,
@@ -97,6 +98,8 @@ export const myStats = (q: StatsRange) =>
 // 渠道×模型链路状态（本人渠道；口径同统计——每次上游尝试各计一次）
 export const myStatsLinks = (q: StatsRange) =>
   get<{ links: LinkStat[] }>(`/api/stats/links?${qs(q as unknown as Record<string, unknown>)}`)
+// 当前生效汇率（USD→CNY）：费用估算人民币折算展示用
+export const exchangeRate = () => get<ExchangeRateInfo>('/api/exchange-rate')
 
 // ---------- 管理员 ----------
 export const adminUsers = () => get<{ users: User[] }>('/api/admin/users')

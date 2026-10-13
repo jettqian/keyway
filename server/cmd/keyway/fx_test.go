@@ -162,3 +162,53 @@ func Test汇率源全部失败时同步报错且不影响现有值(t *testing.T)
 		t.Fatalf("失败不应改库，实际 %q", v)
 	}
 }
+
+// Test汇率用户侧查询接口：费用估算人民币折算展示用的 GET /api/exchange-rate，
+// 回显当前生效值与元信息；未登录拒绝
+func Test汇率用户侧查询接口(t *testing.T) {
+	fx := mockFxSource(t, 6.99)
+	c := setupAdminApp(t, fx.URL)
+
+	var resp struct {
+		Rate      float64 `json:"rate"`
+		Mode      string  `json:"mode"`
+		Source    string  `json:"source"`
+		UpdatedAt string  `json:"updatedAt"`
+	}
+
+	// 缺省 manual/7.2
+	if w := c.do("GET", "/api/exchange-rate", nil, true); w.Code != 200 {
+		t.Fatalf("GET exchange-rate 失败: %d %s", w.Code, w.Body.String())
+	} else {
+		json.Unmarshal(w.Body.Bytes(), &resp)
+	}
+	if resp.Rate != 7.2 || resp.Mode != "manual" {
+		t.Fatalf("缺省应 manual/7.2，实际 %s/%.4f", resp.Mode, resp.Rate)
+	}
+
+	// 手动同步后回显新值与来源（模式仍 manual，来源为命中源）
+	if w := c.do("POST", "/api/admin/exchange-rate/sync", map[string]any{"apply": true}, true); w.Code != 200 {
+		t.Fatalf("手动同步失败: %d %s", w.Code, w.Body.String())
+	}
+	if w := c.do("GET", "/api/exchange-rate", nil, true); w.Code != 200 {
+		t.Fatalf("GET exchange-rate 失败: %d", w.Code)
+	} else {
+		resp = struct {
+			Rate      float64 `json:"rate"`
+			Mode      string  `json:"mode"`
+			Source    string  `json:"source"`
+			UpdatedAt string  `json:"updatedAt"`
+		}{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+	}
+	if resp.Rate != 6.99 || resp.Mode != "manual" || resp.Source != "frankfurter" || resp.UpdatedAt == "" {
+		t.Fatalf("同步后应 6.99/manual/frankfurter/有时间，实际 %.4f/%s/%s/%q",
+			resp.Rate, resp.Mode, resp.Source, resp.UpdatedAt)
+	}
+
+	// 未登录访问拒绝
+	anon := &ctx{e: c.e, store: c.store, pm: c.pm, jar: newSimpleJar()}
+	if w := anon.do("GET", "/api/exchange-rate", nil, false); w.Code != 401 {
+		t.Fatalf("未登录应 401，实际 %d", w.Code)
+	}
+}

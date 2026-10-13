@@ -8,6 +8,7 @@ import type { GatewayToken, LatestUsage, LinkStat, StatsResponse, StatsGroup } f
 import Money from '../components/Money'
 import LineUrl from '../components/LineUrl'
 import LinksTable from '../components/LinksTable'
+import { CurrencyToggle } from '../currency'
 import { formatDateTime, fmtInt, fmtTokens } from '../format'
 import { useStatsRange } from '../statsRange'
 import { useI18n } from '../i18n'
@@ -94,6 +95,7 @@ const StatsPage: React.FC = () => {
       <div className="page-heading">
         <div><h2>{t('stats.title')}</h2><p>{t('stats.subtitle')}</p></div>
         <div className="page-actions">
+          <CurrencyToggle />
           <Select
             allowClear
             placeholder={t('stats.token')}

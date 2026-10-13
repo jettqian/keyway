@@ -237,6 +237,12 @@ func lookupPricing(m map[string]store.ModelPricing, model, upstreamModel string)
 	return store.ModelPricing{}, false
 }
 
+// CurrentUsdCnyRate 当前生效的 USD→CNY 汇率（费用估算人民币折算展示用）；
+// 与计费同源，缺省/非法值回退 7.2
+func CurrentUsdCnyRate(db *gorm.DB) float64 {
+	return usdCNYRate(db)
+}
+
 // usdCNYRate 全局美元兑人民币汇率（settings.usd_cny_rate，默认 7.2）
 func usdCNYRate(db *gorm.DB) float64 {
 	var setting store.Setting

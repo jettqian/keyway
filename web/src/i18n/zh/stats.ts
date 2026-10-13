@@ -43,4 +43,7 @@ export default {
   'stats.best': '最优',
   'stats.groupMeta': '{channels} 个渠道 · {attempts} 次尝试 · 错误率 {rate}%',
   'stats.groupMetaNoRate': '{channels} 个渠道',
+  'stats.currencyTip': '费用估算展示货币；切换为 CNY 后按当前生效汇率折算（仅展示，统计口径不变）',
+  'stats.currencyCnyTip': '费用按 1 USD = {rate} CNY 折算（{source}，更新于 {time}）；价目单价与导出 CSV 仍为美元',
+  'stats.currencyManual': '固定值',
 }

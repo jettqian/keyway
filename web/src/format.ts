@@ -56,11 +56,11 @@ export interface CostParts {
   dec: string | null
 }
 
-// 费用估算分层：固定 4 位小数便于列内对比；非零但低于显示下限时用 <$0.0001，
-// 避免单条极小费用被 toFixed(4) 抹成 $0.0000 误读为分文未花
-export function fmtCostParts(value: number | null | undefined): CostParts | null {
+// 费用估算分层：固定 4 位小数便于列内对比；非零但低于显示下限时用 <¥0.0001（按
+// 传入货币符号），避免单条极小费用被 toFixed(4) 抹成 0.0000 误读为分文未花
+export function fmtCostParts(value: number | null | undefined, sym = '$'): CostParts | null {
   if (value == null || !Number.isFinite(value)) return null
-  if (value > 0 && value < 0.0001) return { sym: '<$', int: '0.0001', dec: null }
+  if (value > 0 && value < 0.0001) return { sym: `<${sym}`, int: '0.0001', dec: null }
   const [int, dec] = value.toFixed(4).split('.')
-  return { sym: '$', int, dec: dec ?? null }
+  return { sym, int, dec: dec ?? null }
 }

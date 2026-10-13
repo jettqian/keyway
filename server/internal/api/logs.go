@@ -116,6 +116,23 @@ func (s *Server) handleAdminStats(c *gin.Context) {
 	s.ok(c, st)
 }
 
+// handleExchangeRate GET /api/exchange-rate：当前生效的 USD→CNY 汇率及元信息，
+// 供前端费用估算人民币折算展示（mode/source/updatedAt 用于折算口径提示）
+func (s *Server) handleExchangeRate(c *gin.Context) {
+	mode, _ := s.Store.GetSetting(fxrate.KeyMode)
+	if mode != fxrate.ModeAuto {
+		mode = fxrate.ModeManual
+	}
+	source, _ := s.Store.GetSetting(fxrate.KeySource)
+	updatedAt, _ := s.Store.GetSetting(fxrate.KeyUpdatedAt)
+	s.ok(c, gin.H{
+		"rate":      usage.CurrentUsdCnyRate(s.Store.DB()),
+		"mode":      mode,
+		"source":    source,
+		"updatedAt": updatedAt,
+	})
+}
+
 // ---------- 渠道×模型链路状态（FR-B7） ----------
 
 // handleStatsLinks GET /api/stats/links：本人渠道的链路状态（统计页「链路状态」）

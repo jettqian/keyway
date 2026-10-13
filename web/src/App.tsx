@@ -11,13 +11,18 @@ import GuidePage from './pages/Guide'
 import LogsPage from './pages/Logs'
 import StatsPage from './pages/Stats'
 import AdminPage from './pages/Admin'
+import { CurrencyProvider } from './currency'
 
 const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/register', element: <RegisterPage /> },
   {
     path: '/',
-    element: <ConsoleLayout />,
+    element: (
+      <CurrencyProvider>
+        <ConsoleLayout />
+      </CurrencyProvider>
+    ),
     children: [
       { index: true, element: <Navigate to="/channels" replace /> },
       { path: 'keys', element: <KeysPage /> },

@@ -38,6 +38,7 @@ import ModelTags from '../components/ModelTags'
 import SourceTag from '../components/SourceTag'
 import { rangePresets } from './Stats'
 import { useStatsRange } from '../statsRange'
+import { CurrencyToggle } from '../currency'
 
 const UsersTab: React.FC = () => {
   const { t } = useI18n()
@@ -890,6 +891,7 @@ const StatsTab: React.FC = () => {
           allowClear={false}
         />
         <Space>
+          <CurrencyToggle />
           <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>{t('admin.refresh')}</Button>
           <Button icon={<DownloadOutlined />} href={exportUrl}>{t('admin.exportCsv')}</Button>
         </Space>

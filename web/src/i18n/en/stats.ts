@@ -42,4 +42,7 @@ export default {
   'stats.best': 'Best',
   'stats.groupMeta': '{channels} channels · {attempts} attempts · {rate}% error',
   'stats.groupMetaNoRate': '{channels} channels',
+  'stats.currencyTip': 'Display currency for estimated cost; CNY converts at the current rate (display only, stats remain USD-based)',
+  'stats.currencyCnyTip': 'Costs converted at 1 USD = {rate} CNY ({source}, updated {time}); unit prices and CSV export remain in USD',
+  'stats.currencyManual': 'manual',
 }

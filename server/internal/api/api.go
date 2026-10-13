@@ -193,6 +193,7 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/stats", s.handleStats)
 	r.GET("/stats/export", s.handleStatsExport)
 	r.GET("/stats/links", s.handleStatsLinks)
+	r.GET("/exchange-rate", s.handleExchangeRate)
 
 	r.GET("/config/export", s.handleConfigExport)
 	r.POST("/config/import", s.handleConfigImport)

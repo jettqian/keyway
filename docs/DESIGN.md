@@ -1,6 +1,14 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.75（与 PRD v1.5.78 对应；**错误透传可识别**——`respondRawOrConverted`
+- 版本：v1.76（与 PRD v1.5.79 对应；**费用估算按人民币显示**——新增用户侧会话接口
+  `GET /api/exchange-rate`（当前生效 USD→CNY 汇率 + mode/source/updatedAt 元信息，
+  `usage.CurrentUsdCnyRate` 与计费同源、缺省回退 7.2）；前端新增 `web/src/currency.tsx`：
+  货币上下文（localStorage `kw-currency` 记忆，默认 USD）+ 汇率模块级单次拉取缓存
+  （失败回退 USD 展示）+ `CurrencyToggle`（antd Segmented，统计页工具条与管理员
+  统计 Tab 各一处）；`Money` 组件 cost 口径随上下文按汇率折算（`fmtCostParts` 增
+  货币符号参数，低于下限时 `<¥0.0001`），price 口径恒 USD；仅展示层折算——存储/
+  统计/CSV 口径不变）；
+  前版 v1.75：与 PRD v1.5.78 对应；**错误透传可识别**——`respondRawOrConverted`
   增 `retryAfter/src/fused` 参数：① 上游 429/503 的 Retry-After 头透传（此前
   c.Data 只写状态码+体，头被丢弃，Agent 只能按默认策略盲退避）；② chat/responses
   两管线各失败分支（网络错误/HTML 回退/密钥级 429/5xx/流式未提交）记录最后一次
@@ -479,7 +487,8 @@ keyway/
 │       ├── fxrate/          # USD→CNY 汇率定时同步（多源回退）
 │       ├── usage/           # 异步日志写、价目、聚合查询
 │       └── webui/           # go:embed dist
-├── web/                     # Vite React 前端源码（src/i18n 中英字典、src/theme.tsx 亮暗主题）
+├── web/                     # Vite React 前端源码（src/i18n 中英字典、src/theme.tsx 亮暗主题、
+│                            #   src/currency.tsx 费用货币切换——USD/CNY 展示层折算，v1.5.79）
 ├── Dockerfile               # 三阶段：node 构建前端 → go 构建 → distroless
 ├── docker-compose.yml
 └── README.md
@@ -1338,6 +1347,12 @@ new-api 的已知语义（仅参考行为，代码自研）。
 - **手动同步**（`POST /api/admin/exchange-rate/sync`）：`apply=true` 拉取并立即写入
   （不区分模式，auto 模式「立即同步」按钮）；`apply=false` 仅预览返回
   （manual 模式「获取最新」填充表单，确认后随保存落库）。全部源失败返回 502。
+- **费用人民币展示**（v1.5.79，仅展示层）：`GET /api/exchange-rate`（会话鉴权）回显
+  `usage.CurrentUsdCnyRate`（与计费同源，缺省 7.2）+ mode/source/updatedAt；前端
+  `currency.tsx` 货币上下文——选择记忆于 localStorage（`kw-currency`），汇率模块级
+  缓存整个会话拉取一次（ConsoleLayout 挂 Provider 时触发，失败/未就绪回退 USD）；
+  `Money` cost 口径按 `USD × 汇率` 折算显示 ¥，价目（price 口径）与导出 CSV 恒 USD。
+  汇率随 24h 同步变化，历史区间折算统一用当前生效值（与 cny_ratio 渠道折算口径一致）。
   返回体含 `sourceUrl`（命中源请求地址）。
 - **写入**：`usd_cny_rate` + 元数据四键（`usd_cny_rate_source` 来源 /
   `usd_cny_rate_source_url` 命中源请求地址，manual 为空 /
@@ -1439,6 +1454,7 @@ GET /oauth/feishu/callback?code&state
 | GET /api/logs | 自己的日志（分页/过滤；`failed=1` 仅看失败——error 非空跨状态码，含流内失败行，v1.5.56） |
 | GET /api/stats | 自己的统计（含最近生效流量 recent：同渠道同模型去重后的最新 5 个组合，含实际线路 lineUrl/via；start/end 自定义时间窗，缺省 days） |
 | GET /api/stats/links | 本人渠道的渠道×模型链路状态（尝试口径聚合 + 熔断快照叠加，熔断中零尝试也展示；v1.44） |
+| GET /api/exchange-rate | 当前生效 USD→CNY 汇率与元信息（rate/mode/source/updatedAt，与计费同源；费用估算人民币折算展示用，v1.5.79） |
 | GET /api/config/export?secrets=1 | 导出本人用户配置（密钥池/渠道/令牌）为 JSON 附件：secrets=1 完整备份（含密钥值/令牌明文/代理明文），缺省纯结构；已吊销令牌不导出（v1.5.50，见 §11.3） |
 | POST /api/config/import | 合并导入用户配置文件（同名密钥复用、渠道/令牌新建加后缀、令牌按明文重建；单事务，返回计数与 warnings；4MB 上限） |
 | 管理员（AdminAuth）：/api/admin/users、/api/admin/settings、/api/admin/models

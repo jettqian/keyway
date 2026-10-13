@@ -268,6 +268,16 @@ export interface ExchangeRateSyncResult {
   updatedAt?: string
 }
 
+/** 当前生效汇率（费用估算人民币折算展示用；rate 与计费同源） */
+export interface ExchangeRateInfo {
+  rate: number
+  /** auto = 定时同步；manual = 固定值 */
+  mode: 'auto' | 'manual'
+  source?: string
+  /** RFC3339 */
+  updatedAt?: string
+}
+
 export interface PublicInfo {
   feishuEnabled: boolean
   registerMode: 'open' | 'invite' | 'closed'
