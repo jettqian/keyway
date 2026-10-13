@@ -3,7 +3,7 @@
 - 版本：v1.76（与 PRD v1.5.79 对应；**费用估算按人民币显示**——新增用户侧会话接口
   `GET /api/exchange-rate`（当前生效 USD→CNY 汇率 + mode/source/updatedAt 元信息，
   `usage.CurrentUsdCnyRate` 与计费同源、缺省回退 7.2）；前端新增 `web/src/currency.tsx`：
-  货币上下文（localStorage `kw-currency` 记忆，默认 USD）+ 汇率模块级单次拉取缓存
+  货币上下文（localStorage `kw-currency` 记忆，默认 CNY）+ 汇率模块级单次拉取缓存
   （失败回退 USD 展示）+ `CurrencyToggle`（antd Segmented，统计页工具条与管理员
   统计 Tab 各一处）；`Money` 组件 cost 口径随上下文按汇率折算（`fmtCostParts` 增
   货币符号参数，低于下限时 `<¥0.0001`），price 口径恒 USD；仅展示层折算——存储/

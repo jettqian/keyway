@@ -5,7 +5,7 @@ import type { ExchangeRateInfo } from './api/types'
 import { formatDateTime } from './format'
 import { useI18n } from './i18n'
 
-// 费用估算展示货币：usd（默认）/ cny（按当前生效汇率折算）。
+// 费用估算展示货币：cny（默认，按当前生效汇率折算）/ usd。
 // 仅展示层折算——存储、统计接口与导出 CSV 恒为 USD；价目单价（模型属性）不随切换
 export type Currency = 'usd' | 'cny'
 
@@ -33,14 +33,15 @@ interface CurrencyContextValue {
 }
 
 const CurrencyContext = React.createContext<CurrencyContextValue>({
-  currency: 'usd',
+  currency: 'cny',
   setCurrency: () => {},
   rate: null,
 })
 
 export const CurrencyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // 默认 CNY；仅显式选过 USD 的浏览器保持 USD（旧版存过 'cny' 或无记录均归 CNY）
   const [currency, setCurrencyState] = React.useState<Currency>(() =>
-    localStorage.getItem(STORAGE_KEY) === 'cny' ? 'cny' : 'usd',
+    localStorage.getItem(STORAGE_KEY) === 'usd' ? 'usd' : 'cny',
   )
   const [rate, setRate] = React.useState<ExchangeRateInfo | null>(rateCache)
 
