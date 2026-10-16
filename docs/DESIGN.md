@@ -545,6 +545,7 @@ CREATE TABLE channels (
   line_strategy TEXT NOT NULL DEFAULT 'auto',
   proxy_url_enc BLOB,                      -- 个人代理（可空）
   allow_public_proxy INTEGER NOT NULL DEFAULT 0,
+  mask_fingerprint INTEGER NOT NULL DEFAULT 0, -- FR-R11 指纹伪装：出站 OS 指纹头改写为 Windows 形态
   models_json TEXT NOT NULL, model_mapping_json TEXT DEFAULT '{}',
   forward_mode TEXT NOT NULL DEFAULT 'passthrough', -- passthrough | convert
   priority INTEGER NOT NULL DEFAULT 0,
@@ -793,6 +794,15 @@ graph LR
 请求 `claude-sonnet` 时，停用的渠道 C 会先被过滤；渠道 A 优先于渠道 B。渠道 A 在首字节
 前失败，才切换到渠道 B。透明转发模式不会执行协议转换，只有渠道高级设置启用 `convert`
 时才按渠道协议类型转换请求和响应。
+
+**出站请求头与指纹伪装（FR-R11，v1.5.80）**：`sendUpstream` 是全部端点共用的唯一出站口，
+普通请求头经 `copyForwardHeaders` 白名单外全量透传（仅剔除 authorization/x-api-key/host/
+content-length/connection/accept-encoding，认证头按渠道协议重写）。渠道 `mask_fingerprint=1`
+时在同一入口做 **OS 指纹头改写**：`x-stainless-os → Windows`、`x-stainless-arch → x64`、
+`sec-ch-ua-platform → "Windows"`，其余头（含 User-Agent 与其余 `x-stainless-*`）原样透传。
+定性依据（2026-10-16 真实 key 对照实验，co-cdn.yes.vg）：拦截面仅为 `x-stainless-os`
+（非 Windows 恒 503 "Service resources busy"、Windows 稳定 200、UA 无关）；剥离 SDK 头
+或改写 UA 会破坏 Claude Code 客户端特征、触发上游 preflight 400——**勿改为剥离实现**。
 
 ### 5.2 尝试计划与失败切换（FR-K5 / FR-S3 / FR-R2）
 

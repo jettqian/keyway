@@ -79,22 +79,24 @@ func (CatalogModel) TableName() string { return "catalog_models" }
 
 // Channel 用户渠道
 type Channel struct {
-	ID                   int64   `gorm:"column:id;primaryKey;autoIncrement"`
-	UserID               int64   `gorm:"column:user_id;not null;index:idx_channels_user,priority:1"`
-	CopiedFromTemplateID *int64  `gorm:"column:copied_from_template_id"` // 仅来源标记，不参与路由
-	Name                 string  `gorm:"column:name;not null"`
-	Type                 string  `gorm:"column:type;not null"`                           // openai|anthropic
-	BaseURLsJSON         string  `gorm:"column:base_urls_json;not null"`                 // ≤5
-	KeyIDsJSON           string  `gorm:"column:key_ids_json;not null"`                   // ≤5 有序
-	KeyStrategy          string  `gorm:"column:key_strategy;not null;default:'ordered'"` // ordered|round_robin
-	LineStrategy         string  `gorm:"column:line_strategy;not null;default:'auto'"`
-	ProxyURLEnc          []byte  `gorm:"column:proxy_url_enc"` // 个人代理（可空）
-	AllowPublicProxy     int     `gorm:"column:allow_public_proxy;not null;default:0"`
-	ModelsJSON           string  `gorm:"column:models_json;not null"`
-	ModelMappingJSON     string  `gorm:"column:model_mapping_json;default:'{}'"`
-	ForwardMode          string  `gorm:"column:forward_mode;not null;default:'passthrough'"` // passthrough|convert
-	Priority             int     `gorm:"column:priority;not null;default:0"`
-	PriceMultiplier      float64 `gorm:"column:price_multiplier;not null;default:1"` // 价格倍率：相对官方价的折扣（如 0.8 = 8 折）
+	ID                   int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID               int64  `gorm:"column:user_id;not null;index:idx_channels_user,priority:1"`
+	CopiedFromTemplateID *int64 `gorm:"column:copied_from_template_id"` // 仅来源标记，不参与路由
+	Name                 string `gorm:"column:name;not null"`
+	Type                 string `gorm:"column:type;not null"`                           // openai|anthropic
+	BaseURLsJSON         string `gorm:"column:base_urls_json;not null"`                 // ≤5
+	KeyIDsJSON           string `gorm:"column:key_ids_json;not null"`                   // ≤5 有序
+	KeyStrategy          string `gorm:"column:key_strategy;not null;default:'ordered'"` // ordered|round_robin
+	LineStrategy         string `gorm:"column:line_strategy;not null;default:'auto'"`
+	ProxyURLEnc          []byte `gorm:"column:proxy_url_enc"` // 个人代理（可空）
+	AllowPublicProxy     int    `gorm:"column:allow_public_proxy;not null;default:0"`
+	// 指纹伪装（FR-R11）：开启后出站剥离客户端 OS 指纹（UA 改写 + x-stainless-*/sec-ch-ua* 剔除）
+	MaskFingerprint  int     `gorm:"column:mask_fingerprint;not null;default:0"`
+	ModelsJSON       string  `gorm:"column:models_json;not null"`
+	ModelMappingJSON string  `gorm:"column:model_mapping_json;default:'{}'"`
+	ForwardMode      string  `gorm:"column:forward_mode;not null;default:'passthrough'"` // passthrough|convert
+	Priority         int     `gorm:"column:priority;not null;default:0"`
+	PriceMultiplier  float64 `gorm:"column:price_multiplier;not null;default:1"` // 价格倍率：相对官方价的折扣（如 0.8 = 8 折）
 	// 币种语义：usd = 直接乘官方 USD 价目（默认）；
 	// cny_ratio = 渠道按人民币计价（如 $1 实收 ¥X），统计时 USD 费用 = 官方价 × X ÷ 汇率
 	PricingMode string `gorm:"column:pricing_mode;not null;default:'usd'"`

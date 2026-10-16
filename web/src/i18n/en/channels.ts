@@ -50,6 +50,8 @@ export default {
   'channels.personalProxy': 'Personal Outbound Proxy',
   'channels.personalProxyExtra': 'Supports http or socks5; leave empty if no proxy is needed.',
   'channels.allowPublicProxy': 'Allow public proxies to take part in line optimization',
+  'channels.maskFingerprint': 'Mask client fingerprint',
+  'channels.maskFingerprintExtra': "Rewrite SDK OS fingerprints (x-stainless-os/arch, sec-ch-ua-platform) to Windows on outbound requests; all other headers pass through untouched — for upstreams that gate by client OS.",
   'channels.modelMapping': 'Model Mapping (request name → upstream name)',
   'channels.mappingFromPlaceholder': 'Requested model name',
   'channels.mappingToPlaceholder': 'Upstream model name',

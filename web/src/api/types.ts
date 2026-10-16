@@ -34,6 +34,7 @@ export interface Channel {
   lineStrategy: 'auto' | 'manual'
   proxyUrl?: string
   allowPublicProxy: boolean
+  maskFingerprint?: boolean
   models: string[]
   modelMapping: Record<string, string>
   forwardMode: 'passthrough' | 'convert'
@@ -57,6 +58,7 @@ export interface ChannelInput {
   lineStrategy: 'auto' | 'manual'
   proxyUrl?: string
   allowPublicProxy: boolean
+  maskFingerprint?: boolean
   models: string[]
   modelMapping: Record<string, string>
   forwardMode: 'passthrough' | 'convert'
