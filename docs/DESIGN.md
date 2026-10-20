@@ -1542,7 +1542,7 @@ warnings 清单 + 「刷新页面查看」。
 | KEYWAY_KEY_COOLDOWN_S | 60 | 429 默认冷却 |
 | KEYWAY_QUOTA_COOLDOWN_S | 3600 | 402 计费限额耗尽的密钥长冷却（秒，≤0 回落 3600）：限额多为天/周级，冷却期内该密钥不再首选（v1.48） |
 | KEYWAY_DEFAULT_MAX_TOKENS | 8192 | OI→AN 缺省 max_tokens |
-| KEYWAY_BODY_LIMIT_MB | 50 | 请求体上限 |
+| KEYWAY_BODY_LIMIT_MB | 50 | 请求体上限（docker-compose 部署放宽到 200） |
 | KEYWAY_RESPONSE_HEADER_TIMEOUT_S | 1800 | 上游响应头等待超时（秒），0=不限制；对齐 new-api `RELAY_RESPONSE_HEADER_TIMEOUT`。仅覆盖响应头阶段，流式 body 不受影响（不用 Client.Timeout 整体超时，避免切断长流式） |
 | KEYWAY_IDLE_STREAM_TIMEOUT_S | 300 | 流式空闲超时（秒，0 关闭）：上游持续无数据即发送保活注释并关闭上游止损；期间每 15s 向客户端发 SSE 注释 ping 防中间层断连 |
 | KEYWAY_LOG_RETENTION_DAYS | 30 | 日志保留期 |

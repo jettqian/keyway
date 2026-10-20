@@ -19,6 +19,9 @@ services:
       KEYWAY_PROBE_INTERVAL_MIN: "30"
       # 日志保留期（天）
       KEYWAY_LOG_RETENTION_DAYS: "30"
+      # 请求体上限（MB）。默认 50，过小的上限会在客户端携带大体积
+      # 图片/超长会话历史时返回 413，这里放宽到 200
+      KEYWAY_BODY_LIMIT_MB: "200"
     healthcheck:
       test: ["CMD", "/app/keyway", "-healthcheck"]
       interval: 30s
