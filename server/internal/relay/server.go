@@ -48,41 +48,31 @@ func NewServer(st *store.Store, secret string, a *auth.Service, r *routing.Servi
 	}
 }
 
-// hasChatGPTKey 渠道是否绑定 chatgpt 型密钥（混合绑定时也按需要处理）
-func hasChatGPTKey(rc *routing.ResolvedChannel) bool {
-	for _, k := range rc.Keys {
-		if k.Kind == store.KeyKindChatGPT {
-			return true
+// withoutChatGPTKeys 剔除候选渠道中的 chatgpt 密钥（ChatGPT 后端 responses-only，
+// chat/completions/messages 等端点对其必然失败），剔除后无密钥的渠道整体去掉。
+// 渠道保存已禁止混绑（v1.5.82），这里按密钥过滤兼顾存量混绑数据；返回副本，
+// 不改动调用方持有的 ResolvedChannel
+func withoutChatGPTKeys(rcs []*routing.ResolvedChannel) []*routing.ResolvedChannel {
+	out := make([]*routing.ResolvedChannel, 0, len(rcs))
+	for _, rc := range rcs {
+		keys := make([]*store.Key, 0, len(rc.Keys))
+		for _, k := range rc.Keys {
+			if k.Kind != store.KeyKindChatGPT {
+				keys = append(keys, k)
+			}
 		}
-	}
-	return false
-}
-
-// hasAPIKey 渠道是否绑定常规 API 密钥（chat/completions 等 ChatGPT 后端不支持的
-// 端点只对含常规密钥的渠道有意义）
-func hasAPIKey(rc *routing.ResolvedChannel) bool {
-	for _, k := range rc.Keys {
-		if k.Kind != store.KeyKindChatGPT {
-			return true
+		if len(keys) == 0 {
+			continue
 		}
+		if len(keys) == len(rc.Keys) {
+			out = append(out, rc)
+			continue
+		}
+		cp := *rc
+		cp.Keys = keys
+		out = append(out, &cp)
 	}
-	return false
-}
-
-// normalizeChatGPTResponses chatgpt 后端的请求规范化（FR-K11，就地上报畸形的
-// 403/400 前修正）：input 为字符串时转为标准 message 数组——ChatGPT 后端只收
-// 数组（官方 API 两种都收，字符串是合法入站形状，出站需展开）
-func normalizeChatGPTResponses(m map[string]any) {
-	if in, ok := m["input"].(string); ok {
-		m["input"] = []any{map[string]any{
-			"type": "message",
-			"role": "user",
-			"content": []any{map[string]any{
-				"type": "input_text",
-				"text": in,
-			}},
-		}}
-	}
+	return out
 }
 
 // ---------- 鉴权中间件 ----------

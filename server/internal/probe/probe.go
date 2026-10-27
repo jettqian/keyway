@@ -90,15 +90,23 @@ func hasChatGPTKey(rc *routing.ResolvedChannel) bool {
 	return false
 }
 
-// keyPlainFor 解析单个密钥的出站明文与账号 ID：api 密钥解密原值（accountID 空）；
-// chatgpt 密钥取当前有效 access_token（EnsureFresh，快过期自动刷新）
-func (e *Engine) keyPlainFor(k *store.Key) (plain, accountID string, err error) {
-	if k.Kind != store.KeyKindChatGPT || e.chatgpt == nil {
+// keyPlainFor 解析单个密钥发往 line 的出站明文与账号 ID：api 密钥解密原值
+// （accountID 空）；chatgpt 密钥只允许发往 ChatGPT 后端（防令牌外泄），取当前
+// 有效 access_token（EnsureFresh，快过期自动刷新）
+func (e *Engine) keyPlainFor(k *store.Key, line string) (plain, accountID string, err error) {
+	if k.Kind != store.KeyKindChatGPT {
 		plain, err = routing.DecodeKeyValue(e.secret, k)
 		return plain, "", err
 	}
-	tok, acct, ferr := e.chatgpt.EnsureFresh(k)
-	return tok, acct, ferr
+	if !chatgpt.IsBackendURL(line) {
+		return "", "", fmt.Errorf("%w（线路 %s）", chatgpt.ErrNotBackendURL, shortURL(line))
+	}
+	if e.chatgpt == nil {
+		return "", "", fmt.Errorf("ChatGPT 令牌管理器未初始化")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), probeWait)
+	defer cancel()
+	return e.chatgpt.EnsureFresh(ctx, k, nil)
 }
 
 // warmupInterval 预热节拍（分钟）；≤0 = 按需预热关闭（KEYWAY_PROBE_INTERVAL_MIN=0）
@@ -288,7 +296,7 @@ func (e *Engine) ProbeKeys(ch *store.Channel) ([]KeyResult, error) {
 	out := make([]KeyResult, len(rc.Keys))
 	var wg sync.WaitGroup
 	for i, k := range rc.Keys {
-		plain, accountID, err := e.keyPlainFor(k) // chatgpt 密钥取有效 access_token（FR-K12）
+		plain, accountID, err := e.keyPlainFor(k, line) // chatgpt 密钥取有效 access_token（FR-K12）
 		if err != nil {
 			out[i] = KeyResult{KeyID: k.ID, Name: k.Name, Error: err.Error()}
 			continue
@@ -360,7 +368,11 @@ func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, account
 		upstreamModel := routing.ApplyModelMapping(ch, m)
 		var shapeErrs []string
 		var last Result
-		for _, shape := range probeShapes(ch, m) {
+		shapes := probeShapes(ch, m)
+		if accountID != "" {
+			shapes = []string{"openai-responses"} // ChatGPT 后端 responses-only，其余形态必然失败
+		}
+		for _, shape := range shapes {
 			last = e.probeOne(ctx, ch, upstreamModel, keyPlain, accountID, line, proxyURL, via, shape, false)
 			if last.OK {
 				last.Model = m // 记录判定健康的模型（熔断恢复联动用）
@@ -410,7 +422,7 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 			"stream":            true,
 		}
 		if accountID != "" {
-			m["store"] = false // ChatGPT 后端要求（与真实转发一致，FR-K11）
+			chatgpt.PrepareRequest(m) // 与真实转发同一规范化（store:false、input 数组，FR-K11）
 		}
 		body, _ = json.Marshal(m)
 	} else {
@@ -443,7 +455,7 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 	} else {
 		req.Header.Set("Authorization", "Bearer "+keyPlain)
 		if accountID != "" {
-			req.Header.Set("chatgpt-account-id", accountID)
+			chatgpt.ApplyHeaders(req.Header, accountID)
 		}
 	}
 

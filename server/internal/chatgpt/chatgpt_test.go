@@ -1,6 +1,7 @@
 package chatgpt
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -134,7 +135,7 @@ func TestCompleteLoginCreatesChatGPTKey(t *testing.T) {
 	}
 	m.mu.Unlock()
 
-	k, info, err := m.CompleteLogin(7, redirectURI+"?code=good&state="+state, "")
+	k, info, err := m.CompleteLogin(context.Background(), 7, redirectURI+"?code=good&state="+state, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestCompleteLoginCreatesChatGPTKey(t *testing.T) {
 		t.Fatalf("Bundle 内容错误: %+v", b)
 	}
 	// state 一次性
-	if _, _, err := m.CompleteLogin(7, redirectURI+"?code=again&state="+state, ""); err == nil {
+	if _, _, err := m.CompleteLogin(context.Background(), 7, redirectURI+"?code=again&state="+state, ""); err == nil {
 		t.Fatal("state 复用应失败")
 	}
 	// 他人会话不可用
@@ -170,7 +171,7 @@ func TestCompleteLoginCreatesChatGPTKey(t *testing.T) {
 		}
 	}
 	m.mu.Unlock()
-	if _, _, err := m.CompleteLogin(7, redirectURI+"?code=x&state="+state, ""); err == nil {
+	if _, _, err := m.CompleteLogin(context.Background(), 7, redirectURI+"?code=x&state="+state, ""); err == nil {
 		t.Fatal("跨用户完成登录应失败")
 	}
 }
@@ -204,7 +205,7 @@ func TestEnsureFreshRefreshesNearExpiry(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			tok, _, err := m.EnsureFresh(k)
+			tok, _, err := m.EnsureFresh(context.Background(), k, nil)
 			results[i], errs[i] = tok, err
 		}(i)
 	}
@@ -259,7 +260,7 @@ func TestEnsureFreshValidTokenNoRefresh(t *testing.T) {
 	if err := st.DB().Create(k).Error; err != nil {
 		t.Fatal(err)
 	}
-	tok, acct, err := m.EnsureFresh(k)
+	tok, acct, err := m.EnsureFresh(context.Background(), k, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ func TestRefreshFailureMarksKeyError(t *testing.T) {
 	if err := st.DB().Create(k).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := m.EnsureFresh(k); err == nil {
+	if _, _, err := m.EnsureFresh(context.Background(), k, nil); err == nil {
 		t.Fatal("刷新失败应报错")
 	}
 	var fresh store.Key

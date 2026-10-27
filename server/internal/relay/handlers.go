@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"keyway/internal/breaker"
+	"keyway/internal/chatgpt"
 	"keyway/internal/convert"
 	"keyway/internal/httpx"
 	"keyway/internal/probe"
@@ -62,17 +63,13 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 			respondOpenAIError(c, http.StatusInternalServerError, err.Error())
 			return
 		}
-		candidates := append(matched, defaults...)
+		// chatgpt 后端无本端点（responses-only）：只用常规密钥
+		candidates := withoutChatGPTKeys(append(matched, defaults...))
 		// 协议不兼容的渠道必然不会尝试，先剔除再算熔断视图
 		// （否则"唯一可用渠道熔断 + 其余渠道不兼容"会被误判为存在可用候选）
-		// chatgpt 后端无 /chat/completions（responses-only）：绑纯 chatgpt 密钥的
-		// 渠道对本端点无意义，剔除（混合绑定的渠道仍可用其中常规密钥）
 		viable := make([]*routing.ResolvedChannel, 0, len(candidates))
 		for _, rc := range candidates {
 			if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
-				continue
-			}
-			if !hasAPIKey(rc) { // chatgpt 后端无本端点，纯 chatgpt 渠道剔除
 				continue
 			}
 			viable = append(viable, rc)
@@ -105,11 +102,11 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, segErr, reqStart)
 					continue
 				}
-				if isHTMLResponse(resp) {
-					// 上游 2xx 却返回 HTML（SPA 回退）：端点不存在，换组合
+				if isHTMLResponse(resp) || isHTMLBlock(resp) {
+					// 上游返回 HTML（2xx SPA 回退 / 边缘拦截页）：换组合
 					io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
-					segErr = "上游返回 HTML（端点不存在）"
+					segErr = htmlErrorSummary(resp, "")
 					s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, segErr, reqStart)
 					continue
 				}
@@ -203,15 +200,8 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			return
 		}
 		m["model"] = upstreamModel
-		// chatgpt 渠道兜底注入 store:false（ChatGPT 后端要求存储关闭；Codex 客户端
-		// 本就携带，仅对缺省的其他客户端生效，FR-K11）
-		if hasChatGPTKey(rc) {
-			if _, ok := m["store"]; !ok {
-				m["store"] = false
-			}
-			normalizeChatGPTResponses(m)
-		}
 		sendBody, _ := json.Marshal(m)
+		var chatgptBody []byte // chatgpt 密钥的规范化请求体（按需生成，同渠道复用）
 		tried := false
 		for _, a := range s.planFor(rc, probe.Model, view) {
 			if a.trial && !s.Breaker.ClaimHalfOpen(rc.Channel.ID, probe.Model) {
@@ -220,38 +210,47 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			tried = true
 			a.protocol = "openai"
 			a.request = c.Request
-			// chatgpt 后端端点无 /v1 段，纯追加拼接（/codex/responses，见
-			// httpx.UpstreamEndpointBare）；其余渠道维持 /v1 拼接逻辑
-			endpoint := httpx.UpstreamEndpoint(a.lineURL, "/responses")
-			if hasChatGPTKey(rc) {
-				endpoint = httpx.UpstreamEndpointBare(a.lineURL, "/responses")
+			// 按密钥决定出站形态：chatgpt 后端端点无 /v1 段（纯追加拼接
+			// /codex/responses），请求体需规范化（store:false、input 数组，FR-K11）；
+			// 常规密钥维持 /v1 拼接与原样请求体
+			endpoint, reqBody := httpx.UpstreamEndpoint(a.lineURL, "/responses"), sendBody
+			if a.key.Kind == store.KeyKindChatGPT {
+				if chatgptBody == nil {
+					cm := map[string]any{}
+					json.Unmarshal(sendBody, &cm)
+					chatgpt.PrepareRequest(cm)
+					chatgptBody, _ = json.Marshal(cm)
+				}
+				endpoint, reqBody = httpx.UpstreamEndpointBare(a.lineURL, "/responses"), chatgptBody
 			}
-			resp, _, err := s.sendUpstream(a, "POST", endpoint, sendBody, probe.Stream)
+			resp, _, err := s.sendUpstream(a, "POST", endpoint, reqBody, probe.Stream)
 			if err != nil {
 				lastErr = err.Error()
 				lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(rc.Channel.ID)
-				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
+				if !errors.Is(err, errKeyUnavailable) { // 凭据问题已记在密钥上，不污染渠道状态
+					s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
+				}
 				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, err.Error(), reqStart)
 				continue
 			}
-			if isHTMLResponse(resp) {
-				// 上游 2xx 却返回 HTML（SPA 回退）：该线路无 /responses 端点，换组合
+			if isHTMLResponse(resp) || isHTMLBlock(resp) {
+				// 上游返回 HTML（2xx SPA 回退 / 边缘拦截页）：线路问题而非密钥问题，换组合
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
-				lastErr = "上游 /responses 返回 HTML（端点不存在）"
+				lastErr = htmlErrorSummary(resp, "/responses ")
 				lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(rc.Channel.ID)
 				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, lastErr)
 				s.submitFailureLog(c, a, "openai", probe.Model, upstreamModel, http.StatusBadGateway, lastErr, reqStart)
 				continue
 			}
 			if keyLevelStatus(resp.StatusCode) {
-				if cool := s.keyErrorCooldown(resp); cool > 0 {
-					s.Routing.UpdateKeyCooldown(a.key.ID, cool)
-				}
-				s.Routing.MarkKeyError(a.key.ID, fmt.Sprintf("上游 %d", resp.StatusCode))
 				lastStatus = resp.StatusCode
 				lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				resp.Body.Close()
+				if cool := s.keyErrorCooldown(resp, lastBody, a.key); cool > 0 {
+					s.Routing.UpdateKeyCooldown(a.key.ID, cool)
+				}
+				s.Routing.MarkKeyError(a.key.ID, fmt.Sprintf("上游 %d", resp.StatusCode))
 				lastErr = upstreamStatusError(resp.StatusCode, lastBody)
 				lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(rc.Channel.ID)
 				if resp.StatusCode == http.StatusTooManyRequests {
@@ -326,6 +325,21 @@ func passthroughResponse(c *gin.Context, resp *http.Response) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
 	resp.Body.Close()
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+}
+
+// isHTMLBlock 上游以密钥级状态码（401/402/403/429）返回 text/html：边缘防护
+// 的拦截/质询页（如 Cloudflare managed challenge），与密钥无关——按线路问题
+// 换组合，不记密钥错误（否则逐把密钥撞同一个质询，错误还会落到无辜的密钥上）
+func isHTMLBlock(resp *http.Response) bool {
+	return keyLevelStatus(resp.StatusCode) && strings.Contains(resp.Header.Get("Content-Type"), "text/html")
+}
+
+// htmlErrorSummary HTML 响应的失败摘要；endpoint 为日志中的端点标注（可空）
+func htmlErrorSummary(resp *http.Response, endpoint string) string {
+	if isHTMLBlock(resp) {
+		return fmt.Sprintf("上游 %s返回 %d HTML（疑似边缘防护拦截/质询页）", endpoint, resp.StatusCode)
+	}
+	return fmt.Sprintf("上游 %s返回 HTML（端点不存在）", endpoint)
 }
 
 // isHTMLResponse 上游 2xx 却返回 text/html：多数为网关型上游的 SPA 回退
@@ -420,27 +434,12 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		respondProtocolError(c, inbound, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// chat/messages 端点 ChatGPT 后端不支持（responses-only，FR-K11）：只用常规密钥
+	matched, defaults = withoutChatGPTKeys(matched), withoutChatGPTKeys(defaults)
 	if len(matched) == 0 && len(defaults) == 0 {
 		respondProtocolError(c, inbound, http.StatusNotFound,
 			fmt.Sprintf("model %s 未命中任何渠道，请到控制台配置或设置默认渠道", model))
 		return
-	}
-	// chat/messages 端点 ChatGPT 后端不支持（responses-only，FR-K11）：绑纯 chatgpt
-	// 密钥的渠道必然失败，先剔除（混合绑定渠道保留，其常规密钥仍可服务本端点）
-	{
-		fm := make([]*routing.ResolvedChannel, 0, len(matched))
-		for _, rc := range matched {
-			if hasAPIKey(rc) {
-				fm = append(fm, rc)
-			}
-		}
-		fd := make([]*routing.ResolvedChannel, 0, len(defaults))
-		for _, rc := range defaults {
-			if hasAPIKey(rc) {
-				fd = append(fd, rc)
-			}
-		}
-		matched, defaults = fm, fd
 	}
 
 	view := s.breakerView(append(matched, defaults...), model)
@@ -499,16 +498,18 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 			lastCrossProto = cross
 			segErr = err.Error()
 			lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(a.rc.Channel.ID)
-			s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
+			if !errors.Is(err, errKeyUnavailable) { // 凭据问题已记在密钥上，不污染渠道状态
+				s.Routing.MarkChannelStatus(a.rc.Channel.ID, false, err.Error())
+			}
 			s.submitFailureLog(c, a, inbound, model, upstreamModel, http.StatusBadGateway, err.Error(), reqStart)
 			continue // 网络错误 → 下一组合
 		}
 
-		// 上游 2xx 却返回 HTML（SPA 回退）：端点不存在，换组合
-		if isHTMLResponse(resp) {
+		// 上游返回 HTML（2xx SPA 回退 / 边缘拦截页）：线路问题而非密钥问题，换组合
+		if isHTMLResponse(resp) || isHTMLBlock(resp) {
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
-			lastErr = "上游返回 HTML（端点不存在）"
+			lastErr = htmlErrorSummary(resp, "")
 			lastCrossProto = cross
 			segErr = lastErr
 			lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(a.rc.Channel.ID)
@@ -519,12 +520,12 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 
 		// 密钥级错误（鉴权/限流/计费限额）→ 换 key；429/402 设置冷却
 		if keyLevelStatus(resp.StatusCode) {
-			if cool := s.keyErrorCooldown(resp); cool > 0 {
+			lastStatus = resp.StatusCode
+			lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			if cool := s.keyErrorCooldown(resp, lastBody, a.key); cool > 0 {
 				s.Routing.UpdateKeyCooldown(a.key.ID, cool)
 			}
 			s.Routing.MarkKeyError(a.key.ID, fmt.Sprintf("上游 %d", resp.StatusCode))
-			lastStatus = resp.StatusCode
-			lastBody, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 			lastCrossProto = cross
 			segErr = upstreamStatusError(resp.StatusCode, lastBody)
 			lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(a.rc.Channel.ID)
@@ -677,28 +678,46 @@ func ensureIncludeUsage(m map[string]any) {
 	m["stream_options"] = map[string]any{"include_usage": true}
 }
 
+// errKeyUnavailable 密钥凭据当前不可用（chatgpt 令牌刷新失败/退避中、令牌拒绝发往
+// 非 ChatGPT 后端）：属密钥维度问题，调用方换下一组合但不记渠道错误
+var errKeyUnavailable = errors.New("密钥凭据不可用")
+
 // sendUpstream 发送上游请求（含鉴权头、代理客户端、超时）；
-// kind=chatgpt 密钥解析当前有效 access_token 并附加 chatgpt-account-id（FR-K11）
+// kind=chatgpt 密钥：只允许发往 ChatGPT 后端（防令牌外泄到第三方上游），解析
+// 当前有效 access_token（令牌刷新走本组合同一代理路径），附加 chatgpt-account-id
+// 与 Codex 协议头（FR-K11）
 func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, stream bool) (*http.Response, string, error) {
-	keyPlain, err := routing.DecodeKeyValue(s.Secret, a.key)
-	if err != nil {
-		return nil, "", err
-	}
-	chatgptAccountID := ""
-	if a.key.Kind == store.KeyKindChatGPT {
-		if s.ChatGPT == nil {
-			return nil, "", errors.New("chatgpt 密钥不可用（令牌管理器未初始化）")
-		}
-		token, accountID, ferr := s.ChatGPT.EnsureFresh(a.key)
-		if ferr != nil {
-			return nil, "", fmt.Errorf("获取 ChatGPT 有效令牌失败: %w", ferr)
-		}
-		keyPlain = token
-		chatgptAccountID = accountID
-	}
 	ctx := context.Background()
 	if a.request != nil {
 		ctx = a.request.Context()
+	}
+	var keyPlain, chatgptAccountID string
+	if a.key.Kind == store.KeyKindChatGPT {
+		if !chatgpt.IsBackendURL(url) {
+			return nil, "", fmt.Errorf("%w：%v（拒绝发往 %s）", errKeyUnavailable, chatgpt.ErrNotBackendURL, shortURL(url))
+		}
+		if s.ChatGPT == nil {
+			return nil, "", fmt.Errorf("%w：令牌管理器未初始化", errKeyUnavailable)
+		}
+		var refreshClient *http.Client // 直连 = 管理器默认客户端（尊重 HTTPS_PROXY）
+		if a.proxyURL != "" {
+			c, err := s.getClient(a.proxyURL)
+			if err != nil {
+				return nil, "", err
+			}
+			refreshClient = c
+		}
+		token, accountID, ferr := s.ChatGPT.EnsureFresh(ctx, a.key, refreshClient)
+		if ferr != nil {
+			return nil, "", fmt.Errorf("%w：获取 ChatGPT 有效令牌失败: %v", errKeyUnavailable, ferr)
+		}
+		keyPlain, chatgptAccountID = token, accountID
+	} else {
+		plain, err := routing.DecodeKeyValue(s.Secret, a.key)
+		if err != nil {
+			return nil, "", err
+		}
+		keyPlain = plain
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(sendBody))
 	if err != nil {
@@ -728,14 +747,7 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 		req.Header.Set("Accept", "text/event-stream")
 	}
 	if chatgptAccountID != "" {
-		req.Header.Set("chatgpt-account-id", chatgptAccountID)
-		// 对齐 Codex CLI 恒带头（客户端已带则透传原值，仅缺省补齐）
-		if req.Header.Get("OpenAI-Beta") == "" {
-			req.Header.Set("OpenAI-Beta", "responses=experimental")
-		}
-		if req.Header.Get("originator") == "" {
-			req.Header.Set("originator", "codex_cli_rs")
-		}
+		chatgpt.ApplyHeaders(req.Header, chatgptAccountID)
 	}
 	client, err := s.getClient(a.proxyURL)
 	if err != nil {
@@ -1233,19 +1245,34 @@ func keyLevelStatus(code int) bool {
 // keyErrorCooldown 密钥级错误的冷却秒数：429 按 Retry-After 头（缺省
 // KEYWAY_KEY_COOLDOWN_S）；402 计费限额耗尽为长冷却 KEYWAY_QUOTA_COOLDOWN_S
 // （限额多为天/周级，短期内重试同一把 key 必然失败；≤0 回落 3600）；
+// chatgpt 密钥的 429 无 Retry-After 时按错误体的订阅额度重置时间冷却（Plus 周/
+// 5 小时限额，60s 冷却会让耗尽的账号每分钟被白打一次），无重置时间按 402 长冷却；
 // 401/403 不冷却（换 key 即可）
-func (s *Server) keyErrorCooldown(resp *http.Response) int64 {
+func (s *Server) keyErrorCooldown(resp *http.Response, body []byte, k *store.Key) int64 {
+	if resp.StatusCode == http.StatusTooManyRequests && k != nil && k.Kind == store.KeyKindChatGPT &&
+		resp.Header.Get("Retry-After") == "" {
+		if sec, ok := chatgpt.UsageLimitReset(body); ok {
+			if sec > 0 {
+				return sec
+			}
+			return s.quotaCooldown()
+		}
+	}
 	switch resp.StatusCode {
 	case http.StatusTooManyRequests:
 		return int64(parseRetryAfter(resp.Header.Get("Retry-After")))
 	case http.StatusPaymentRequired:
-		cool := s.Cfg.QuotaCooldownSec
-		if cool <= 0 {
-			cool = 3600
-		}
-		return int64(cool)
+		return s.quotaCooldown()
 	}
 	return 0
+}
+
+// quotaCooldown 额度耗尽类长冷却（KEYWAY_QUOTA_COOLDOWN_S，≤0 回落 3600）
+func (s *Server) quotaCooldown() int64 {
+	if s.Cfg.QuotaCooldownSec <= 0 {
+		return 3600
+	}
+	return int64(s.Cfg.QuotaCooldownSec)
 }
 
 func parseRetryAfter(v string) int {

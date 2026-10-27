@@ -23,14 +23,14 @@ import (
 const configImportMaxBytes = 4 << 20
 
 // configExportFile 导出文件契约（version 1）：
-// - 密钥以名称为引用键（每用户内唯一，跨实例可读），渠道的密钥绑定导出为 keyNames
-// - 渠道以文件内 id（导出时的 DB id）为引用键，供令牌的渠道绑定重映射
-// - mode 仅作信息标注；导入按字段存在性自适应（value/plaintext/proxyUrl 缺失即
-//   按结构处理），因此同一文件允许混合（如含密钥值但不含令牌明文）
+//   - 密钥以名称为引用键（每用户内唯一，跨实例可读），渠道的密钥绑定导出为 keyNames
+//   - 渠道以文件内 id（导出时的 DB id）为引用键，供令牌的渠道绑定重映射
+//   - mode 仅作信息标注；导入按字段存在性自适应（value/plaintext/proxyUrl 缺失即
+//     按结构处理），因此同一文件允许混合（如含密钥值但不含令牌明文）
 type configExportFile struct {
-	App        string             `json:"app"`      // "keyway"
-	Format     string             `json:"format"`   // "user-config"
-	Version    int                `json:"version"`  // 1
+	App        string             `json:"app"`     // "keyway"
+	Format     string             `json:"format"`  // "user-config"
+	Version    int                `json:"version"` // 1
 	ExportedAt int64              `json:"exportedAt"`
 	Mode       string             `json:"mode"` // full | structure
 	Keys       []configExportKey  `json:"keys"`
@@ -72,23 +72,25 @@ type configExportTok struct {
 	ModelScope   string  `json:"modelScope,omitempty"`
 	ExpiresAt    *int64  `json:"expiresAt"`
 	Restricted   bool    `json:"restricted"`
-	ChannelIDs   []int64 `json:"channelIds"`   // 引用 channels[].id（文件内）
-	ChannelOrder []int64 `json:"channelOrder"` // 同上
+	ChannelIDs   []int64 `json:"channelIds"`          // 引用 channels[].id（文件内）
+	ChannelOrder []int64 `json:"channelOrder"`        // 同上
 	Plaintext    string  `json:"plaintext,omitempty"` // 仅完整导出
 }
 
 // configImportResult 导入结果摘要（前端展示计数与警告）
 type configImportResult struct {
-	KeysCreated     int      `json:"keysCreated"`
-	KeysReused      int      `json:"keysReused"`
-	KeysMissing     int      `json:"keysMissing"`
-	ChannelsCreated int      `json:"channelsCreated"`
-	ChannelsReused  int      `json:"channelsReused"`
-	ChannelsDrafted int      `json:"channelsDrafted"`
-	ChannelsSkipped int      `json:"channelsSkipped"`
-	TokensCreated   int      `json:"tokensCreated"`
-	TokensSkipped   int      `json:"tokensSkipped"`
-	Warnings        []string `json:"warnings"`
+	KeysCreated int `json:"keysCreated"`
+	KeysReused  int `json:"keysReused"`
+	KeysMissing int `json:"keysMissing"`
+	// KeysChatGPTSkipped ChatGPT 账号密钥条目（令牌不随配置迁移，v1.5.82）
+	KeysChatGPTSkipped int      `json:"keysChatgptSkipped"`
+	ChannelsCreated    int      `json:"channelsCreated"`
+	ChannelsReused     int      `json:"channelsReused"`
+	ChannelsDrafted    int      `json:"channelsDrafted"`
+	ChannelsSkipped    int      `json:"channelsSkipped"`
+	TokensCreated      int      `json:"tokensCreated"`
+	TokensSkipped      int      `json:"tokensSkipped"`
+	Warnings           []string `json:"warnings"`
 }
 
 func (r *configImportResult) warn(format string, args ...any) {
@@ -114,7 +116,9 @@ func (s *Server) handleConfigExport(c *gin.Context) {
 		k := &keys[i]
 		keyNameByID[k.ID] = k.Name
 		ek := configExportKey{Name: k.Name, Note: k.Note, Status: k.Status, Kind: k.Kind}
-		if secrets {
+		// ChatGPT 账号令牌不随完整导出外带：两个实例持有同一组令牌会轮流轮换
+		// refresh_token，必有一方失效；目标实例需重新登录（v1.5.82）
+		if secrets && k.Kind != store.KeyKindChatGPT {
 			if plain, err := crypto.Decrypt(s.Secret, crypto.PurposeKey, k.ValueEnc); err == nil {
 				ek.Value = string(plain)
 			}
@@ -220,11 +224,12 @@ func keyKindOrAPI(kind string) string {
 }
 
 // handleConfigImport 导入用户配置（合并模式，重复导入幂等）：
-// - 密钥：同名复用现有（不覆盖值）；含明文值且无同名的创建；无值且无同名的悬空
-// - 渠道：同名跳过复用（不新建副本，令牌绑定重映射到现有渠道）；无同名的创建，
-//   密钥绑定按名称重映射，全部悬空的渠道以草稿（停用）导入，绑定密钥后手动启用
-// - 令牌：同名跳过；无同名的创建——含明文的按明文重建（实例迁移后 Agent 零改配，
-//   key_hash 全局唯一，他人持有同值令牌时跳过），无明文的随机签发新值
+//   - 密钥：同名复用现有（不覆盖值）；含明文值且无同名的创建；无值且无同名的悬空
+//   - 渠道：同名跳过复用（不新建副本，令牌绑定重映射到现有渠道）；无同名的创建，
+//     密钥绑定按名称重映射，全部悬空的渠道以草稿（停用）导入，绑定密钥后手动启用
+//   - 令牌：同名跳过；无同名的创建——含明文的按明文重建（实例迁移后 Agent 零改配，
+//     key_hash 全局唯一，他人持有同值令牌时跳过），无明文的随机签发新值
+//
 // 整个导入在单事务内执行，任一硬错误整体回滚；条目级问题跳过并记入 warnings
 func (s *Server) handleConfigImport(c *gin.Context) {
 	u := currentUser(c)
@@ -282,8 +287,10 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 		return err
 	}
 	keyIDByName := map[string]int64{}
+	keyKindByID := map[int64]string{} // 渠道绑定校验用（同名复用的本地密钥可能是 chatgpt 型）
 	for i := range existingKeys {
 		keyIDByName[existingKeys[i].Name] = existingKeys[i].ID
+		keyKindByID[existingKeys[i].ID] = existingKeys[i].Kind
 	}
 	for _, ek := range in.Keys {
 		name := trimOrEmpty(ek.Name)
@@ -293,6 +300,12 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 		}
 		if _, exists := keyIDByName[name]; exists {
 			res.KeysReused++ // 同名复用，不覆盖现有值
+			continue
+		}
+		if keyKindOrAPI(ek.Kind) == store.KeyKindChatGPT {
+			// ChatGPT 账号不按令牌导入（同一组令牌被两个实例轮换必有一方失效），
+			// 含 v1.5.81 导出的带令牌文件
+			res.KeysChatGPTSkipped++
 			continue
 		}
 		if trimOrEmpty(ek.Value) == "" {
@@ -313,10 +326,14 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 			return fmt.Errorf("创建密钥「%s」失败: %w", name, err)
 		}
 		keyIDByName[name] = k.ID
+		keyKindByID[k.ID] = k.Kind
 		res.KeysCreated++
 	}
 	if res.KeysMissing > 0 {
 		res.warn("%d 个密钥条目不含明文值（纯结构导出），未创建", res.KeysMissing)
+	}
+	if res.KeysChatGPTSkipped > 0 {
+		res.warn("%d 个 ChatGPT 账号密钥未导入（令牌不随配置迁移），请在本实例重新登录后绑定渠道", res.KeysChatGPTSkipped)
 	}
 
 	// 2. 渠道（同名跳过复用：重复导入幂等，不产生副本）
@@ -382,6 +399,15 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 			continue
 		}
 		if msg := validatePersonalProxy(ci.ProxyURL); msg != "" {
+			res.ChannelsSkipped++
+			res.warn("渠道「%s」校验失败已跳过：%s", name, msg)
+			continue
+		}
+		kinds := make(map[int64]string, len(keyIDs))
+		for _, id := range keyIDs {
+			kinds[id] = keyKindByID[id]
+		}
+		if msg := validateKeyBinding(kinds, nonEmpty(ci.BaseURLs)); msg != "" {
 			res.ChannelsSkipped++
 			res.warn("渠道「%s」校验失败已跳过：%s", name, msg)
 			continue

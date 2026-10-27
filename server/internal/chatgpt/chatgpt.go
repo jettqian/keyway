@@ -10,6 +10,7 @@
 package chatgpt
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -30,6 +31,9 @@ import (
 var (
 	AuthorizeURL = "https://auth.openai.com/oauth/authorize"
 	TokenURL     = "https://auth.openai.com/oauth/token"
+	// BackendHosts ChatGPT 后端允许的主机名：chatgpt 密钥的令牌只允许发往这些主机
+	// （渠道绑定校验 + 出站兜底，v1.5.82）；测试可覆盖为本地 httptest 主机
+	BackendHosts = []string{"chatgpt.com"}
 )
 
 const (
@@ -41,9 +45,20 @@ const (
 	refreshMargin = 5 * time.Minute
 	// pendingTTL 待完成登录会话有效期（粘贴回调地址的人工窗口）
 	pendingTTL = 10 * time.Minute
+	// maxPendingPerUser 单用户待完成登录会话上限（超出淘汰最早的，防内存表被刷满）
+	maxPendingPerUser = 5
 	// tokenHTTPTimeout 令牌交换/刷新请求超时
 	tokenHTTPTimeout = 30 * time.Second
+	// refreshRetryBackoff 刷新暂时失败（网络/令牌端点 5xx）后的退避：期内直接返回
+	// 上次错误，不再发起网络请求——否则令牌端点不可达时每个请求都要卡满超时
+	refreshRetryBackoff = time.Minute
+	// refreshDeadBackoff 令牌端点明确拒绝（4xx，如 invalid_grant）后的退避：
+	// refresh_token 已失效，只能重新登录，长退避避免反复打令牌端点
+	refreshDeadBackoff = time.Hour
 )
+
+// ErrNotBackendURL chatgpt 令牌被要求发往非 ChatGPT 后端主机（拒绝发送，防令牌外泄）
+var ErrNotBackendURL = errors.New("ChatGPT 账号令牌只允许发往 ChatGPT 后端")
 
 // Bundle keys.value_enc（kind=chatgpt）的明文结构
 type Bundle struct {
@@ -72,7 +87,8 @@ type Manager struct {
 	mu        sync.Mutex
 	pending   map[string]pendingLogin // state → 待完成会话（一次性，TTL 过期清理）
 	refreshMu sync.Mutex
-	refreshes map[int64]*refreshCall // 按密钥 ID singleflight
+	refreshes map[int64]*refreshCall   // 按密钥 ID singleflight
+	failures  map[int64]refreshFailure // 按密钥 ID 的刷新失败退避
 }
 
 type pendingLogin struct {
@@ -81,10 +97,16 @@ type pendingLogin struct {
 	ExpiresAt time.Time
 }
 
+// refreshCall 一次进行中的刷新；done 关闭后 bundle/err 可读
 type refreshCall struct {
-	wg     sync.WaitGroup
+	done   chan struct{}
 	bundle Bundle
 	err    error
+}
+
+type refreshFailure struct {
+	until time.Time
+	err   error
 }
 
 // NewManager 构造管理器
@@ -95,7 +117,82 @@ func NewManager(st *store.Store, secret string) *Manager {
 		client:    &http.Client{Timeout: tokenHTTPTimeout},
 		pending:   map[string]pendingLogin{},
 		refreshes: map[int64]*refreshCall{},
+		failures:  map[int64]refreshFailure{},
 	}
+}
+
+// ---------- 后端识别与请求规范化 ----------
+
+// IsBackendURL 地址是否指向 ChatGPT 后端（https + BackendHosts 内的主机名；
+// 测试覆盖的本地主机允许 http）
+func IsBackendURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, h := range BackendHosts {
+		if host == h {
+			return u.Scheme == "https" || host == "127.0.0.1" || host == "localhost"
+		}
+	}
+	return false
+}
+
+// PrepareRequest ChatGPT 后端的 Responses 请求体规范化（就地修改）：
+//   - 缺省 store 时补 store:false（后端要求存储关闭；Codex 客户端本就携带）；
+//   - input 为字符串时展开为标准 message 数组（后端只收数组，官方 API 两种都收）
+func PrepareRequest(m map[string]any) {
+	if _, ok := m["store"]; !ok {
+		m["store"] = false
+	}
+	if in, ok := m["input"].(string); ok {
+		m["input"] = []any{map[string]any{
+			"type": "message",
+			"role": "user",
+			"content": []any{map[string]any{
+				"type": "input_text",
+				"text": in,
+			}},
+		}}
+	}
+}
+
+// ApplyHeaders 出站 ChatGPT 后端的必需请求头：chatgpt-account-id 恒设；Codex
+// 协议头（OpenAI-Beta、originator）仅缺省时补齐——客户端已带则透传原值，不改写
+// 客户端已有的任何头（非 Codex 客户端直连后端的功能必需项，不做指纹伪装）
+func ApplyHeaders(h http.Header, accountID string) {
+	h.Set("chatgpt-account-id", accountID)
+	if h.Get("OpenAI-Beta") == "" {
+		h.Set("OpenAI-Beta", "responses=experimental")
+	}
+	if h.Get("originator") == "" {
+		h.Set("originator", "codex_cli_rs")
+	}
+}
+
+// UsageLimitReset 解析 429 错误体里的订阅额度重置时间（秒）。
+// ok=true 表示这是订阅额度耗尽（error.type=usage_limit_reached）；
+// seconds 优先取 resets_in_seconds，其次 resets_at（unix 秒）换算；都缺省时为 0，
+// 由调用方回落长冷却
+func UsageLimitReset(body []byte) (seconds int64, ok bool) {
+	var e struct {
+		Error struct {
+			Type            string `json:"type"`
+			ResetsInSeconds int64  `json:"resets_in_seconds"`
+			ResetsAt        int64  `json:"resets_at"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &e) != nil || e.Error.Type != "usage_limit_reached" {
+		return 0, false
+	}
+	if e.Error.ResetsInSeconds > 0 {
+		return e.Error.ResetsInSeconds, true
+	}
+	if d := e.Error.ResetsAt - time.Now().Unix(); e.Error.ResetsAt > 0 && d > 0 {
+		return d, true
+	}
+	return 0, true
 }
 
 // ---------- 登录流程 ----------
@@ -115,6 +212,7 @@ func (m *Manager) StartLogin(userID int64) (string, error) {
 
 	m.mu.Lock()
 	m.gcLocked()
+	m.capUserPendingLocked(userID)
 	m.pending[state] = pendingLogin{Verifier: verifier, UserID: userID, ExpiresAt: time.Now().Add(pendingTTL)}
 	m.mu.Unlock()
 
@@ -132,7 +230,7 @@ func (m *Manager) StartLogin(userID int64) (string, error) {
 // CompleteLogin 用用户粘贴的回调地址完成登录并创建 kind=chatgpt 密钥。
 // callbackUrl 接受完整 URL（localhost:1455 页面报错不影响复制地址栏）。
 // name 为空时自动命名（chatgpt-<account_id 后 6 位>，重名加随机后缀）
-func (m *Manager) CompleteLogin(userID int64, callbackURL, name string) (*store.Key, AccountInfo, error) {
+func (m *Manager) CompleteLogin(ctx context.Context, userID int64, callbackURL, name string) (*store.Key, AccountInfo, error) {
 	code, state, err := parseCallback(callbackURL)
 	if err != nil {
 		return nil, AccountInfo{}, err
@@ -152,7 +250,7 @@ func (m *Manager) CompleteLogin(userID int64, callbackURL, name string) (*store.
 		return nil, AccountInfo{}, errors.New("登录会话已过期，请重新发起")
 	}
 
-	tok, err := m.exchangeToken(url.Values{
+	tok, err := m.exchangeToken(ctx, m.client, url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"redirect_uri":  {redirectURI},
@@ -162,17 +260,15 @@ func (m *Manager) CompleteLogin(userID int64, callbackURL, name string) (*store.
 	if err != nil {
 		return nil, AccountInfo{}, fmt.Errorf("换取令牌失败: %w", err)
 	}
-	bundle, info, err := bundleFromToken(tok)
+	bundle, err := bundleFromToken(tok)
 	if err != nil {
 		return nil, AccountInfo{}, err
-	}
-	if name == "" {
-		name = defaultName(bundle.AccountID)
 	}
 	k, err := m.createKey(userID, name, bundle)
 	if err != nil {
 		return nil, AccountInfo{}, err
 	}
+	info := AccountInfo{AccountID: bundle.AccountID, Plan: bundle.Plan, Email: bundle.Email, ExpiresAt: bundle.ExpiresAt}
 	return k, info, nil
 }
 
@@ -200,8 +296,11 @@ func parseCallback(raw string) (code, state string, err error) {
 // ---------- 令牌刷新 ----------
 
 // EnsureFresh 返回密钥当前有效的 access_token 与 account_id；
-// 剩余有效期不足 refreshMargin 时自动刷新并落库（按密钥 singleflight）
-func (m *Manager) EnsureFresh(k *store.Key) (string, string, error) {
+// 剩余有效期不足 refreshMargin 时自动刷新并落库（按密钥 singleflight）。
+// client 为刷新请求使用的 HTTP 客户端（转发传入渠道当前路径的代理客户端，
+// nil = 默认客户端，尊重 HTTPS_PROXY）；ctx 只约束本次等待——刷新本身在后台
+// 跑完并落库，不随请求取消中断（中断可能丢失已被服务端轮换的 refresh_token）
+func (m *Manager) EnsureFresh(ctx context.Context, k *store.Key, client *http.Client) (string, string, error) {
 	b, err := DecryptBundle(m.secret, k.ValueEnc)
 	if err != nil {
 		return "", "", err
@@ -209,69 +308,122 @@ func (m *Manager) EnsureFresh(k *store.Key) (string, string, error) {
 	if time.Until(time.Unix(b.ExpiresAt, 0)) > refreshMargin {
 		return b.AccessToken, b.AccountID, nil
 	}
-	nb, err := m.refresh(k, *b)
+	nb, err := m.refresh(ctx, k.ID, client, false)
 	if err != nil {
 		return "", "", err
 	}
 	return nb.AccessToken, nb.AccountID, nil
 }
 
-// RefreshNow 强制刷新（控制台手动刷新端点用）
-func (m *Manager) RefreshNow(k *store.Key) error {
-	b, err := DecryptBundle(m.secret, k.ValueEnc)
-	if err != nil {
-		return err
-	}
-	_, err = m.refresh(k, *b)
+// RefreshNow 强制刷新（控制台手动刷新端点用；无视失败退避）
+func (m *Manager) RefreshNow(ctx context.Context, k *store.Key) error {
+	_, err := m.refresh(ctx, k.ID, nil, true)
 	return err
 }
 
-// refresh 带并发收敛的令牌刷新：并发请求共享同一次刷新结果，避免
-// refresh_token 轮转后旧值互相覆盖（先到先得，后来者读库重试一次）
-func (m *Manager) refresh(k *store.Key, b Bundle) (Bundle, error) {
+// refresh 带并发收敛与失败退避的令牌刷新：
+//   - 退避期内（非强制）直接返回上次失败，不发网络请求；
+//   - 同一密钥并发调用共享一次刷新（singleflight），刷新在后台 goroutine 执行；
+//   - 调用方 ctx 取消只放弃等待，不中断刷新
+func (m *Manager) refresh(ctx context.Context, keyID int64, client *http.Client, force bool) (Bundle, error) {
 	m.refreshMu.Lock()
-	if call, ok := m.refreshes[k.ID]; ok {
+	if f, ok := m.failures[keyID]; ok && !force && time.Now().Before(f.until) {
 		m.refreshMu.Unlock()
-		call.wg.Wait()
-		return call.bundle, call.err
+		return Bundle{}, f.err
 	}
-	call := &refreshCall{}
-	call.wg.Add(1)
-	m.refreshes[k.ID] = call
+	call, ok := m.refreshes[keyID]
+	if !ok {
+		call = &refreshCall{done: make(chan struct{})}
+		m.refreshes[keyID] = call
+		go m.runRefresh(keyID, client, force, call)
+	}
 	m.refreshMu.Unlock()
 
-	call.bundle, call.err = m.doRefresh(k, b)
-	call.wg.Done()
-
-	m.refreshMu.Lock()
-	delete(m.refreshes, k.ID)
-	m.refreshMu.Unlock()
-	return call.bundle, call.err
+	select {
+	case <-call.done:
+		return call.bundle, call.err
+	case <-ctx.Done():
+		return Bundle{}, fmt.Errorf("等待令牌刷新被取消: %w", ctx.Err())
+	}
 }
 
-func (m *Manager) doRefresh(k *store.Key, b Bundle) (Bundle, error) {
+func (m *Manager) runRefresh(keyID int64, client *http.Client, force bool, call *refreshCall) {
+	b, err := m.doRefresh(keyID, client, force)
+	m.refreshMu.Lock()
+	delete(m.refreshes, keyID)
+	if err != nil {
+		backoff := refreshRetryBackoff
+		var te *tokenEndpointError
+		if errors.As(err, &te) && te.Status >= 400 && te.Status < 500 {
+			backoff = refreshDeadBackoff
+		}
+		until := time.Now().Add(backoff)
+		m.failures[keyID] = refreshFailure{until: until, err: err}
+		// 密钥同步冷却：转发组合把它排到可用密钥之后
+		m.store.DB().Model(&store.Key{}).Where("id = ? AND cooldown_until < ?", keyID, until.Unix()).
+			Update("cooldown_until", until.Unix())
+	} else if f, ok := m.failures[keyID]; ok {
+		delete(m.failures, keyID)
+		// 撤销刷新失败设下的冷却（更晚到期的冷却来自 429/402，保留）
+		m.store.DB().Model(&store.Key{}).Where("id = ? AND cooldown_until <= ?", keyID, f.until.Unix()).
+			Update("cooldown_until", 0)
+	}
+	m.refreshMu.Unlock()
+	call.bundle, call.err = b, err
+	close(call.done)
+}
+
+// doRefresh 以库中**最新**令牌刷新：调用方持有的密钥行可能早于上一次刷新的落库
+// （请求开始时读出、刷新完成后才走到这里），用其中已被轮换掉的 refresh_token
+// 刷新会触发服务端复用检测、整组令牌作废。非强制刷新时若库中令牌已是新的，
+// 直接返回而不再刷新
+func (m *Manager) doRefresh(keyID int64, client *http.Client, force bool) (Bundle, error) {
+	var k store.Key
+	if err := m.store.DB().First(&k, keyID).Error; err != nil {
+		return Bundle{}, fmt.Errorf("读取密钥失败: %w", err)
+	}
+	b, err := DecryptBundle(m.secret, k.ValueEnc)
+	if err != nil {
+		return Bundle{}, err
+	}
+	if !force && time.Until(time.Unix(b.ExpiresAt, 0)) > refreshMargin {
+		return *b, nil // 其他请求已刷新落库
+	}
 	if b.RefreshToken == "" {
 		return Bundle{}, errors.New("缺少 refresh_token，请在控制台重新登录 ChatGPT 账号")
 	}
-	tok, err := m.exchangeToken(url.Values{
+	if client == nil {
+		client = m.client
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), tokenHTTPTimeout)
+	defer cancel()
+	tok, err := m.exchangeToken(ctx, client, url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {b.RefreshToken},
 		"client_id":     {oauthClientID},
 	})
 	if err != nil {
-		m.markKeyError(k.ID, "令牌刷新失败: "+err.Error())
+		msg := "令牌刷新失败: " + err.Error()
+		var te *tokenEndpointError
+		if errors.As(err, &te) && te.Status >= 400 && te.Status < 500 {
+			msg += "（refresh_token 已失效，请删除后重新登录 ChatGPT 账号）"
+		}
+		m.markKeyError(keyID, msg)
 		return Bundle{}, fmt.Errorf("令牌刷新失败: %w", err)
 	}
-	nb := b // 刷新响应可能不含 refresh_token（未轮转），保留旧值
+	nb := *b // 刷新响应可能不含 refresh_token（未轮转），保留旧值
 	if tok.RefreshToken != "" {
 		nb.RefreshToken = tok.RefreshToken
 	}
 	nb.AccessToken = tok.AccessToken
-	nb.ExpiresAt = time.Now().Unix() + tok.ExpiresIn
-	if err := m.persist(k, nb); err != nil {
+	nb.ExpiresAt = expiryOf(tok)
+	if email := emailOf(tok); email != "" {
+		nb.Email = email
+	}
+	if err := m.persist(keyID, nb); err != nil {
 		return Bundle{}, err
 	}
-	m.clearKeyError(k.ID)
+	m.clearKeyError(keyID)
 	return nb, nil
 }
 
@@ -284,22 +436,41 @@ type tokenResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
-func (m *Manager) exchangeToken(form url.Values) (*tokenResponse, error) {
-	resp, err := m.client.PostForm(TokenURL, form)
+// tokenEndpointError 令牌端点返回的非 200 响应（4xx = 授权本身失效，需重登）
+type tokenEndpointError struct {
+	Status      int
+	Code        string
+	Description string
+}
+
+func (e *tokenEndpointError) Error() string {
+	if e.Description != "" {
+		return fmt.Sprintf("令牌端点返回 %d: %s（%s）", e.Status, e.Code, e.Description)
+	}
+	return fmt.Sprintf("令牌端点返回 %d", e.Status)
+}
+
+func (m *Manager) exchangeToken(ctx context.Context, client *http.Client, form url.Values) (*tokenResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("构造令牌请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求令牌端点失败: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		te := &tokenEndpointError{Status: resp.StatusCode}
 		var e struct {
 			Error       string `json:"error"`
 			Description string `json:"error_description"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&e)
-		if e.Description != "" {
-			return nil, fmt.Errorf("令牌端点返回 %d: %s（%s）", resp.StatusCode, e.Error, e.Description)
+		if json.NewDecoder(resp.Body).Decode(&e) == nil {
+			te.Code, te.Description = e.Error, e.Description
 		}
-		return nil, fmt.Errorf("令牌端点返回 %d", resp.StatusCode)
+		return nil, te
 	}
 	var tok tokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
@@ -311,42 +482,74 @@ func (m *Manager) exchangeToken(form url.Values) (*tokenResponse, error) {
 	return &tok, nil
 }
 
-// bundleFromToken 从令牌响应构造存储 Bundle 与展示信息；
+// bundleFromToken 从登录令牌响应构造存储 Bundle；
 // JWT 仅解 payload 提取 claim，不验签——签名校验由 OpenAI 后端在每次调用时完成，
 // 网关只提取展示与转发所需字段
-func bundleFromToken(tok *tokenResponse) (Bundle, AccountInfo, error) {
+func bundleFromToken(tok *tokenResponse) (Bundle, error) {
 	claims, err := parseJWTClaims(tok.AccessToken)
 	if err != nil {
-		return Bundle{}, AccountInfo{}, fmt.Errorf("解析 access_token 失败: %w", err)
+		return Bundle{}, fmt.Errorf("解析 access_token 失败: %w", err)
 	}
 	b := Bundle{
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
-		ExpiresAt:    claims.Exp,
-	}
-	if b.ExpiresAt == 0 {
-		b.ExpiresAt = time.Now().Add(time.Hour).Unix() // 无 exp 时兜底 1h，到期即走刷新
+		ExpiresAt:    expiryOf(tok),
+		Email:        emailOf(tok),
 	}
 	if claims.Auth != nil {
 		b.AccountID = claims.Auth.AccountID
 		b.Plan = claims.Auth.PlanType
 	}
 	if b.AccountID == "" {
-		return Bundle{}, AccountInfo{}, errors.New("令牌缺少 chatgpt_account_id（非 ChatGPT 账号令牌？）")
+		return Bundle{}, errors.New("令牌缺少 chatgpt_account_id（非 ChatGPT 账号令牌？）")
 	}
-	info := AccountInfo{AccountID: b.AccountID, Plan: b.Plan, Email: claims.Email, ExpiresAt: b.ExpiresAt}
-	return b, info, nil
+	return b, nil
+}
+
+// expiryOf access_token 到期时刻：JWT exp 优先，其次 expires_in，都缺省兜底 1h
+// （缺省到期 = 当前时刻会让此后每个请求都触发刷新）
+func expiryOf(tok *tokenResponse) int64 {
+	if c, err := parseJWTClaims(tok.AccessToken); err == nil && c.Exp > 0 {
+		return c.Exp
+	}
+	if tok.ExpiresIn > 0 {
+		return time.Now().Unix() + tok.ExpiresIn
+	}
+	return time.Now().Add(time.Hour).Unix()
+}
+
+// emailOf 账号邮箱：access_token 顶层 email 或 profile claim，其次 id_token 的 email
+func emailOf(tok *tokenResponse) string {
+	if c, err := parseJWTClaims(tok.AccessToken); err == nil {
+		if c.Email != "" {
+			return c.Email
+		}
+		if c.Profile != nil && c.Profile.Email != "" {
+			return c.Profile.Email
+		}
+	}
+	if tok.IDToken != "" {
+		if c, err := parseJWTClaims(tok.IDToken); err == nil {
+			return c.Email
+		}
+	}
+	return ""
 }
 
 type jwtClaims struct {
-	Email string   `json:"email"`
-	Exp   int64    `json:"exp"`
-	Auth  *jwtAuth `json:"https://api.openai.com/auth"`
+	Email   string      `json:"email"`
+	Exp     int64       `json:"exp"`
+	Auth    *jwtAuth    `json:"https://api.openai.com/auth"`
+	Profile *jwtProfile `json:"https://api.openai.com/profile"`
 }
 
 type jwtAuth struct {
 	AccountID string `json:"chatgpt_account_id"`
 	PlanType  string `json:"chatgpt_plan_type"`
+}
+
+type jwtProfile struct {
+	Email string `json:"email"`
 }
 
 // parseJWTClaims 解析 JWT payload（base64url，容忍缺省 padding）
@@ -390,7 +593,13 @@ func EncryptBundle(secret string, b *Bundle) ([]byte, error) {
 	return crypto.Encrypt(secret, crypto.PurposeKey, raw)
 }
 
+// createKey 落 kind=chatgpt 密钥。name 为空时自动命名，撞名追加随机后缀重试一次；
+// 用户显式命名撞名如实报错
 func (m *Manager) createKey(userID int64, name string, b Bundle) (*store.Key, error) {
+	auto := name == ""
+	if auto {
+		name = defaultName(b.AccountID)
+	}
 	enc, err := EncryptBundle(m.secret, &b)
 	if err != nil {
 		return nil, fmt.Errorf("加密令牌失败: %w", err)
@@ -399,14 +608,15 @@ func (m *Manager) createKey(userID int64, name string, b Bundle) (*store.Key, er
 		UserID: userID, Name: name, ValueEnc: enc,
 		Kind: store.KeyKindChatGPT, Status: 1, CreatedAt: time.Now().Unix(),
 	}
-	if err := m.store.DB().Create(k).Error; err != nil {
+	err = m.store.DB().Create(k).Error
+	if err != nil && auto && strings.Contains(err.Error(), "UNIQUE") {
+		k.ID = 0
+		k.Name = fmt.Sprintf("%s-%04x", name, time.Now().UnixNano()&0xffff)
+		err = m.store.DB().Create(k).Error
+	}
+	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
-			// 自动命名撞名：追加随机后缀重试一次（用户显式命名撞名则如实报错）
-			k.Name = fmt.Sprintf("%s-%04x", name, time.Now().UnixNano()&0xffff)
-			if err := m.store.DB().Create(k).Error; err != nil {
-				return nil, fmt.Errorf("创建密钥失败: %w", err)
-			}
-			return k, nil
+			return nil, fmt.Errorf("同名密钥已存在：%s", name)
 		}
 		return nil, fmt.Errorf("创建密钥失败: %w", err)
 	}
@@ -414,12 +624,15 @@ func (m *Manager) createKey(userID int64, name string, b Bundle) (*store.Key, er
 }
 
 // persist 刷新后落库新令牌
-func (m *Manager) persist(k *store.Key, b Bundle) error {
+func (m *Manager) persist(keyID int64, b Bundle) error {
 	enc, err := EncryptBundle(m.secret, &b)
 	if err != nil {
 		return fmt.Errorf("加密令牌失败: %w", err)
 	}
-	return m.store.DB().Model(&store.Key{}).Where("id = ?", k.ID).Update("value_enc", enc).Error
+	if err := m.store.DB().Model(&store.Key{}).Where("id = ?", keyID).Update("value_enc", enc).Error; err != nil {
+		return fmt.Errorf("刷新后的令牌落库失败: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) markKeyError(keyID int64, msg string) {
@@ -456,5 +669,26 @@ func (m *Manager) gcLocked() {
 		if now.After(p.ExpiresAt) {
 			delete(m.pending, s)
 		}
+	}
+}
+
+// capUserPendingLocked 用户待完成会话达上限时淘汰最早发起的（调用方持 m.mu）
+func (m *Manager) capUserPendingLocked(userID int64) {
+	for {
+		n, oldest := 0, ""
+		var oldestAt time.Time
+		for s, p := range m.pending {
+			if p.UserID != userID {
+				continue
+			}
+			n++
+			if oldest == "" || p.ExpiresAt.Before(oldestAt) {
+				oldest, oldestAt = s, p.ExpiresAt
+			}
+		}
+		if n < maxPendingPerUser {
+			return
+		}
+		delete(m.pending, oldest)
 	}
 }

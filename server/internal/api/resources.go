@@ -175,7 +175,7 @@ func (s *Server) handleRefreshKey(c *gin.Context) {
 		s.fail(c, http.StatusInternalServerError, "令牌管理器未初始化")
 		return
 	}
-	if err := s.ChatGPT.RefreshNow(k); err != nil {
+	if err := s.ChatGPT.RefreshNow(c.Request.Context(), k); err != nil {
 		s.fail(c, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -214,7 +214,7 @@ func (s *Server) handleChatGPTLoginComplete(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, "缺少回调地址")
 		return
 	}
-	k, info, err := s.ChatGPT.CompleteLogin(currentUser(c).ID, req.CallbackURL, trimOrEmpty(req.Name))
+	k, info, err := s.ChatGPT.CompleteLogin(c.Request.Context(), currentUser(c).ID, req.CallbackURL, trimOrEmpty(req.Name))
 	if err != nil {
 		s.fail(c, http.StatusBadRequest, err.Error())
 		return
@@ -365,6 +365,10 @@ func (s *Server) handleCreateChannel(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, "包含不属于你的密钥")
 		return
 	}
+	if msg := validateKeyBinding(s.keyKinds(in.KeyIDs), nonEmpty(in.BaseURLs)); msg != "" {
+		s.fail(c, http.StatusBadRequest, msg)
+		return
+	}
 	// 从模板开始：仅校验模板有效并记录来源，字段值以用户提交为准（前端预填模板配置）
 	var tpl *store.ChannelTemplate
 	if in.FromTemplateID != nil {
@@ -415,6 +419,10 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 	}
 	if len(in.KeyIDs) > 0 && !s.ownsKeys(currentUser(c).ID, in.KeyIDs) {
 		s.fail(c, http.StatusBadRequest, "包含不属于你的密钥")
+		return
+	}
+	if msg := validateKeyBinding(s.keyKinds(in.KeyIDs), nonEmpty(in.BaseURLs)); msg != "" {
+		s.fail(c, http.StatusBadRequest, msg)
 		return
 	}
 	if err := s.applyChannelInput(&ch, &in, nil); err != nil {
@@ -775,6 +783,45 @@ func (s *Server) handleRevealToken(c *gin.Context) {
 }
 
 // ---------- 辅助 ----------
+
+// keyKinds 查密钥类型（id → kind）；调用方已校验归属
+func (s *Server) keyKinds(keyIDs []int64) map[int64]string {
+	kinds := map[int64]string{}
+	if len(keyIDs) == 0 {
+		return kinds
+	}
+	var keys []store.Key
+	s.Store.DB().Select("id, kind").Where("id IN ?", keyIDs).Find(&keys)
+	for _, k := range keys {
+		kinds[k.ID] = k.Kind
+	}
+	return kinds
+}
+
+// validateKeyBinding 渠道密钥绑定校验（v1.5.82）：ChatGPT 账号令牌可操作整个
+// ChatGPT 账号，绑到第三方上游即外泄——含 chatgpt 密钥的渠道全部线路必须指向
+// ChatGPT 后端；且不得与常规密钥混绑（两类密钥的端点与请求体互不兼容，
+// 混绑必然有一类请求失败）
+func validateKeyBinding(kinds map[int64]string, baseURLs []string) string {
+	chatgptN := 0
+	for _, kind := range kinds {
+		if kind == store.KeyKindChatGPT {
+			chatgptN++
+		}
+	}
+	if chatgptN == 0 {
+		return ""
+	}
+	if chatgptN != len(kinds) {
+		return "ChatGPT 账号密钥不能与常规 API 密钥绑定在同一渠道"
+	}
+	for _, u := range baseURLs {
+		if !chatgpt.IsBackendURL(u) {
+			return "绑定 ChatGPT 账号密钥的渠道，线路只能是 ChatGPT 后端（https://chatgpt.com/backend-api/codex），当前含：" + u
+		}
+	}
+	return ""
+}
 
 func (s *Server) ownsKeys(userID int64, keyIDs []int64) bool {
 	if len(keyIDs) == 0 {
