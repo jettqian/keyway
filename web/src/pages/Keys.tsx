@@ -1,7 +1,7 @@
 import React from 'react'
-import { Table, Button, Modal, Form, Input, Tag, message, Popconfirm, Space } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
-import { listKeys, createKey, updateKey, updateKeyStatus, deleteKey } from '../api'
+import { Table, Button, Modal, Form, Input, Tag, message, Popconfirm, Space, Steps, Alert, Typography } from 'antd'
+import { PlusOutlined, SyncOutlined } from '@ant-design/icons'
+import { listKeys, createKey, updateKey, updateKeyStatus, deleteKey, refreshKey, startChatGPTLogin, completeChatGPTLogin } from '../api'
 import type { ApiKey } from '../api/types'
 import { formatDateTime } from '../format'
 import { useI18n } from '../i18n'
@@ -13,6 +13,14 @@ const KeysPage: React.FC = () => {
   const [modalOpen, setModalOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<ApiKey | null>(null)
   const [form] = Form.useForm()
+
+  // ChatGPT 登录向导状态（步骤 0 授权 / 1 粘贴回调）
+  const [wizardOpen, setWizardOpen] = React.useState(false)
+  const [wizardStep, setWizardStep] = React.useState(0)
+  const [authUrl, setAuthUrl] = React.useState('')
+  const [callbackUrl, setCallbackUrl] = React.useState('')
+  const [accountName, setAccountName] = React.useState('')
+  const [wizardBusy, setWizardBusy] = React.useState(false)
 
   const refresh = React.useCallback(() => {
     setLoading(true)
@@ -54,11 +62,66 @@ const KeysPage: React.FC = () => {
     }
   }
 
+  const openWizard = async () => {
+    setWizardBusy(true)
+    try {
+      const r = await startChatGPTLogin()
+      setAuthUrl(r.authUrl)
+      setCallbackUrl('')
+      setAccountName('')
+      setWizardStep(0)
+      setWizardOpen(true)
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setWizardBusy(false)
+    }
+  }
+
+  const wizardContinue = () => {
+    window.open(authUrl, '_blank', 'noopener')
+    setWizardStep(1)
+  }
+
+  const wizardComplete = async () => {
+    if (!callbackUrl.trim()) {
+      message.warning(t('keys.chatgptCallback'))
+      return
+    }
+    setWizardBusy(true)
+    try {
+      await completeChatGPTLogin(callbackUrl.trim(), accountName.trim() || undefined)
+      message.success(t('keys.chatgptDone'))
+      setWizardOpen(false)
+      refresh()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setWizardBusy(false)
+    }
+  }
+
+  const doRefreshKey = async (k: ApiKey) => {
+    try {
+      await refreshKey(k.id)
+      message.success(t('keys.refreshSuccess'))
+      refresh()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
+  const isChatgpt = (k: ApiKey) => k.kind === 'chatgpt'
+  const hasChatgpt = keys.some(isChatgpt)
+
   return (
     <div>
       <div className="page-heading">
         <div><h2>{t('keys.title')}</h2><p>{t('keys.subtitle')}</p></div>
-        <div className="page-actions"><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('keys.create')}</Button></div>
+        <div className="page-actions">
+          <Button onClick={openWizard} loading={wizardBusy && wizardStep === 0 && !wizardOpen}>{t('keys.chatgptLogin')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('keys.create')}</Button>
+        </div>
       </div>
       <Table<ApiKey>
         rowKey="id"
@@ -68,6 +131,37 @@ const KeysPage: React.FC = () => {
         locale={{ emptyText: t('keys.empty') }}
         columns={[
           { title: t('common.name'), dataIndex: 'name' },
+          {
+            title: t('keys.kind'),
+            width: 110,
+            render: (_, k) =>
+              isChatgpt(k) ? (
+                <Tag color="geekblue">{t('keys.kindChatgpt')}{k.plan ? ` · ${k.plan}` : ''}</Tag>
+              ) : (
+                <Tag>{t('keys.kindApi')}</Tag>
+              ),
+          },
+          {
+            title: t('keys.account'),
+            width: 220,
+            render: (_, k) =>
+              isChatgpt(k) ? (
+                <Space size={4}>
+                  <Typography.Text code>{k.accountId || '-'}</Typography.Text>
+                  {k.expiresAt ? (
+                    k.expiresAt < Date.now() / 1000 ? (
+                      <Tag color="red">{t('keys.expired')}</Tag>
+                    ) : (
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {t('keys.expiresAt')} {formatDateTime(k.expiresAt)}
+                      </Typography.Text>
+                    )
+                  ) : null}
+                </Space>
+              ) : (
+                '-'
+              ),
+          },
           { title: t('common.note'), dataIndex: 'note', ellipsis: true },
           {
             title: t('common.status'),
@@ -91,10 +185,17 @@ const KeysPage: React.FC = () => {
           { title: t('common.createdAt'), dataIndex: 'createdAt', width: 180, render: (v: number | string) => formatDateTime(v) },
           {
             title: t('common.action'),
-            width: 200,
+            width: hasChatgpt ? 280 : 200,
             render: (_, k) => (
               <Space>
-                <Button size="small" onClick={() => openEdit(k)}>{t('common.edit')}</Button>
+                <Button size="small" onClick={() => openEdit(k)} title={isChatgpt(k) ? t('keys.chatgptNoEditValue') : undefined}>
+                  {t('common.edit')}
+                </Button>
+                {isChatgpt(k) && (
+                  <Button size="small" icon={<SyncOutlined />} onClick={() => doRefreshKey(k)}>
+                    {t('keys.refresh')}
+                  </Button>
+                )}
                 <Button
                   size="small"
                   onClick={async () => {
@@ -135,13 +236,58 @@ const KeysPage: React.FC = () => {
           <Form.Item name="name" label={t('common.name')} rules={[{ required: true, message: t('common.nameRequired') }]}>
             <Input placeholder={t('keys.namePlaceholder')} />
           </Form.Item>
-          <Form.Item name="value" label={editing ? t('keys.valueKeep') : t('keys.value')} extra={<span className="form-hint">{t('keys.valueHint')}</span>}>
-            <Input.Password placeholder="sk-..." />
-          </Form.Item>
+          {!(editing && isChatgpt(editing)) && (
+            <Form.Item name="value" label={editing ? t('keys.valueKeep') : t('keys.value')} extra={<span className="form-hint">{t('keys.valueHint')}</span>}>
+              <Input.Password placeholder="sk-..." />
+            </Form.Item>
+          )}
+          {editing && isChatgpt(editing) && <Alert type="info" showIcon message={t('keys.chatgptNoEditValue')} />}
           <Form.Item name="note" label={t('common.note')}>
             <Input.TextArea rows={2} />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title={t('keys.chatgptWizardTitle')}
+        open={wizardOpen}
+        onCancel={() => setWizardOpen(false)}
+        footer={
+          wizardStep === 0
+            ? [<Button key="cancel" onClick={() => setWizardOpen(false)}>{t('common.cancel')}</Button>,
+               <Button key="next" type="primary" onClick={wizardContinue}>{t('keys.chatgptOpenAuth')}</Button>]
+            : [<Button key="back" onClick={() => setWizardStep(0)}>{t('common.back')}</Button>,
+               <Button key="ok" type="primary" loading={wizardBusy} onClick={wizardComplete}>{t('common.ok')}</Button>]
+        }
+        destroyOnClose
+      >
+        <Steps
+          size="small"
+          current={wizardStep}
+          items={[{ title: t('keys.chatgptStepAuth') }, { title: t('keys.chatgptStepPaste') }]}
+          style={{ marginBottom: 16 }}
+        />
+        {wizardStep === 0 ? (
+          <>
+            <Alert type="warning" showIcon message={t('keys.chatgptRisk')} style={{ marginBottom: 12 }} />
+            <Typography.Paragraph type="secondary">{t('keys.chatgptStepAuthDesc')}</Typography.Paragraph>
+          </>
+        ) : (
+          <>
+            <Typography.Paragraph type="secondary">{t('keys.chatgptStepPasteDesc')}</Typography.Paragraph>
+            <Input.TextArea
+              rows={3}
+              value={callbackUrl}
+              onChange={(e) => setCallbackUrl(e.target.value)}
+              placeholder={t('keys.chatgptCallbackPlaceholder')}
+              style={{ marginBottom: 12 }}
+            />
+            <Input
+              value={accountName}
+              onChange={(e) => setAccountName(e.target.value)}
+              placeholder={t('keys.chatgptName')}
+            />
+          </>
+        )}
       </Modal>
     </div>
   )

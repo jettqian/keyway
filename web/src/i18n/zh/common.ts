@@ -11,6 +11,7 @@ export default {
   'common.collapse': '收起',
   'common.delete': '删除',
   'common.cancel': '取消',
+  'common.back': '上一步',
   'common.ok': '确定',
   'common.save': '保存',
   'common.enabled': '启用',

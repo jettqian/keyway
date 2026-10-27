@@ -15,4 +15,28 @@ export default {
   'keys.valueKeep': '密钥值（留空则不修改）',
   'keys.valueHint': '仅用于连接上游服务，保存后不会再次完整展示。',
   'keys.namePlaceholder': '如 openai-主号',
+  // ChatGPT 账号登录（v1.5.81）
+  'keys.chatgptLogin': '登录 ChatGPT 账号',
+  'keys.kind': '类型',
+  'keys.kindApi': 'API',
+  'keys.kindChatgpt': 'ChatGPT',
+  'keys.account': '账号',
+  'keys.expiresAt': '令牌到期',
+  'keys.expired': '已过期',
+  'keys.refresh': '刷新令牌',
+  'keys.refreshSuccess': '令牌已刷新',
+  'keys.chatgptNoEditValue': 'ChatGPT 账号密钥不支持直接改值，如需重登请删除后重新登录',
+  'keys.chatgptWizardTitle': '登录 ChatGPT 账号',
+  'keys.chatgptStepAuth': '打开授权页',
+  'keys.chatgptStepPaste': '粘贴回调地址',
+  'keys.chatgptRisk':
+    '风险提示：本功能通过 Codex CLI 的公开授权流程复用 ChatGPT 订阅额度调用模型，不属于 OpenAI 官方支持的用法，存在账号受限或封禁风险，请自担。建议使用非核心账号。',
+  'keys.chatgptStepAuthDesc': '点击下方按钮在新窗口打开 OpenAI 授权页，登录你的 ChatGPT 账号并确认授权。',
+  'keys.chatgptOpenAuth': '打开授权页并继续',
+  'keys.chatgptStepPasteDesc':
+    '登录完成后浏览器会跳转到一个无法打开的 localhost 页面——这是预期行为。请复制浏览器地址栏的完整 URL 粘贴到下方（即使页面显示打不开）。',
+  'keys.chatgptCallback': '回调地址',
+  'keys.chatgptCallbackPlaceholder': 'http://localhost:1455/auth/callback?code=…&state=…',
+  'keys.chatgptName': '密钥名称（可选，留空自动命名）',
+  'keys.chatgptDone': '登录成功，密钥已创建',
 }

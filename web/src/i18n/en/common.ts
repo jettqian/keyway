@@ -10,6 +10,7 @@ export default {
   'common.collapse': 'Collapse',
   'common.delete': 'Delete',
   'common.cancel': 'Cancel',
+  'common.back': 'Back',
   'common.ok': 'OK',
   'common.save': 'Save',
   'common.enabled': 'Enabled',

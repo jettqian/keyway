@@ -13,6 +13,12 @@ export interface ApiKey {
   name: string
   note: string
   status: number
+  kind: 'api' | 'chatgpt'
+  /** chatgpt 密钥附加展示字段（不含任何令牌明文） */
+  accountId?: string
+  plan?: string
+  email?: string
+  expiresAt?: number
   lastError: string
   cooldownUntil: number
   createdAt: string

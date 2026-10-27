@@ -45,6 +45,21 @@ export const updateKey = (id: number, input: ApiKeyInput) => put<{ key: ApiKey }
 export const updateKeyStatus = (id: number, status: 1 | 2) =>
   put<void>(`/api/keys/${id}/status`, { status })
 export const deleteKey = (id: number) => del<void>(`/api/keys/${id}`)
+export const refreshKey = (id: number) => put<{ key: ApiKey }>(`/api/keys/${id}/refresh`)
+
+// ---------- ChatGPT 账号登录（v1.5.81） ----------
+export interface ChatGPTAccount {
+  accountId: string
+  plan: string
+  email?: string
+  expiresAt: number
+}
+export const startChatGPTLogin = () => post<{ authUrl: string }>('/api/chatgpt/login/start')
+export const completeChatGPTLogin = (callbackUrl: string, name?: string) =>
+  post<{ key: ApiKey; account: ChatGPTAccount }>('/api/chatgpt/login/complete', {
+    callbackUrl,
+    name,
+  })
 
 // ---------- 渠道 ----------
 export const listChannels = () => get<{ channels: Channel[] }>('/api/channels')
