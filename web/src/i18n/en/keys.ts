@@ -20,7 +20,7 @@ export default {
   'keys.kindChatgpt': 'ChatGPT',
   'keys.account': 'Account',
   'keys.expiresAt': 'Token Expires',
-  'keys.expired': 'Expired',
+  'keys.tokenStale': 'Token expired; refreshes automatically on next use',
   'keys.refresh': 'Refresh Token',
   'keys.refreshSuccess': 'Token refreshed',
   'keys.chatgptNoEditValue': 'ChatGPT account keys cannot be edited directly; delete and sign in again to re-authorize',

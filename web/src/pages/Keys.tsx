@@ -146,16 +146,16 @@ const KeysPage: React.FC = () => {
             width: 220,
             render: (_, k) =>
               isChatgpt(k) ? (
-                <Space size={4}>
+                <Space size={4} wrap>
                   <Typography.Text code>{k.accountId || '-'}</Typography.Text>
+                  {k.email && <Typography.Text type="secondary">{k.email}</Typography.Text>}
+                  {/* access_token 到期属正常现象（下次使用自动刷新），不标红；刷新失败看状态列的 lastError */}
                   {k.expiresAt ? (
-                    k.expiresAt < Date.now() / 1000 ? (
-                      <Tag color="red">{t('keys.expired')}</Tag>
-                    ) : (
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        {t('keys.expiresAt')} {formatDateTime(k.expiresAt)}
-                      </Typography.Text>
-                    )
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {k.expiresAt < Date.now() / 1000
+                        ? t('keys.tokenStale')
+                        : `${t('keys.expiresAt')} ${formatDateTime(k.expiresAt)}`}
+                    </Typography.Text>
                   ) : null}
                 </Space>
               ) : (
@@ -272,21 +272,26 @@ const KeysPage: React.FC = () => {
             <Typography.Paragraph type="secondary">{t('keys.chatgptStepAuthDesc')}</Typography.Paragraph>
           </>
         ) : (
-          <>
+          <Form layout="vertical">
             <Typography.Paragraph type="secondary">{t('keys.chatgptStepPasteDesc')}</Typography.Paragraph>
-            <Input.TextArea
-              rows={3}
-              value={callbackUrl}
-              onChange={(e) => setCallbackUrl(e.target.value)}
-              placeholder={t('keys.chatgptCallbackPlaceholder')}
-              style={{ marginBottom: 12 }}
-            />
-            <Input
-              value={accountName}
-              onChange={(e) => setAccountName(e.target.value)}
-              placeholder={t('keys.chatgptName')}
-            />
-          </>
+            <Form.Item label={t('keys.chatgptCallback')} htmlFor="chatgpt-callback" required>
+              <Input.TextArea
+                id="chatgpt-callback"
+                rows={3}
+                value={callbackUrl}
+                onChange={(e) => setCallbackUrl(e.target.value)}
+                placeholder={t('keys.chatgptCallbackPlaceholder')}
+              />
+            </Form.Item>
+            <Form.Item label={t('common.name')} htmlFor="chatgpt-name" style={{ marginBottom: 0 }}>
+              <Input
+                id="chatgpt-name"
+                value={accountName}
+                onChange={(e) => setAccountName(e.target.value)}
+                placeholder={t('keys.chatgptName')}
+              />
+            </Form.Item>
+          </Form>
         )}
       </Modal>
     </div>

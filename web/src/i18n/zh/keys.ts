@@ -22,7 +22,7 @@ export default {
   'keys.kindChatgpt': 'ChatGPT',
   'keys.account': '账号',
   'keys.expiresAt': '令牌到期',
-  'keys.expired': '已过期',
+  'keys.tokenStale': '令牌已到期，下次使用时自动刷新',
   'keys.refresh': '刷新令牌',
   'keys.refreshSuccess': '令牌已刷新',
   'keys.chatgptNoEditValue': 'ChatGPT 账号密钥不支持直接改值，如需重登请删除后重新登录',
