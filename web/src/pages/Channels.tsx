@@ -38,7 +38,6 @@ const emptyInput: ChannelInput = {
   keyStrategy: 'ordered',
   lineStrategy: 'auto',
   allowPublicProxy: false,
-  maskFingerprint: false,
   models: [],
   modelMapping: {},
   forwardMode: 'passthrough',
@@ -152,7 +151,6 @@ const ChannelsPage: React.FC = () => {
       lineStrategy: c.lineStrategy,
       proxyUrl: '',
       allowPublicProxy: c.allowPublicProxy,
-      maskFingerprint: c.maskFingerprint ?? false,
       models: c.models,
       modelMapping: Object.entries(c.modelMapping).map(([from, to]) => ({ from, to })),
       forwardMode: c.forwardMode ?? 'passthrough',
@@ -182,7 +180,6 @@ const ChannelsPage: React.FC = () => {
       lineStrategy: v.lineStrategy,
       proxyUrl: v.proxyUrl || undefined,
       allowPublicProxy: v.allowPublicProxy,
-      maskFingerprint: v.maskFingerprint ?? false,
       models: v.models || [],
       modelMapping: mapping,
       forwardMode: v.forwardMode ?? 'passthrough',
@@ -237,7 +234,6 @@ const ChannelsPage: React.FC = () => {
     keyStrategy: c.keyStrategy,
     lineStrategy: c.lineStrategy,
     allowPublicProxy: c.allowPublicProxy,
-    maskFingerprint: c.maskFingerprint ?? false,
     models: Array.isArray(c.models) ? c.models : [],
     modelMapping: c.modelMapping ?? {},
     forwardMode: c.forwardMode,
@@ -537,9 +533,6 @@ const ChannelsPage: React.FC = () => {
             <Input placeholder="socks5://127.0.0.1:7890" />
           </Form.Item>
           <Form.Item name="allowPublicProxy" label={t('channels.allowPublicProxy')} valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Form.Item name="maskFingerprint" label={t('channels.maskFingerprint')} valuePropName="checked" extra={<span className="form-hint">{t('channels.maskFingerprintExtra')}</span>}>
             <Switch />
           </Form.Item>
           <Form.Item label={t('channels.modelMapping')}>

@@ -142,7 +142,6 @@ type channelInput struct {
 	LineStrategy     string            `json:"lineStrategy"`
 	ProxyURL         string            `json:"proxyUrl"`
 	AllowPublicProxy bool              `json:"allowPublicProxy"`
-	MaskFingerprint  bool              `json:"maskFingerprint"`
 	Models           []string          `json:"models"`
 	ModelMapping     map[string]string `json:"modelMapping"`
 	ForwardMode      string            `json:"forwardMode"`
@@ -215,7 +214,6 @@ func (s *Server) applyChannelInput(ch *store.Channel, in *channelInput, copyFrom
 	ch.KeyStrategy = in.KeyStrategy
 	ch.LineStrategy = in.LineStrategy
 	ch.AllowPublicProxy = boolToInt(in.AllowPublicProxy)
-	ch.MaskFingerprint = boolToInt(in.MaskFingerprint)
 	ch.ModelsJSON = string(mustJSONStr(nonEmpty(in.Models)))
 	ch.ModelMappingJSON = string(mustJSONStr(in.ModelMapping))
 	ch.ForwardMode = in.ForwardMode
@@ -338,8 +336,7 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 		saveErr = s.Store.DB().Model(&ch).Omit("proxy_url_enc").Updates(map[string]any{
 			"name": ch.Name, "type": ch.Type, "base_urls_json": ch.BaseURLsJSON,
 			"key_ids_json": ch.KeyIDsJSON, "key_strategy": ch.KeyStrategy, "line_strategy": ch.LineStrategy,
-			"allow_public_proxy": ch.AllowPublicProxy, "mask_fingerprint": ch.MaskFingerprint,
-			"models_json":        ch.ModelsJSON,
+			"allow_public_proxy": ch.AllowPublicProxy, "models_json": ch.ModelsJSON,
 			"model_mapping_json": ch.ModelMappingJSON, "forward_mode": ch.ForwardMode, "priority": ch.Priority,
 			"price_multiplier": ch.PriceMultiplier, "pricing_mode": ch.PricingMode, "cny_ratio": ch.CNYRatio,
 			"is_default": ch.IsDefault, "enabled": ch.Enabled,
@@ -741,7 +738,6 @@ func channelDTO(ch *store.Channel) gin.H {
 		"keyStrategy": ch.KeyStrategy, "lineStrategy": ch.LineStrategy,
 		"hasPersonalProxy": ch.ProxyURLEnc != nil,
 		"allowPublicProxy": ch.AllowPublicProxy == 1,
-		"maskFingerprint":  ch.MaskFingerprint == 1,
 		"models":           models, "modelMapping": mapping,
 		"forwardMode": ch.ForwardMode,
 		"priority":    ch.Priority, "priceMultiplier": ch.PriceMultiplier,

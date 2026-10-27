@@ -51,8 +51,6 @@ export default {
   'channels.personalProxy': '个人出站代理',
   'channels.personalProxyExtra': '支持 http 或 socks5；不需要代理时留空。',
   'channels.allowPublicProxy': '允许使用公共代理参与优选',
-  'channels.maskFingerprint': '客户端指纹伪装',
-  'channels.maskFingerprintExtra': '出站将 SDK 的 OS 指纹（x-stainless-os/arch、sec-ch-ua-platform）改写为 Windows，其余请求头原样保留；用于上游按 OS 放行/拦截的转售线路。',
   'channels.modelMapping': '模型映射（请求名 → 上游名）',
   'channels.mappingFromPlaceholder': '请求模型名',
   'channels.mappingToPlaceholder': '上游模型名',

@@ -1,20 +1,12 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.80
-- 日期：2026-10-16
+- 版本：v1.5.79
+- 日期：2026-10-13
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
-> - v1.5.80：**客户端指纹伪装**（FR-R11，§5.6）——渠道新增「客户端指纹伪装」开关
->   （默认关）：开启后出站请求把 SDK 的 OS 指纹头改写为 Windows 形态
->   （`x-stainless-os: Windows`、`x-stainless-arch: x64`、`sec-ch-ua-platform: "Windows"`），
->   **其余请求头（含 User-Agent 与其余 x-stainless-\*）原样透传**。真实 key 对照实验
->   （2026-10-16，co-cdn.yes.vg）定性：拦截面为 `x-stainless-os`（非 Windows 恒 503
->   "Service resources busy"、Windows 稳定 200、UA 与 arch 不参与判定）；剥离 SDK 头或
->   改写 UA 会破坏 Claude Code 客户端特征、触发上游 preflight 400——故实现为最小改写
->   而非剥离。导出/导入与渠道 CRUD 同步支持该字段
 > - v1.5.79：**费用估算按人民币显示**（§5.9）——汇率定时同步（FR-M7）补齐展示侧：
 >   ① 新增用户侧 `GET /api/exchange-rate`，返回当前生效汇率与元信息（mode/source/
 >   updatedAt，与计费同源、缺省回退 7.2）；② 统计页与管理员用量看板工具条增加
@@ -821,7 +813,6 @@ US13 统一管理模型（P7）
 | line_strategy | `auto`（默认，探测择优）/ `manual`（固定第一条线路，行为可预期） |
 | proxy_url | 可选**个人**出站代理（http/socks5，可带认证），加密存储 |
 | allow_public_proxy | 是否使用公共代理参与优选；复制模板时取模板默认值，空白新建默认关 |
-| mask_fingerprint | 客户端指纹伪装（默认关，FR-R11）：开启后出站把 OS 指纹头改写为 Windows 形态（`x-stainless-os`/`x-stainless-arch`/`sec-ch-ua-platform`），其余头原样透传 |
 | models[] | 该渠道声明服务的模型名列表；属于基础配置，可一键从上游拉取 |
 | model_mapping | 可选映射：请求模型名 → 上游模型名（精确匹配，未命中则透传原名） |
 | forward_mode | `passthrough`（默认透明转发）/ `convert`（高级设置，启用跨协议转换） |
@@ -1009,15 +1000,6 @@ US13 统一管理模型（P7）
   侧能一眼区分**上游故障 / 熔断重试 / keyway 自身错误**；非 JSON 结构保持原文不动，
   不破坏透传语义。渠道唯一且熔断时客户端看到的 429 与上游直挂时相同（旁路放行），
   该标注即消除此盲区
-- FR-R11 **客户端指纹伪装**（v1.5.80）：渠道高级设置新增开关（默认关，随渠道即时生效）。
-  开启后该渠道出站请求把 SDK 的 OS 指纹头**改写为 Windows 形态**：① `x-stainless-os`
-  → `Windows`；② `x-stainless-arch` → `x64`；③ `sec-ch-ua-platform` → `"Windows"`。
-  其余请求头（User-Agent、其余 `x-stainless-*`、自定义业务头）一律原样透传，认证头仍由
-  网关重写；客户端未带这些指纹头时不凭空捏造。定性依据（真实 key 对照实验）：部分转售
-  线路按 `x-stainless-os` 放行/拦截（非 Windows 恒 503 "Service resources busy"，
-  Windows 稳定 200；UA 是否含 OS 字样不影响判定）；而剥离 `x-stainless-*` 或改写 UA
-  会破坏 Claude Code 客户端特征、触发上游 preflight 400——因此只做最小 OS 头改写。
-  关闭时保持既有透明转发语义不变
 
 ### 5.6.1 协议类型与透明转发
 
@@ -1381,7 +1363,7 @@ catalog_models(id, name UNIQUE, pricing_model, note, enabled, created_at, update
 
 channels(id, user_id, copied_from_template_id NULL,       -- 仅来源标记，不参与路由
          name, type, base_urls_json, key_ids_json, key_strategy, line_strategy,
-         proxy_url_enc, allow_public_proxy BOOL, mask_fingerprint BOOL,
+         proxy_url_enc, allow_public_proxy BOOL,
          models_json, model_mapping_json, forward_mode,
          priority, price_multiplier, pricing_mode, cny_ratio,
          is_default, enabled, last_ok_at, last_error, created_at)
@@ -1461,7 +1443,6 @@ settings(key, value)        -- 注册策略、保留期、探测频率、飞书 
 | A31 | 错误率口径 | 流内失败的请求（200 + 错误摘要）在统计汇总/分组错误数与链路状态错误率中按失败计（不再显示 0% 错误率、与熔断状态矛盾），不进入最近生效流量（同组合回退到最近一次真实成功行）；纯 200 成功行、客户端断开行不受影响 |
 | A32 | 新模型通知 | 管理员往模型目录新增模型后，用户在任意页面右上角铃铛出现红点；点开面板列出该模型并「去添加」直达模型目录 Tab，红点随即消失；把模型添加到渠道后红点与模型页提示不再出现；目录再次新增另一模型时红点重现 |
 | A33 | 费用人民币展示 | 统计页与管理员用量看板出现 USD/CNY 切换且选择刷新后保持（localStorage）；切到 CNY 后统计汇总/分组表/日志列表费用估算以 ¥ 显示、数值≈美元值×当前生效汇率，悬停提示折算汇率/来源/更新时间；价目单价与导出 CSV 保持美元；汇率接口不可达或未就绪时费用回退美元显示 |
-| A34 | 客户端指纹伪装（FR-R11） | 渠道开启「客户端指纹伪装」后（高级设置开关，默认关）：客户端带 `x-stainless-os: Linux`、`x-stainless-arch: x64`、`sec-ch-ua-platform: "Linux"` 请求，上游收到 `x-stainless-os: Windows`、`x-stainless-arch: x64`、`sec-ch-ua-platform: "Windows"`，User-Agent 与其余头（如 `x-stainless-lang`、自定义头）原样到达；客户端未带指纹头时不新增指纹头；未开启的渠道全部指纹头原样透传；开启后经该渠道的真实模型调用成功（上游按 os 头放行 Windows）；开关随渠道编辑即时生效；配置导出/导入保留该字段 |
 
 ## 10. 里程碑
 
@@ -1473,7 +1454,6 @@ settings(key, value)        -- 注册策略、保留期、探测频率、飞书 
 | v1.5.11 | 汇率自动同步（fxrate 后台任务 + 三源回退 + auto/manual 模式 + 手动同步 API） | ✅ 完成 |
 | v1.5.14 | 汇率来源地址展示（source_url 落库 + 设置页链接展示 + API 回显） | ✅ 完成 |
 | v1.5.79 | 费用估算人民币展示（用户侧汇率接口 + USD/CNY 切换，仅展示层折算） | ✅ 完成 |
-| v1.5.80 | 客户端指纹伪装（渠道级 OS 指纹头改写为 Windows，FR-R11；真实 key 实测定性拦截面） | ✅ 完成 |
 | v1.5.16 | 统计页：分组维度名称化、未定价按当前价目补算、自定义时间窗、最近生效流量 5 条 | ✅ 完成 |
 | v1.5.22 | 渠道测试修正：探测协议判定/模型映射与真实转发对齐（含协议回退），矩阵并发探测 + 前端即时反馈 | ✅ 完成 |
 | v1.5.23 | 探测模型回退（前 3 个模型依序尝试）+ 失败信息携带上游 error.message 摘要 + 组合级总超时 | ✅ 完成 |

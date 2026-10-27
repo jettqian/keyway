@@ -23,14 +23,14 @@ import (
 const configImportMaxBytes = 4 << 20
 
 // configExportFile 导出文件契约（version 1）：
-//   - 密钥以名称为引用键（每用户内唯一，跨实例可读），渠道的密钥绑定导出为 keyNames
-//   - 渠道以文件内 id（导出时的 DB id）为引用键，供令牌的渠道绑定重映射
-//   - mode 仅作信息标注；导入按字段存在性自适应（value/plaintext/proxyUrl 缺失即
-//     按结构处理），因此同一文件允许混合（如含密钥值但不含令牌明文）
+// - 密钥以名称为引用键（每用户内唯一，跨实例可读），渠道的密钥绑定导出为 keyNames
+// - 渠道以文件内 id（导出时的 DB id）为引用键，供令牌的渠道绑定重映射
+// - mode 仅作信息标注；导入按字段存在性自适应（value/plaintext/proxyUrl 缺失即
+//   按结构处理），因此同一文件允许混合（如含密钥值但不含令牌明文）
 type configExportFile struct {
-	App        string             `json:"app"`     // "keyway"
-	Format     string             `json:"format"`  // "user-config"
-	Version    int                `json:"version"` // 1
+	App        string             `json:"app"`      // "keyway"
+	Format     string             `json:"format"`   // "user-config"
+	Version    int                `json:"version"`  // 1
 	ExportedAt int64              `json:"exportedAt"`
 	Mode       string             `json:"mode"` // full | structure
 	Keys       []configExportKey  `json:"keys"`
@@ -55,7 +55,6 @@ type configExportChan struct {
 	LineStrategy     string            `json:"lineStrategy"`
 	ProxyURL         string            `json:"proxyUrl,omitempty"` // 仅完整导出
 	AllowPublicProxy bool              `json:"allowPublicProxy"`
-	MaskFingerprint  bool              `json:"maskFingerprint"`
 	Models           []string          `json:"models"`
 	ModelMapping     map[string]string `json:"modelMapping"`
 	ForwardMode      string            `json:"forwardMode"`
@@ -72,8 +71,8 @@ type configExportTok struct {
 	ModelScope   string  `json:"modelScope,omitempty"`
 	ExpiresAt    *int64  `json:"expiresAt"`
 	Restricted   bool    `json:"restricted"`
-	ChannelIDs   []int64 `json:"channelIds"`          // 引用 channels[].id（文件内）
-	ChannelOrder []int64 `json:"channelOrder"`        // 同上
+	ChannelIDs   []int64 `json:"channelIds"`   // 引用 channels[].id（文件内）
+	ChannelOrder []int64 `json:"channelOrder"` // 同上
 	Plaintext    string  `json:"plaintext,omitempty"` // 仅完整导出
 }
 
@@ -204,7 +203,6 @@ func channelToExport(ch *store.Channel, keyNameByID map[int64]string) configExpo
 		BaseURLs: urls, KeyNames: keyNames,
 		KeyStrategy: ch.KeyStrategy, LineStrategy: ch.LineStrategy,
 		AllowPublicProxy: ch.AllowPublicProxy == 1,
-		MaskFingerprint:  ch.MaskFingerprint == 1,
 		Models:           models, ModelMapping: mapping,
 		ForwardMode: ch.ForwardMode, Priority: ch.Priority,
 		PriceMultiplier: ch.PriceMultiplier, PricingMode: ch.PricingMode,
@@ -213,12 +211,11 @@ func channelToExport(ch *store.Channel, keyNameByID map[int64]string) configExpo
 }
 
 // handleConfigImport 导入用户配置（合并模式，重复导入幂等）：
-//   - 密钥：同名复用现有（不覆盖值）；含明文值且无同名的创建；无值且无同名的悬空
-//   - 渠道：同名跳过复用（不新建副本，令牌绑定重映射到现有渠道）；无同名的创建，
-//     密钥绑定按名称重映射，全部悬空的渠道以草稿（停用）导入，绑定密钥后手动启用
-//   - 令牌：同名跳过；无同名的创建——含明文的按明文重建（实例迁移后 Agent 零改配，
-//     key_hash 全局唯一，他人持有同值令牌时跳过），无明文的随机签发新值
-//
+// - 密钥：同名复用现有（不覆盖值）；含明文值且无同名的创建；无值且无同名的悬空
+// - 渠道：同名跳过复用（不新建副本，令牌绑定重映射到现有渠道）；无同名的创建，
+//   密钥绑定按名称重映射，全部悬空的渠道以草稿（停用）导入，绑定密钥后手动启用
+// - 令牌：同名跳过；无同名的创建——含明文的按明文重建（实例迁移后 Agent 零改配，
+//   key_hash 全局唯一，他人持有同值令牌时跳过），无明文的随机签发新值
 // 整个导入在单事务内执行，任一硬错误整体回滚；条目级问题跳过并记入 warnings
 func (s *Server) handleConfigImport(c *gin.Context) {
 	u := currentUser(c)
@@ -358,8 +355,7 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 			Name: ec.Name, Type: ec.Type, BaseURLs: ec.BaseURLs, KeyIDs: keyIDs,
 			KeyStrategy: ec.KeyStrategy, LineStrategy: ec.LineStrategy,
 			ProxyURL: ec.ProxyURL, AllowPublicProxy: ec.AllowPublicProxy,
-			MaskFingerprint: ec.MaskFingerprint,
-			Models:          ec.Models, ModelMapping: ec.ModelMapping,
+			Models: ec.Models, ModelMapping: ec.ModelMapping,
 			ForwardMode: ec.ForwardMode, Priority: ec.Priority,
 			PriceMultiplier: ec.PriceMultiplier, PricingMode: ec.PricingMode,
 			CNYRatio: ec.CNYRatio, IsDefault: ec.IsDefault, Enabled: ec.Enabled,

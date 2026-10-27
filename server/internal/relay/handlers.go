@@ -654,9 +654,7 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 		return nil, "", err
 	}
 	if a.request != nil {
-		// 指纹伪装（FR-R11）：按渠道开关剥离客户端 OS 指纹后转发
-		mask := a.rc != nil && a.rc.Channel != nil && a.rc.Channel.MaskFingerprint == 1
-		copyForwardHeaders(req.Header, a.request.Header, mask)
+		copyForwardHeaders(req.Header, a.request.Header)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Del("Authorization")
@@ -694,31 +692,12 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 }
 
 // copyForwardHeaders 保留透明转发所需的普通请求头，认证头由网关重新写入。
-// mask 开启（FR-R11）时做 **OS 指纹改写**（实测决策，勿改回剥离）：
-// x-stainless-os → Windows、x-stainless-arch → x64、sec-ch-ua-platform → "Windows"，
-// 其余请求头（含 User-Agent 与其余 x-stainless-*）原样透传。依据（2026-10-16 真实
-// key 对照实验，co-cdn.yes.vg）：① 拦截面仅 x-stainless-os——非 Windows 恒 503
-// "Service resources busy"，Windows 稳定 200，UA 是否含 OS 字样无影响；② 剥离
-// x-stainless-*/改写 UA 会破坏 Claude Code 客户端特征，触发上游 preflight 400。
-func copyForwardHeaders(dst, src http.Header, mask bool) {
+func copyForwardHeaders(dst, src http.Header) {
 	for name, values := range src {
 		lower := strings.ToLower(name)
 		if lower == "authorization" || lower == "x-api-key" || lower == "host" ||
 			lower == "content-length" || lower == "connection" || lower == "accept-encoding" {
 			continue
-		}
-		if mask {
-			switch lower {
-			case "x-stainless-os":
-				dst.Set("X-Stainless-Os", "Windows")
-				continue
-			case "x-stainless-arch":
-				dst.Set("X-Stainless-Arch", "x64")
-				continue
-			case "sec-ch-ua-platform":
-				dst.Set("Sec-CH-UA-Platform", `"Windows"`)
-				continue
-			}
 		}
 		for _, value := range values {
 			dst.Add(name, value)
