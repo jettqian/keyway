@@ -1,6 +1,16 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.76（与 PRD v1.5.79 对应；**费用估算按人民币显示**——新增用户侧会话接口
+- 版本：v1.77（与 PRD v1.5.81 对应；**ChatGPT 账号登录接入**——keys 新增 `kind` 列
+  （`api` 存量默认 / `chatgpt` OAuth 账号），chatgpt 密钥 `value_enc` 存加密 JSON
+  {access_token, refresh_token, account_id, plan, expires_at}；新增
+  `internal/chatgpt` 包（PKCE 授权链接生成、令牌交换/刷新、JWT claim 解析、
+  singleflight 惰性刷新 `EnsureFresh`，端点与 client 常量对齐 codex-rs）；relay
+  `sendUpstream` 按 kind 解析有效 access_token 并注入 `chatgpt-account-id`，
+  responses 管线对 chatgpt 渠道补 `store:false`（仅缺省时），其余头原样透传
+  **不做指纹伪装**（v1.5.80 指纹伪装已回退，透传即真实客户端指纹）；probe 自动
+  预热/矩阵跳过 chatgpt 渠道（省订阅额度），逐密钥测试解析有效令牌验证连通；
+  API 新增 login/start、login/complete、keys/:id/refresh 三端点；详见 §10.5）；
+  前版 v1.76：与 PRD v1.5.79 对应；**费用估算按人民币显示**——新增用户侧会话接口
   `GET /api/exchange-rate`（当前生效 USD→CNY 汇率 + mode/source/updatedAt 元信息，
   `usage.CurrentUsdCnyRate` 与计费同源、缺省回退 7.2）；前端新增 `web/src/currency.tsx`：
   货币上下文（localStorage `kw-currency` 记忆，默认 CNY）+ 汇率模块级单次拉取缓存
@@ -516,6 +526,10 @@ CREATE TABLE keys (                        -- 上游密钥池
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
   name TEXT NOT NULL, value_enc BLOB NOT NULL, note TEXT DEFAULT '',
   status INTEGER NOT NULL DEFAULT 1,       -- 1 启用 / 2 禁用
+  kind TEXT NOT NULL DEFAULT 'api',        -- api | chatgpt（OAuth 账号，v1.5.81；
+                                           --  chatgpt 时 value_enc = 加密 JSON：
+                                           --  access_token/refresh_token/account_id/
+                                           --  plan/expires_at）
   last_error TEXT, cooldown_until INTEGER DEFAULT 0,
   created_at INTEGER,
   UNIQUE(user_id, name)
@@ -1428,6 +1442,59 @@ GET /oauth/feishu/callback?code&state
 - 飞书登录关闭：按钮隐藏，已绑定用户密码登录不受影响（无密码的飞书-only 用户由
   管理员重置密码）
 
+### 10.5 ChatGPT 账号 OAuth（FR-K9~K12，v1.5.81）
+
+原理：复用 Codex CLI 的公开 OAuth client（PKCE public client）走
+"Sign in with ChatGPT"，取得 access/refresh token 后直接调用 ChatGPT 后端
+Responses 端点，消耗 Plus 订阅额度（与 API 余额隔离）。**社区方案，违反 OpenAI
+ToS，有封号风险**——登录向导明示，用户自担。
+
+```
+POST /api/keys/chatgpt/login/start
+  1. 生成 PKCE（code_verifier 32B 随机 → S256 challenge）+ state（32B 随机）
+  2. 待完成会话入内存表（state → {verifier, userID, expiresAt}，TTL 10 分钟）
+  3. 返回 authURL =
+     https://auth.openai.com/oauth/authorize?response_type=code
+       &client_id=app_EMoamEEZ73f0CkXaXp7hrann
+       &redirect_uri=http://localhost:1455/auth/callback
+       &scope=openid profile email offline_access
+       &code_challenge=...&code_challenge_method=S256&state=...
+用户浏览器登录 → 跳转 localhost:1455（无人监听，页面报错——预期行为），
+用户复制地址栏完整 URL 粘贴回控制台：
+POST /api/keys/chatgpt/login/complete {callbackUrl, name?}
+  1. 从 callbackUrl 解析 code+state，校验 state 归属当前用户且未过期（一次性）
+  2. POST https://auth.openai.com/oauth/token
+     grant_type=authorization_code&code&redirect_uri&client_id&code_verifier
+  3. 解 access_token JWT（payload 不验签——签名校验由 OpenAI 后端在调用时完成，
+     网关仅提取展示用 claim）：
+     claim["https://api.openai.com/auth"].chatgpt_account_id / chatgpt_plan_type
+  4. 建 keys 行：kind='chatgpt'，value_enc=AES-GCM(PurposeKey, JSON
+     {access_token, refresh_token, account_id, plan, expires_at})，
+     名称缺省 chatgpt-<account_id 后 6 位>
+```
+
+- **令牌刷新（EnsureFresh）**：relay `sendUpstream` 对 kind=chatgpt 的密钥解出
+  JSON，`expires_at - now < 5min` 时以 refresh_token 换新
+  （grant_type=refresh_token，OpenAI 可能轮转 refresh_token，新对整体落库），
+  按密钥 ID singleflight 防并发重复刷新；刷新失败 → 该尝试以错误失败（正常走
+  换 key/渠道管线），密钥记 last_error
+- **转发注入（仅功能必需项）**：`Authorization: Bearer <有效 access_token>` +
+  `chatgpt-account-id: <account_id>`；responses 管线请求体缺省 `store` 字段时补
+  `store:false`（ChatGPT 后端要求，Codex 客户端本就携带）。**其余请求头经
+  copyForwardHeaders 原样透传，不做指纹伪装**（v1.5.80 教训：透传即真实客户端
+  指纹，伪造反增维护负担）
+- **探测适配**：MaybeWarmup 与 ProbeChannel 对含 chatgpt 密钥的渠道直接跳过
+  （探测消耗订阅额度且后端无轻量健康端点）；ProbeKeys 对 chatgpt 密钥解析有效
+  令牌后发单个最小流式请求验证（用户主动诊断，成本 ≈ 十几 token）
+- **线路**：渠道 base_url 填 `https://chatgpt.com/backend-api/codex`（openai 型，
+  /v1/responses 透传管线原样复用）；国内不可直连，走渠道现有代理机制
+  （个人/公共代理均可——用户明确不限制流量形态；固定出口更稳，控制台提示）
+- **安全**：令牌 JSON 复用 PurposeKey 加密；日志/DTO 任何位置不回显令牌；
+  `PUT /keys/:id` 拒绝为 chatgpt 密钥改值（只能改名/备注/启停/删除/刷新）；
+  令牌交换与刷新走 `http.DefaultTransport`（尊重 HTTPS_PROXY 环境变量，
+  覆盖服务端到 auth.openai.com 不通的场景）
+- **导出导入**：value 即令牌 JSON，导出导入逻辑与普通密钥完全一致，零特判
+
 ## 11. API 设计
 
 ### 11.1 控制台 `/api`（会话鉴权 + CSRF 头）
@@ -1439,6 +1506,9 @@ GET /oauth/feishu/callback?code&state
 | GET /api/auth/feishu/url；PUT /api/auth/feishu/bind | 登录跳转 / 绑定解绑 |
 | GET/POST/PUT/DELETE /api/keys[/:id] | 密钥池 CRUD |
 | PUT /api/keys/:id/status | 密钥启用/停用（停用后不参与渠道轮换） |
+| POST /api/keys/chatgpt/login/start | 发起 ChatGPT 账号登录：返回 PKCE 授权链接（待完成会话存内存 10 分钟，v1.5.81） |
+| POST /api/keys/chatgpt/login/complete | 完成登录：`{callbackUrl, name?}`，解析 code+state 换令牌建 kind=chatgpt 密钥（v1.5.81） |
+| POST /api/keys/:id/refresh | 手动刷新 chatgpt 密钥令牌（v1.5.81） |
 | GET/POST/PUT/DELETE /api/channels[/:id] | 渠道 CRUD（POST 支持可选 from_template_id：校验模板并计数，见 §9） |
 | GET /api/channels | 读取渠道及其模型列表（模型管理页数据源） |
 | GET /api/models/catalog | 全局模型目录（启用项，用户点选数据源，只读） |

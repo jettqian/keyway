@@ -1,12 +1,22 @@
 # Keyway 需求文档（PRD）
 
-- 版本：v1.5.79
-- 日期：2026-10-13
+- 版本：v1.5.81
+- 日期：2026-10-27
 - 状态：M1–M6 全部实现并部署；文档与实现同步
 - 定位：自托管、多租户、纯转发的 AI API 网关。每个用户自带上游 key（BYOK），获得一个
   统一且永久不变的 OpenAI/Anthropic 兼容端点。
 
 > 变更记录：
+> - v1.5.81：**ChatGPT 账号登录接入**（FR-K9~K12，§5.2）——密钥池新增 OAuth 型密钥
+>   （kind=chatgpt）：以 Codex CLI 公开 OAuth client（PKCE）走 "Sign in with ChatGPT"，
+>   粘贴回调地址完成登录，消耗 Plus 订阅额度而非 API 余额；令牌自动刷新落库；转发
+>   仅注入功能必需项（Bearer access_token、chatgpt-account-id、store:false 兜底），
+>   其余头原样透传（**不做指纹伪装**——2026-10-16 已回退过 v1.5.80 指纹伪装，透传
+>   即真实客户端指纹，伪造反增版本维护负担与不一致风险）；自动线路预热跳过含
+>   chatgpt 密钥的渠道（省订阅额度），「逐密钥测试」支持验证 chatgpt 密钥连通性。
+>   **ToS 风险提示**：该方案违反 OpenAI 服务条款（消费级订阅额度仅限官方客户端使用），
+>   有账号受限/封禁风险，登录向导明示、用户自担；缓解手段为固定出口建议与知情免责，
+>   不干预用户流量形态（公共代理可用、并发不限制——用户明确要求）
 > - 回退（2026-10-16）：v1.5.80「客户端指纹伪装」整体回退（commit 62f6722 → 49e246d）。
 >   该功能源于临时性排查结论：真实 key 对照实验定性某转售线路按 `x-stainless-os`
 >   放行 Windows、软拦 MacOS/Linux（503 resources busy 伪装文案），遂实现渠道级
@@ -801,6 +811,22 @@ US13 统一管理模型（P7）
   （多账号额度跟踪）
 - FR-K8 启用/停用：密钥页可随时停用某把密钥（status=2），停用后不参与任何渠道的密钥
   轮换与路由；重新启用后恢复。配置保留，不影响渠道绑定关系
+- FR-K9 ChatGPT 账号登录（v1.5.81）：密钥池支持创建 OAuth 型密钥（`kind=chatgpt`）：
+  控制台发起 → 后端生成 PKCE + 授权链接（Codex CLI 公开 client，redirect_uri 固定
+  `http://localhost:1455/auth/callback`）→ 用户浏览器登录 ChatGPT → 回调页报错无妨，
+  **复制地址栏完整 URL 粘贴回控制台** → 后端校验 state、换令牌、解 JWT 提取
+  account_id/plan → 生成 chatgpt 密钥（`value_enc` 存加密 JSON：access_token/
+  refresh_token/account_id/plan/expires_at）。登录向导首屏明示 ToS 风险与自担原则
+- FR-K10 令牌自动刷新：转发取用时惰性刷新（剩余有效期 < 5 分钟即刷新，singleflight
+  防并发重复刷新），新令牌加密落库；刷新端点可手动触发；access_token/refresh_token
+  均不回显
+- FR-K11 chatgpt 密钥转发集成：出站 Authorization 用**当前有效** access_token，附加
+  `chatgpt-account-id` 头；请求体缺省 `store` 字段时补 `store:false`（ChatGPT 后端
+  要求；Codex 客户端本就携带，无副作用）。**其余请求头原样透传，不做指纹伪装**；
+  上游 401（令牌彻底失效需重登）原样透传不自动重试
+- FR-K12 探测适配：自动线路预热（MaybeWarmup）与「测试渠道」矩阵跳过含 chatgpt
+  密钥的渠道（每次探测消耗订阅额度，且 ChatGPT 后端无常备轻量端点）；「逐密钥测试」
+  支持验证 chatgpt 密钥（解析有效令牌发单个最小请求，验证登录态与连通性）
 
 ### 5.3 渠道管理（核心）
 
@@ -1336,7 +1362,9 @@ HTTP 状态码上：200 = 成功 → 不换 key、不换渠道、还把渠道×�
 
 - `openai`：POST {线路}/v1/chat/completions、/v1/responses、/v1/completions、
   /v1/embeddings（线路 = base_urls 优选所得，密钥 = key_ids 优选所得；
-  base_url 已以 /v1 结尾时不再重复拼接）
+  base_url 已以 /v1 结尾时不再重复拼接）；ChatGPT 后端渠道（base_url=
+  `https://chatgpt.com/backend-api/codex`，绑 chatgpt 密钥）走 /v1/responses，
+  仅注入功能必需项（见 FR-K11）
 - `anthropic`：POST {线路}/v1/messages，透传 anthropic-version
 
 ### 7.3 错误契约
@@ -1355,7 +1383,11 @@ users(id, username, password_hash NULL,       -- 飞书-only 用户可无密码
       feishu_user_id UNIQUE NULL, role, status, created_at, last_login_at)
 
 keys(id, user_id, name, value_enc, note, status,
-     last_error, cooldown_until, created_at)              -- 上游密钥池（≤30/人）
+     kind DEFAULT 'api',                       -- api | chatgpt（OAuth 账号，v1.5.81）
+     last_error, cooldown_until, created_at)   -- 上游密钥池（≤30/人）
+                                               -- kind=chatgpt 时 value_enc = 加密 JSON
+                                               -- {access_token, refresh_token, account_id,
+                                               --  plan, expires_at}
 
 channel_templates(id, name, type, base_urls_json, line_strategy,
                   models_json, model_mapping_json,
@@ -1448,6 +1480,7 @@ settings(key, value)        -- 注册策略、保留期、探测频率、飞书 
 | A31 | 错误率口径 | 流内失败的请求（200 + 错误摘要）在统计汇总/分组错误数与链路状态错误率中按失败计（不再显示 0% 错误率、与熔断状态矛盾），不进入最近生效流量（同组合回退到最近一次真实成功行）；纯 200 成功行、客户端断开行不受影响 |
 | A32 | 新模型通知 | 管理员往模型目录新增模型后，用户在任意页面右上角铃铛出现红点；点开面板列出该模型并「去添加」直达模型目录 Tab，红点随即消失；把模型添加到渠道后红点与模型页提示不再出现；目录再次新增另一模型时红点重现 |
 | A33 | 费用人民币展示 | 统计页与管理员用量看板出现 USD/CNY 切换且选择刷新后保持（localStorage）；切到 CNY 后统计汇总/分组表/日志列表费用估算以 ¥ 显示、数值≈美元值×当前生效汇率，悬停提示折算汇率/来源/更新时间；价目单价与导出 CSV 保持美元；汇率接口不可达或未就绪时费用回退美元显示 |
+| A34 | ChatGPT 账号登录 | 登录向导发起后浏览器打开 auth.openai.com 授权页；登录完成后把回调 URL（即使页面报错）粘贴回控制台即创建 kind=chatgpt 密钥（列表显示账号 plan 与令牌过期时间，不回显任何令牌）；该密钥绑入 openai 型渠道（base_url=chatgpt 后端）后 Codex 客户端经 /v1/responses 正常对话，消耗订阅额度；剩余有效期不足自动刷新且刷新后后续请求无需人工干预；令牌彻底失效时客户端收到明确 401 文案；含该密钥的渠道不触发自动线路预热，「逐密钥测试」可验证连通；config 导出导入对 chatgpt 密钥行为与普通密钥一致（value 为令牌 JSON） |
 
 ## 10. 里程碑
 
@@ -1459,6 +1492,7 @@ settings(key, value)        -- 注册策略、保留期、探测频率、飞书 
 | v1.5.11 | 汇率自动同步（fxrate 后台任务 + 三源回退 + auto/manual 模式 + 手动同步 API） | ✅ 完成 |
 | v1.5.14 | 汇率来源地址展示（source_url 落库 + 设置页链接展示 + API 回显） | ✅ 完成 |
 | v1.5.79 | 费用估算人民币展示（用户侧汇率接口 + USD/CNY 切换，仅展示层折算） | ✅ 完成 |
+| v1.5.81 | ChatGPT 账号登录接入（OAuth 型密钥 + 令牌自动刷新 + 转发/探测适配 + 登录向导） | ✅ 完成 |
 | v1.5.16 | 统计页：分组维度名称化、未定价按当前价目补算、自定义时间窗、最近生效流量 5 条 | ✅ 完成 |
 | v1.5.22 | 渠道测试修正：探测协议判定/模型映射与真实转发对齐（含协议回退），矩阵并发探测 + 前端即时反馈 | ✅ 完成 |
 | v1.5.23 | 探测模型回退（前 3 个模型依序尝试）+ 失败信息携带上游 error.message 摘要 + 组合级总超时 | ✅ 完成 |
