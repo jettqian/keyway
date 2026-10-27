@@ -104,51 +104,71 @@ export const ConsoleLayout: React.FC = () => {
                   onClick={() => setNavOpen(true)}
                 />
                 <div className="brand-name nav-brand">Keyway</div>
-                <div style={{ flex: 1 }} />
+                <div className="header-spacer" />
               </>
             )}
+            {/* 窄屏下 GitHub/主题/语言收进用户菜单，头部只留铃铛与账户入口，
+                避免右侧控件把汉堡按钮挤出视口 */}
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <Tooltip title={t('common.github')}>
-                <Button
-                  type="text"
-                  className="pref-trigger"
-                  aria-label={t('common.github')}
-                  icon={<GithubOutlined />}
-                  href={GITHUB_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                />
-              </Tooltip>
-              <Tooltip title={t('common.toggleTheme')}>
-                <Button
-                  type="text"
-                  className="pref-trigger"
-                  aria-label={t('common.toggleTheme')}
-                  icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
-                  onClick={toggle}
-                />
-              </Tooltip>
-              <Tooltip title={t('common.toggleLang')}>
-                <Button
-                  type="text"
-                  className="pref-trigger"
-                  aria-label={t('common.toggleLang')}
-                  icon={<TranslationOutlined />}
-                  onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
-                >
-                  {locale === 'zh' ? 'EN' : '中'}
-                </Button>
-              </Tooltip>
+              {!isMobile && (
+                <>
+                  <Tooltip title={t('common.github')}>
+                    <Button
+                      type="text"
+                      className="pref-trigger"
+                      aria-label={t('common.github')}
+                      icon={<GithubOutlined />}
+                      href={GITHUB_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  </Tooltip>
+                  <Tooltip title={t('common.toggleTheme')}>
+                    <Button
+                      type="text"
+                      className="pref-trigger"
+                      aria-label={t('common.toggleTheme')}
+                      icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
+                      onClick={toggle}
+                    />
+                  </Tooltip>
+                  <Tooltip title={t('common.toggleLang')}>
+                    <Button
+                      type="text"
+                      className="pref-trigger"
+                      aria-label={t('common.toggleLang')}
+                      icon={<TranslationOutlined />}
+                      onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
+                    >
+                      {locale === 'zh' ? 'EN' : '中'}
+                    </Button>
+                  </Tooltip>
+                </>
+              )}
               <NotificationBell />
             </span>
             <Dropdown
               menu={{
                 items: [
+                  ...(isMobile
+                    ? [
+                        { key: 'theme', icon: mode === 'dark' ? <SunOutlined /> : <MoonOutlined />, label: t('common.toggleTheme') },
+                        { key: 'lang', icon: <TranslationOutlined />, label: locale === 'zh' ? 'English' : '中文' },
+                        { key: 'github', icon: <GithubOutlined />, label: t('common.github') },
+                        { type: 'divider' as const },
+                      ]
+                    : []),
                   { key: 'backup', icon: <SaveOutlined />, label: t('layout.backup') },
                   { type: 'divider' },
                   { key: 'logout', icon: <LogoutOutlined />, label: t('layout.logout') },
                 ],
                 onClick: async ({ key }) => {
+                  if (key === 'theme') return toggle()
+                  if (key === 'lang') return setLocale(locale === 'zh' ? 'en' : 'zh')
+                  if (key === 'github') {
+                    window.open(GITHUB_URL, '_blank', 'noreferrer')
+                    return
+                  }
                   if (key === 'backup') {
                     setBackupOpen(true)
                     return
@@ -166,7 +186,7 @@ export const ConsoleLayout: React.FC = () => {
                   {user?.username?.slice(0, 1).toUpperCase()}
                 </Avatar>
                 <span className="user-chip-name">{user?.username ?? '...'}</span>
-                {isAdmin ? <Tag style={{ marginInlineEnd: 0 }}>{t('layout.adminTag')}</Tag> : null}
+                {isAdmin && !isMobile ? <Tag style={{ marginInlineEnd: 0 }}>{t('layout.adminTag')}</Tag> : null}
               </span>
             </Dropdown>
           </Header>

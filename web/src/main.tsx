@@ -24,6 +24,16 @@ const tokens = (dark: boolean) => ({
   borderRadius: 8,
   colorBgLayout: dark ? '#0e1417' : '#f4f7f8',
   colorText: dark ? '#d7e1e7' : '#173042',
+  // 亮色主色偏灰：antd 自动派生的浅色阶首档为 #bbc6c7（灰绿），菜单选中、
+  // info 提示框等发脏；亮色下显式给出清透浅青底，暗色派生正常不覆盖
+  ...(dark
+    ? {}
+    : {
+        colorPrimaryBg: '#e3f1f5',
+        colorPrimaryBgHover: '#cfe6ed',
+        colorInfoBg: '#eaf5f8',
+        colorInfoBorder: '#b8d9e3',
+      }),
   fontFamily: 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif',
 })
 
@@ -34,6 +44,8 @@ const Root: React.FC = () => {
   const dark = mode === 'dark'
   return (
     <ConfigProvider
+      // 关闭 antd 两字中文按钮自动插空格（「编 辑」与「重命名」混排不一致）
+      button={{ autoInsertSpace: false }}
       locale={locale === 'zh' ? zhCN : enUS}
       theme={{
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,

@@ -159,7 +159,7 @@ const LogsPage: React.FC = () => {
           },
         }}
         columns={[
-          { title: t('common.time'), dataIndex: 'createdAt', width: 150, render: (v: number | string) => formatDateTime(v) },
+          { title: t('common.time'), dataIndex: 'createdAt', width: 150, className: 'cell-time', render: (v: number | string) => formatDateTime(v) },
           {
             title: t('logs.channel'),
             dataIndex: 'channelName',
@@ -179,21 +179,25 @@ const LogsPage: React.FC = () => {
             render: (s: number, l) => (s >= 400 || l.error ? <span className="status-error">{s}</span> : s),
           },
           {
-            // 首字节/总耗时合并一列
+            // 首字节/总耗时合并一列；无首字节（非流式或失败）时只显示总耗时
             title: t('logs.timing'),
             width: 130,
-            render: (_, l) => (
-              <span>
-                <span className="text-tertiary">{t('logs.ttftShort')}</span>
-                {l.ttftMs ? fmtMs(l.ttftMs) : '—'}
-                <span className="text-tertiary"> · {t('logs.totalShort')}</span>
-                {l.totalMs ? fmtMs(l.totalMs) : '—'}
-              </span>
-            ),
+            className: 'cell-time',
+            render: (_, l) =>
+              l.ttftMs ? (
+                <span>
+                  <span className="text-tertiary">{t('logs.ttftShort')}</span>
+                  {fmtMs(l.ttftMs)}
+                  <span className="text-tertiary"> · {t('logs.totalShort')}</span>
+                  {fmtMs(l.totalMs)}
+                </span>
+              ) : (
+                fmtMs(l.totalMs)
+              ),
           },
           {
             title: 'Tokens',
-            width: 150,
+            width: 120,
             align: 'right',
             render: (_, l) => (
               <span>
@@ -212,7 +216,8 @@ const LogsPage: React.FC = () => {
           {
             title: t('logs.error'),
             dataIndex: 'error',
-            ellipsis: { showTitle: false },
+            // 单元格内自行截断：antd ellipsis 列在 scroll x=max-content 下列宽被忽略，
+            // 不换行的长错误会把整表撑到 2000+px、错误列整段滚出视口
             render: (v?: string) =>
               v ? (
                 <Popover
@@ -225,12 +230,12 @@ const LogsPage: React.FC = () => {
                     </Typography.Paragraph>
                   }
                 >
-                  <span className="status-error" style={{ cursor: 'pointer' }} title={t('logs.viewFullError')}>
+                  <span className="status-error cell-clip" style={{ cursor: 'pointer' }} title={t('logs.viewFullError')}>
                     {v}
                   </span>
                 </Popover>
               ) : (
-                <span className="text-tertiary">-</span>
+                <span className="text-tertiary">—</span>
               ),
           },
         ]}

@@ -80,7 +80,7 @@ const LinksTable: React.FC<{ links: LinkStat[]; showOwner?: boolean }> = ({ link
     const ref = refs.get(r.model)
     if (!ref || r.attempts < MIN_SAMPLES) return fmtMs(r.avgMs)
     const rel = r.avgMs / ref
-    const color = rel <= 1.5 ? '#389e0d' : rel <= 3 ? '#d46b08' : '#cf1322'
+    const color = rel <= 1.5 ? 'var(--kw-success)' : rel <= 3 ? 'var(--kw-warning)' : 'var(--kw-danger)'
     return (
       <span style={{ color }}>
         {fmtMs(r.avgMs)}
@@ -165,7 +165,7 @@ const LinksTable: React.FC<{ links: LinkStat[]; showOwner?: boolean }> = ({ link
       render: (_: unknown, r: Row) => {
         if (r.kind !== 'link') return null
         if (r.attempts <= 0) return <span className="text-tertiary">—</span>
-        if (r.errorRate <= 0) return <span style={{ color: '#389e0d' }}>0%</span>
+        if (r.errorRate <= 0) return <span style={{ color: 'var(--kw-success)' }}>0%</span>
         return <Tag color={r.errorRate >= 50 ? 'red' : r.errorRate >= 20 ? 'volcano' : 'orange'}>{r.errorRate}%</Tag>
       },
     },
@@ -189,16 +189,20 @@ const LinksTable: React.FC<{ links: LinkStat[]; showOwner?: boolean }> = ({ link
     ;(c as { onCell?: unknown }).onCell = (r: Row) => (r.kind === 'header' ? { colSpan: i === 0 ? total : 0 } : {})
   })
 
+  // 排序与分级说明放在表格上方（原在卡片标题 extra 中，过长会把标题挤成「链路状态（渠…」）
   return (
-    <Table<Row>
-      rowKey={(r) => r.key}
-      size="small"
-      pagination={false}
-      scroll={{ x: 'max-content' }}
-      dataSource={rows}
-      rowClassName={(r) => (r.kind === 'header' ? 'links-group-header' : '')}
-      columns={columns}
-    />
+    <>
+      <div className="tab-note">{t('stats.linksHint')}</div>
+      <Table<Row>
+        rowKey={(r) => r.key}
+        size="small"
+        pagination={false}
+        scroll={{ x: 'max-content' }}
+        dataSource={rows}
+        rowClassName={(r) => (r.kind === 'header' ? 'links-group-header' : '')}
+        columns={columns}
+      />
+    </>
   )
 }
 

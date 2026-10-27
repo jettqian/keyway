@@ -128,6 +128,7 @@ const KeysPage: React.FC = () => {
         loading={loading}
         dataSource={keys}
         scroll={{ x: 'max-content' }}
+        pagination={{ hideOnSinglePage: true }}
         locale={{ emptyText: t('keys.empty') }}
         columns={[
           { title: t('common.name'), dataIndex: 'name' },
@@ -147,7 +148,7 @@ const KeysPage: React.FC = () => {
             render: (_, k) =>
               isChatgpt(k) ? (
                 <Space size={4} wrap>
-                  <Typography.Text code>{k.accountId || '-'}</Typography.Text>
+                  <Typography.Text code>{k.accountId || '—'}</Typography.Text>
                   {k.email && <Typography.Text type="secondary">{k.email}</Typography.Text>}
                   {/* access_token 到期属正常现象（下次使用自动刷新），不标红；刷新失败看状态列的 lastError */}
                   {k.expiresAt ? (
@@ -159,7 +160,7 @@ const KeysPage: React.FC = () => {
                   ) : null}
                 </Space>
               ) : (
-                '-'
+                <span className="text-tertiary">—</span>
               ),
           },
           { title: t('common.note'), dataIndex: 'note', ellipsis: true },
@@ -180,11 +181,12 @@ const KeysPage: React.FC = () => {
             title: t('keys.lastError'),
             dataIndex: 'lastError',
             ellipsis: true,
-            render: (v: string) => v || '-',
+            render: (v: string) => v || <span className="text-tertiary">—</span>,
           },
-          { title: t('common.createdAt'), dataIndex: 'createdAt', width: 180, render: (v: number | string) => formatDateTime(v) },
+          { title: t('common.createdAt'), dataIndex: 'createdAt', width: 180, className: 'cell-time', render: (v: number | string) => formatDateTime(v) },
           {
             title: t('common.action'),
+            fixed: 'right',
             width: hasChatgpt ? 280 : 200,
             render: (_, k) => (
               <Space>

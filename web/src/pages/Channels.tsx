@@ -332,6 +332,7 @@ const ChannelsPage: React.FC = () => {
         loading={loading}
         dataSource={channels}
         scroll={{ x: 'max-content' }}
+        pagination={{ hideOnSinglePage: true }}
         locale={{ emptyText: t('channels.empty') }}
         columns={[
           {
@@ -341,7 +342,7 @@ const ChannelsPage: React.FC = () => {
               <Space>
                 {n}
                 {c.copiedFromTemplateId ? <Tag>{t('channels.copiedFromTemplate')}</Tag> : null}
-                {c.isDefault ? <Tag color="blue">{t('channels.defaultTag')}</Tag> : null}
+                {c.isDefault ? <Tag className="tag-brand">{t('channels.defaultTag')}</Tag> : null}
               </Space>
             ),
           },
@@ -356,9 +357,9 @@ const ChannelsPage: React.FC = () => {
                 <Tag>{t('channels.transparent')}</Tag>
               ),
           },
-          { title: t('channels.lineCount'), width: 90, align: 'right', render: (_, c) => c.baseUrls.length },
-          { title: t('channels.keyCount'), width: 90, align: 'right', render: (_, c) => c.keyIds.length },
-          { title: t('channels.priority'), dataIndex: 'priority', width: 90, align: 'right' },
+          { title: t('channels.lineCount'), width: 76, align: 'right', render: (_, c) => c.baseUrls.length },
+          { title: t('channels.keyCount'), width: 76, align: 'right', render: (_, c) => c.keyIds.length },
+          { title: t('channels.priority'), dataIndex: 'priority', width: 76, align: 'right' },
           {
             title: t('common.model'),
             dataIndex: 'models',
@@ -396,7 +397,8 @@ const ChannelsPage: React.FC = () => {
           },
           {
             title: t('common.action'),
-            width: 250,
+            width: 224,
+            fixed: 'right',
             render: (_, c) => (
               <Space>
                 <Button size="small" onClick={() => openEdit(c)}>{t('common.edit')}</Button>
@@ -452,12 +454,12 @@ const ChannelsPage: React.FC = () => {
               {(fields, { add, remove }) => (
                 <>
                   {fields.map((f) => (
-                    <Space key={f.key} style={{ display: 'flex', marginBottom: 4 }}>
+                    <div key={f.key} className="line-row">
                       <Form.Item name={[f.name]} noStyle rules={[{ required: true, message: t('channels.baseUrlRequired') }]}>
-                        <Input placeholder="https://api.example.com" style={{ width: 420 }} />
+                        <Input placeholder="https://api.example.com" />
                       </Form.Item>
                       {fields.length > 1 ? <a onClick={() => remove(f.name)}>{t('common.delete')}</a> : null}
-                    </Space>
+                    </div>
                   ))}
                   {fields.length < 5 ? (
                     <Button type="dashed" onClick={() => add('')} block>
@@ -475,10 +477,9 @@ const ChannelsPage: React.FC = () => {
               placeholder={t('channels.selectFromKeyPool')}
             />
           </Form.Item>
-          <Space size="large">
+          <div className="form-grid-2">
             <Form.Item name="keyStrategy" label={t('channels.keyStrategy')}>
               <Select
-                style={{ width: 160 }}
                 options={[
                   { value: 'ordered', label: t('channels.keyStrategyOrdered') },
                   { value: 'round_robin', label: t('channels.keyStrategyRoundRobin') },
@@ -487,14 +488,13 @@ const ChannelsPage: React.FC = () => {
             </Form.Item>
             <Form.Item name="lineStrategy" label={t('channels.lineStrategy')}>
               <Select
-                style={{ width: 160 }}
                 options={[
                   { value: 'auto', label: t('channels.lineStrategyAuto') },
                   { value: 'manual', label: t('channels.lineStrategyManual') },
                 ]}
               />
             </Form.Item>
-          </Space>
+          </div>
           <Form.Item name="models" label={t('channels.models')} extra={t('channels.modelsExtra')}>
             <Select mode="tags" tokenSeparators={[',']} options={modelOptions} placeholder={t('channels.modelsPlaceholder')} />
           </Form.Item>

@@ -40,7 +40,7 @@ export function fmtTokens(value: number | null | undefined): string {
 
 // 耗时人性化：832ms、1.24s、2m05s（超过 1 分钟才进位到分）
 export function fmtMs(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value) || value <= 0) return '-'
+  if (value == null || !Number.isFinite(value) || value <= 0) return '—'
   if (value < 1000) return `${Math.round(value)}ms`
   if (value < 60_000) return `${(value / 1000).toFixed(2)}s`
   const m = Math.floor(value / 60_000)

@@ -9,6 +9,10 @@
   --kw-border: #e3e9eb;
   --kw-danger: #c1443c;
   --kw-primary: #176b87;
+  --kw-primary-soft: #e3f1f5;
+  --kw-primary-line: #b8d9e3;
+  --kw-success: #2e7d5b;
+  --kw-warning: #b86a0b;
   --kw-border-strong: #e6edef;
   --kw-header-sider-bg: #ffffff;
   --kw-hover: #f2f7f9;
@@ -37,6 +41,10 @@
   --kw-border: #22303a;
   --kw-danger: #e07b74;
   --kw-primary: #3f96b0;
+  --kw-primary-soft: #14303a;
+  --kw-primary-line: #245061;
+  --kw-success: #5fb08a;
+  --kw-warning: #e0a052;
   --kw-border-strong: #22303a;
   --kw-header-sider-bg: #121a1f;
   --kw-hover: #1a242a;
@@ -68,6 +76,15 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
 .text-tertiary { color: var(--kw-tertiary); }
 .tab-note { color: var(--kw-secondary); font-size: 13px; line-height: 1.6; margin-bottom: 12px; }
 
+/* 时间列：日期与时刻不折行（折成两行会让行高翻倍、扫读断裂） */
+.cell-time { white-space: nowrap; }
+/* 长文本单行截断（不依赖表格列宽算法） */
+.cell-clip { display: block; max-width: 216px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 品牌色标签：「默认」「管理员」、模型的服务渠道等中性强调，替代 antd 默认蓝/红
+   （蓝与青色品牌冲突，红在语义上意味着危险） */
+.ant-tag.tag-brand { color: var(--kw-primary); background: var(--kw-primary-soft); border-color: var(--kw-primary-line); }
+
 /* 日志状态码：>=400 用语义红并加重 */
 .status-error { color: var(--kw-danger); font-weight: 600; }
 
@@ -91,7 +108,7 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
 .ant-modal .ant-form-item { margin-bottom: 18px; }
 .ant-modal .ant-collapse { background: var(--kw-collapse-bg); border-color: var(--kw-collapse-border); }
 .ant-modal .ant-collapse-header { color: var(--kw-collapse-header) !important; font-weight: 600; }
-.auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 15% 15%, var(--kw-auth-a) 0, transparent 34%), var(--kw-bg); }
+.auth-shell { min-height: 100vh; display: grid; place-items: center; align-content: center; padding: 24px; background: radial-gradient(circle at 15% 15%, var(--kw-auth-a) 0, transparent 34%), var(--kw-bg); }
 .auth-card { width: min(390px, 100%); box-shadow: var(--kw-card-shadow); border: 1px solid var(--kw-card-border); }
 .auth-card .ant-card-body { padding: 32px; }
 .auth-mark { width: 42px; height: 42px; display: grid; place-items: center; margin: 0 auto 14px; border-radius: 12px; color: #fff; background: var(--kw-primary); font-size: 22px; font-weight: 800; }
@@ -124,6 +141,9 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
 /* 窄屏头部：汉堡入口 + 精简品牌（侧栏在 <lg 时由抽屉替代，见 Layout.tsx） */
 .nav-trigger { font-size: 18px; margin-inline-end: 2px; }
 .nav-brand { font-size: 16px; }
+/* 窄屏头部：左侧汉堡 + 品牌不被右侧控件挤出视口 */
+.console-header > * { flex: none; }
+.console-header > .header-spacer { flex: 1; min-width: 0; }
 .nav-drawer .console-menu { border-inline-end: 0 !important; padding: 0 10px; }
 
 /* 统计汇总带：一条卡片内用分隔线分段，替代等宽同款卡片阵列 */
@@ -171,6 +191,8 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
   .ant-table { font-size: 12px; }
   /* 表格密度：横向滚动（scroll x）配合压缩的单元格内边距 */
   .ant-table-wrapper .ant-table-cell { padding: 8px !important; }
+  /* 窄屏屏宽有限：操作列取消右侧固定，否则 200+px 的按钮组会盖住大半表格 */
+  .ant-table-wrapper .ant-table-cell-fix-right { position: static !important; }
   .ant-modal { max-width: calc(100vw - 16px) !important; margin: 8px auto !important; top: 8px !important; padding-bottom: 8px; }
   /* 弹窗过高时限高 + 内容区滚动，避免顶出屏幕 */
   .ant-modal .ant-modal-content { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; }
@@ -214,8 +236,19 @@ body { margin: 0; min-width: 320px; background: var(--kw-bg); }
   border-left: 3px solid var(--kw-primary);
 }
 
+/* 表单内的行内组合：线路地址输入撑满整行（与其他字段同宽），并列下拉两栏等分 */
+.line-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.line-row > .ant-input { flex: 1; min-width: 0; }
+.form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+@media (max-width: 480px) { .form-grid-2 { grid-template-columns: 1fr; } }
+
 /* 配置备份弹窗：模式选项说明与结果区布局 */
 .backup-pane { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
 .backup-opt { display: flex; flex-direction: column; gap: 2px; padding-block: 2px; }
 .backup-opt-desc { font-size: 12px; line-height: 1.5; white-space: normal; }
 .backup-result { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; border-top: 1px dashed var(--kw-border-strong); margin-top: 4px; }
+
+/* 系统设置：分组小卡片纵向排列，限宽保证可读行长 */
+.settings-form { max-width: 640px; display: flex; flex-direction: column; gap: 16px; }
+.settings-form > .ant-card .ant-form-item:last-child { margin-bottom: 4px; }
+.settings-form > .ant-btn { align-self: flex-start; }

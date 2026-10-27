@@ -69,6 +69,7 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
         loading={loading}
         dataSource={rows}
         scroll={{ x: 'max-content' }}
+        pagination={{ hideOnSinglePage: true }}
         locale={{ emptyText: t('models.mineEmpty') }}
         columns={[
           { title: t('common.model'), dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
@@ -78,7 +79,7 @@ const MyModelsTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: ()
               row.channels.length ? (
                 <Space wrap>
                   {row.channels.map((c) => (
-                    <Tag key={c.id} color={c.enabled ? 'blue' : undefined}>
+                    <Tag key={c.id} className={c.enabled ? 'tag-brand' : undefined}>
                       {c.name}
                       {!c.enabled ? t('models.channelDisabledSuffix') : ''}
                     </Tag>
@@ -169,6 +170,7 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () 
         loading={loading || catLoading}
         dataSource={catalog}
         scroll={{ x: 'max-content' }}
+        pagination={{ hideOnSinglePage: true }}
         locale={{ emptyText: t('models.catalogEmpty') }}
         columns={[
           { title: t('common.model'), dataIndex: 'name', render: (n: string) => <Tag>{n}</Tag> },
@@ -176,7 +178,7 @@ const CatalogTab: React.FC<{ channels: Channel[]; loading: boolean; refresh: () 
             title: t('models.unitPrice'),
             render: (_: unknown, m: CatalogModel) => <CatalogPrice m={m} />,
           },
-          { title: t('common.note'), dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
+          { title: t('common.note'), dataIndex: 'note', ellipsis: true, render: (v: string) => v || '—' },
            {
              title: t('models.usage'),
             width: 220,

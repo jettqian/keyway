@@ -58,17 +58,18 @@ const UsersTab: React.FC = () => {
       loading={loading}
       dataSource={users}
       scroll={{ x: 'max-content' }}
+      pagination={{ hideOnSinglePage: true }}
       columns={[
         { title: 'ID', dataIndex: 'id', width: 60 },
         { title: t('admin.username'), dataIndex: 'username' },
-        { title: t('common.role'), dataIndex: 'role', render: (r: number) => (r === 100 ? <Tag color="red">{t('admin.adminRole')}</Tag> : <Tag>{t('common.user')}</Tag>) },
+        { title: t('common.role'), dataIndex: 'role', render: (r: number) => (r === 100 ? <Tag className="tag-brand">{t('admin.adminRole')}</Tag> : <Tag>{t('common.user')}</Tag>) },
         {
           title: t('common.status'),
           dataIndex: 'status',
           render: (s: number) => (s === 1 ? <Tag color="green">{t('admin.statusNormal')}</Tag> : <Tag color="orange">{t('admin.statusDisabled')}</Tag>),
         },
-        { title: t('admin.registeredAt'), dataIndex: 'createdAt', width: 180, render: (v: number | string) => formatDateTime(v) },
-        { title: t('admin.lastLoginAt'), dataIndex: 'lastLoginAt', width: 180, render: (v: number | string) => formatDateTime(v) },
+        { title: t('admin.registeredAt'), dataIndex: 'createdAt', width: 180, className: 'cell-time', render: (v: number | string) => formatDateTime(v) },
+        { title: t('admin.lastLoginAt'), dataIndex: 'lastLoginAt', width: 180, className: 'cell-time', render: (v: number | string) => formatDateTime(v) },
         {
           title: t('common.action'),
           render: (_, u) => (
@@ -291,7 +292,7 @@ const PricingTab: React.FC = () => {
         loading={loading}
         dataSource={rows}
         scroll={{ x: 'max-content' }}
-        pagination={{ pageSize: 20 }}
+        pagination={{ pageSize: 20, hideOnSinglePage: true }}
         columns={[
           {
             title: t('common.model'),
@@ -452,6 +453,7 @@ const ProxiesTab: React.FC = () => {
         loading={loading}
         dataSource={proxies}
         scroll={{ x: 'max-content' }}
+        pagination={{ hideOnSinglePage: true }}
         columns={[
           { title: t('common.name'), dataIndex: 'name' },
           { title: t('common.status'), dataIndex: 'enabled', render: (v: boolean) => (v ? <Tag color="green">{t('common.enabled')}</Tag> : <Tag>{t('common.disabled')}</Tag>) },
@@ -582,14 +584,14 @@ const CatalogModelsTab: React.FC = () => {
         loading={loading}
         dataSource={models}
         scroll={{ x: 'max-content' }}
-        pagination={{ pageSize: 20 }}
+        pagination={{ pageSize: 20, hideOnSinglePage: true }}
         columns={[
           { title: t('common.model'), dataIndex: 'name' },
           {
             title: t('admin.unitPrice'),
             render: (_: unknown, m: CatalogModel) => <CatalogPrice m={m} />,
           },
-          { title: t('common.note'), dataIndex: 'note', ellipsis: true, render: (v: string) => v || '-' },
+          { title: t('common.note'), dataIndex: 'note', ellipsis: true, render: (v: string) => v || '—' },
           {
             title: t('common.status'),
             dataIndex: 'enabled',
@@ -737,6 +739,7 @@ const TemplatesTab: React.FC = () => {
         loading={loading}
         dataSource={templates}
         scroll={{ x: 'max-content' }}
+        pagination={{ hideOnSinglePage: true }}
         columns={[
           { title: t('common.name'), dataIndex: 'name' },
           { title: t('admin.lineCount'), width: 90, align: 'right', render: (_, tpl) => tpl.baseUrls.length },
@@ -923,7 +926,6 @@ const StatsTab: React.FC = () => {
       </Card>
       <Card
         title={t('stats.links')}
-        extra={<span className="text-tertiary" style={{ fontSize: 12 }}>{t('stats.linksHint')}</span>}
         loading={loading}
         style={{ marginBottom: 16 }}
       >
@@ -993,7 +995,7 @@ const SettingsTab: React.FC = () => {
     <Form
       form={form}
       layout="vertical"
-      style={{ maxWidth: 520 }}
+      className="settings-form"
       onFinish={async (v) => {
         setSaving(true)
         try {
@@ -1008,72 +1010,79 @@ const SettingsTab: React.FC = () => {
         }
       }}
     >
-      <Form.Item name="registerMode" label={t('admin.registerMode')}>
-        <Select
-          options={[
-            { value: 'open', label: t('admin.registerOpen') },
-            { value: 'invite', label: t('admin.registerInvite') },
-            { value: 'closed', label: t('admin.registerClosed') },
-          ]}
-        />
-      </Form.Item>
-      <Form.Item name="feishuEnabled" label={t('admin.feishuLogin')} valuePropName="checked">
-        <Switch />
-      </Form.Item>
-      <Form.Item name="feishuAppId" label={t('admin.feishuAppId')}>
-        <Input placeholder="cli_xxxx" />
-      </Form.Item>
-      <Form.Item name="feishuAppSecret" label={t('admin.feishuAppSecret') + (hasSecret ? t('admin.feishuSecretKeep') : '')}>
-        <Input.Password placeholder={t('admin.secretPlaceholder')} />
-      </Form.Item>
-      <Form.Item name="feishuBaseUrl" label={t('admin.feishuBaseUrlLabel')}>
-        <Input placeholder="https://open.feishu.cn" />
-      </Form.Item>
-      <Form.Item
-        name="exchangeRateMode"
-        label={t('admin.exchangeRateLabel')}
-        extra={t('admin.exchangeRateExtra')}
-      >
-        <Radio.Group
-          onChange={(e) => setFxMode(e.target.value)}
-          options={[
-            { value: 'auto', label: t('admin.fxAuto') },
-            { value: 'manual', label: t('admin.fixedValue') },
-          ]}
-        />
-      </Form.Item>
-      {fxMode === 'auto' ? (
-        <Form.Item label={t('admin.currentRate')}>
-          <Space wrap>
-            <span>
-              1 USD = <Typography.Text strong>{fxInfo.rate ?? 7.2}</Typography.Text> CNY
-            </span>
-            {fxInfo.source && <Tag>{fxInfo.source}</Tag>}
-            <Typography.Text type="secondary">{t('admin.rateUpdatedAt', { time: formatDateTime(fxInfo.updatedAt) })}</Typography.Text>
-            <Button size="small" loading={syncing} onClick={() => doSync(true)}>
-              {t('admin.syncNow')}
-            </Button>
-          </Space>
-          {fxInfo.sourceUrl && (
-            <div>
-              <Typography.Link href={fxInfo.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
-                {fxInfo.sourceUrl}
-              </Typography.Link>
-            </div>
-          )}
+      {/* 按主题分组成小卡片，替代一整列平铺的长表单 */}
+      <Card size="small" title={t('admin.settingsAccount')}>
+        <Form.Item name="registerMode" label={t('admin.registerMode')}>
+          <Select
+            options={[
+              { value: 'open', label: t('admin.registerOpen') },
+              { value: 'invite', label: t('admin.registerInvite') },
+              { value: 'closed', label: t('admin.registerClosed') },
+            ]}
+          />
         </Form.Item>
-      ) : (
-        <Form.Item label={t('admin.fixedValue')} required>
-          <Space>
-            <Form.Item name="exchangeRate" noStyle rules={[{ required: true, message: t('admin.exchangeRateRequired') }]}>
-              <InputNumber min={0.5} max={20} step={0.1} style={{ width: 160 }} />
-            </Form.Item>
-            <Button size="small" loading={syncing} onClick={() => doSync(false)}>
-              {t('admin.fetchLatest')}
-            </Button>
-          </Space>
+      </Card>
+      <Card size="small" title={t('admin.settingsFeishu')}>
+        <Form.Item name="feishuEnabled" label={t('admin.feishuLogin')} valuePropName="checked">
+          <Switch />
         </Form.Item>
-      )}
+        <Form.Item name="feishuAppId" label={t('admin.feishuAppId')}>
+          <Input placeholder="cli_xxxx" />
+        </Form.Item>
+        <Form.Item name="feishuAppSecret" label={t('admin.feishuAppSecret') + (hasSecret ? t('admin.feishuSecretKeep') : '')}>
+          <Input.Password placeholder={t('admin.secretPlaceholder')} />
+        </Form.Item>
+        <Form.Item name="feishuBaseUrl" label={t('admin.feishuBaseUrlLabel')}>
+          <Input placeholder="https://open.feishu.cn" />
+        </Form.Item>
+      </Card>
+      <Card size="small" title={t('admin.settingsFx')}>
+        <Form.Item
+          name="exchangeRateMode"
+          label={t('admin.exchangeRateLabel')}
+          extra={t('admin.exchangeRateExtra')}
+        >
+          <Radio.Group
+            onChange={(e) => setFxMode(e.target.value)}
+            options={[
+              { value: 'auto', label: t('admin.fxAuto') },
+              { value: 'manual', label: t('admin.fixedValue') },
+            ]}
+          />
+        </Form.Item>
+        {fxMode === 'auto' ? (
+          <Form.Item label={t('admin.currentRate')}>
+            <Space wrap>
+              <span>
+                1 USD = <Typography.Text strong>{fxInfo.rate ?? 7.2}</Typography.Text> CNY
+              </span>
+              {fxInfo.source && <Tag>{fxInfo.source}</Tag>}
+              <Typography.Text type="secondary">{t('admin.rateUpdatedAt', { time: formatDateTime(fxInfo.updatedAt) })}</Typography.Text>
+              <Button size="small" loading={syncing} onClick={() => doSync(true)}>
+                {t('admin.syncNow')}
+              </Button>
+            </Space>
+            {fxInfo.sourceUrl && (
+              <div>
+                <Typography.Link href={fxInfo.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+                  {fxInfo.sourceUrl}
+                </Typography.Link>
+              </div>
+            )}
+          </Form.Item>
+        ) : (
+          <Form.Item label={t('admin.fixedValue')} required>
+            <Space>
+              <Form.Item name="exchangeRate" noStyle rules={[{ required: true, message: t('admin.exchangeRateRequired') }]}>
+                <InputNumber min={0.5} max={20} step={0.1} style={{ width: 160 }} />
+              </Form.Item>
+              <Button loading={syncing} onClick={() => doSync(false)}>
+                {t('admin.fetchLatest')}
+              </Button>
+            </Space>
+          </Form.Item>
+        )}
+      </Card>
       <Button type="primary" htmlType="submit" loading={loading || saving}>
         {t('common.save')}
       </Button>

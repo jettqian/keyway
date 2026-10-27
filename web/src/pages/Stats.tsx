@@ -193,7 +193,6 @@ const StatsPage: React.FC = () => {
       </Card>
       <Card
         title={t('stats.links')}
-        extra={<span className="text-tertiary" style={{ fontSize: 12 }}>{t('stats.linksHint')}</span>}
         loading={loading}
         style={{ marginBottom: 16 }}
       >

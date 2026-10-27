@@ -301,6 +301,7 @@ const TokensPage: React.FC = () => {
         loading={loading}
         dataSource={tokens}
         scroll={{ x: 'max-content' }}
+        pagination={{ hideOnSinglePage: true }}
         locale={{ emptyText: t('tokens.empty') }}
         columns={[
           { title: t('common.name'), dataIndex: 'name' },
@@ -332,8 +333,8 @@ const TokensPage: React.FC = () => {
             },
           },
           { title: t('tokens.modelScope'), dataIndex: 'modelScope', render: (v?: string) => v ?? t('tokens.unrestricted') },
-          { title: t('common.createdAt'), dataIndex: 'createdAt', render: (v: number | string) => formatDateTime(v) },
-          { title: t('tokens.expiresAt'), dataIndex: 'expiresAt', render: (v?: number | string) => v ? formatDateTime(v) : t('tokens.neverExpires') },
+          { title: t('common.createdAt'), dataIndex: 'createdAt', className: 'cell-time', render: (v: number | string) => formatDateTime(v) },
+          { title: t('tokens.expiresAt'), dataIndex: 'expiresAt', className: 'cell-time', render: (v?: number | string) => v ? formatDateTime(v) : t('tokens.neverExpires') },
           {
             title: t('common.status'),
             dataIndex: 'revoked',
@@ -342,6 +343,7 @@ const TokensPage: React.FC = () => {
           {
             title: t('common.action'),
             width: 260,
+            fixed: 'right',
             render: (_, tk) =>
               <Space>
                 <Button size="small" onClick={() => copyKey(tk)} onPointerDown={() => prefetchKey(tk.id)} onMouseEnter={() => prefetchKey(tk.id)}>{t('tokens.copyKey')}</Button>
