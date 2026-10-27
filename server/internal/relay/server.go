@@ -69,6 +69,22 @@ func hasAPIKey(rc *routing.ResolvedChannel) bool {
 	return false
 }
 
+// normalizeChatGPTResponses chatgpt 后端的请求规范化（FR-K11，就地上报畸形的
+// 403/400 前修正）：input 为字符串时转为标准 message 数组——ChatGPT 后端只收
+// 数组（官方 API 两种都收，字符串是合法入站形状，出站需展开）
+func normalizeChatGPTResponses(m map[string]any) {
+	if in, ok := m["input"].(string); ok {
+		m["input"] = []any{map[string]any{
+			"type": "message",
+			"role": "user",
+			"content": []any{map[string]any{
+				"type": "input_text",
+				"text": in,
+			}},
+		}}
+	}
+}
+
 // ---------- 鉴权中间件 ----------
 
 // TokenAuth 网关令牌鉴权（Bearer / x-api-key 双兼容）

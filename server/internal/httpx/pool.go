@@ -22,6 +22,13 @@ func UpstreamEndpoint(baseURL, path string) string {
 	return b + "/v1" + path
 }
 
+// UpstreamEndpointBare 纯追加拼接（不插 /v1）。ChatGPT 后端（base_url=
+// https://chatgpt.com/backend-api/codex）的端点无 /v1 段，/v1/v1 逻辑会拼出
+// 不存在的 /codex/v1/responses 而被边缘质询 403（v1.5.81 修复）
+func UpstreamEndpointBare(baseURL, path string) string {
+	return strings.TrimSuffix(baseURL, "/") + path
+}
+
 // Pool 按代理 URL 复用的 HTTP 客户端池（"" = 直连）
 type Pool struct {
 	mu                    sync.Mutex

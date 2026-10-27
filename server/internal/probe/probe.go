@@ -422,7 +422,13 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 			"messages":   []map[string]any{{"role": "user", "content": "ping"}},
 		})
 	}
-	target := httpx.UpstreamEndpoint(line, path)
+	// chatgpt 后端端点无 /v1 段（accountID 非空即 chatgpt 密钥探测），纯追加拼接
+	var target string
+	if accountID != "" {
+		target = httpx.UpstreamEndpointBare(line, path)
+	} else {
+		target = httpx.UpstreamEndpoint(line, path)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {

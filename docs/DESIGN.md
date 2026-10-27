@@ -1479,8 +1479,12 @@ POST /api/keys/chatgpt/login/complete {callbackUrl, name?}
   按密钥 ID singleflight 防并发重复刷新；刷新失败 → 该尝试以错误失败（正常走
   换 key/渠道管线），密钥记 last_error
 - **转发注入（仅功能必需项）**：`Authorization: Bearer <有效 access_token>` +
-  `chatgpt-account-id: <account_id>`；responses 管线请求体缺省 `store` 字段时补
-  `store:false`（ChatGPT 后端要求，Codex 客户端本就携带）。**其余请求头经
+  `chatgpt-account-id: <account_id>`；请求体缺省 `store` 字段时补 `store:false`
+  （ChatGPT 后端要求，Codex 客户端本就携带）；`input` 为字符串时转为标准
+  message 数组（后端只收数组，官方 API 的字符串形状出站前展开）。**端点拼接
+  用 `httpx.UpstreamEndpointBare` 纯追加**（/codex/responses）——通用拼接的
+  /v1 强插会产出不存在的 /codex/v1/responses，被 Cloudflare managed challenge
+  以 403 HTML 拦截（部署实测定性，页面 `_cf_chl_opt` 特征）。**其余请求头经
   copyForwardHeaders 原样透传，不做指纹伪装**（v1.5.80 教训：透传即真实客户端
   指纹，伪造反增维护负担）
 - **探测适配**：MaybeWarmup 与 ProbeChannel 对含 chatgpt 密钥的渠道直接跳过

@@ -821,9 +821,11 @@ US13 统一管理模型（P7）
   防并发重复刷新），新令牌加密落库；刷新端点可手动触发；access_token/refresh_token
   均不回显
 - FR-K11 chatgpt 密钥转发集成：出站 Authorization 用**当前有效** access_token，附加
-  `chatgpt-account-id` 头；请求体缺省 `store` 字段时补 `store:false`（ChatGPT 后端
-  要求；Codex 客户端本就携带，无副作用）。**其余请求头原样透传，不做指纹伪装**；
-  上游 401（令牌彻底失效需重登）原样透传不自动重试
+  `chatgpt-account-id` 头；请求体缺省 `store` 字段时补 `store:false`，`input` 为
+  字符串时转为标准 message 数组（ChatGPT 后端只收数组）；chatgpt 渠道端点用
+  **纯追加拼接**（/codex/responses，不套 /v1 逻辑——否则拼出不存在的
+  /codex/v1/responses 被 Cloudflare managed challenge 403）。**其余请求头原样
+  透传，不做指纹伪装**；上游 401（令牌彻底失效需重登）原样透传不自动重试
 - FR-K12 探测适配：自动线路预热（MaybeWarmup）与「测试渠道」矩阵跳过含 chatgpt
   密钥的渠道（每次探测消耗订阅额度，且 ChatGPT 后端无常备轻量端点）；「逐密钥测试」
   支持验证 chatgpt 密钥（解析有效令牌发单个最小请求，验证登录态与连通性）

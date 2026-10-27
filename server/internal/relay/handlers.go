@@ -209,6 +209,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			if _, ok := m["store"]; !ok {
 				m["store"] = false
 			}
+			normalizeChatGPTResponses(m)
 		}
 		sendBody, _ := json.Marshal(m)
 		tried := false
@@ -219,7 +220,13 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			tried = true
 			a.protocol = "openai"
 			a.request = c.Request
-			resp, _, err := s.sendUpstream(a, "POST", httpx.UpstreamEndpoint(a.lineURL, "/responses"), sendBody, probe.Stream)
+			// chatgpt 后端端点无 /v1 段，纯追加拼接（/codex/responses，见
+			// httpx.UpstreamEndpointBare）；其余渠道维持 /v1 拼接逻辑
+			endpoint := httpx.UpstreamEndpoint(a.lineURL, "/responses")
+			if hasChatGPTKey(rc) {
+				endpoint = httpx.UpstreamEndpointBare(a.lineURL, "/responses")
+			}
+			resp, _, err := s.sendUpstream(a, "POST", endpoint, sendBody, probe.Stream)
 			if err != nil {
 				lastErr = err.Error()
 				lastSrc, lastFused = attemptSrc(a), view != nil && view.Open(rc.Channel.ID)
@@ -722,6 +729,13 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 	}
 	if chatgptAccountID != "" {
 		req.Header.Set("chatgpt-account-id", chatgptAccountID)
+		// 对齐 Codex CLI 恒带头（客户端已带则透传原值，仅缺省补齐）
+		if req.Header.Get("OpenAI-Beta") == "" {
+			req.Header.Set("OpenAI-Beta", "responses=experimental")
+		}
+		if req.Header.Get("originator") == "" {
+			req.Header.Set("originator", "codex_cli_rs")
+		}
 	}
 	client, err := s.getClient(a.proxyURL)
 	if err != nil {
