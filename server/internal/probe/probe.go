@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"keyway/internal/breaker"
+	"keyway/internal/chatgpt"
 	"keyway/internal/config"
 	"keyway/internal/httpx"
 	"keyway/internal/proxyman"
@@ -61,19 +62,43 @@ type Engine struct {
 	pm       *proxyman.Manager
 	cfg      config.Config
 	pool     *httpx.Pool
-	breakers *breaker.Engine // 探测成功联动关闭渠道×模型熔断（可空）
+	breakers *breaker.Engine  // 探测成功联动关闭渠道×模型熔断（可空）
+	chatgpt  *chatgpt.Manager // ChatGPT 令牌管理（chatgpt 密钥探测前解析有效令牌，可空）
 
 	mu   sync.Mutex
 	next map[int64]time.Time // 渠道 → 下次预热检查时间（节流，防并发重复预热）
 }
 
-func New(st *store.Store, secret string, r *routing.Service, pm *proxyman.Manager, cfg config.Config, breakers *breaker.Engine) *Engine {
+func New(st *store.Store, secret string, r *routing.Service, pm *proxyman.Manager, cfg config.Config, breakers *breaker.Engine, cg *chatgpt.Manager) *Engine {
 	return &Engine{
 		store: st, secret: secret, routing: r, pm: pm, cfg: cfg,
 		pool:     httpx.NewPool(cfg.ResponseHeaderTimeoutSec),
 		breakers: breakers,
+		chatgpt:  cg,
 		next:     map[int64]time.Time{},
 	}
+}
+
+// hasChatGPTKey 渠道是否绑定 chatgpt 型密钥（v1.5.81：此类渠道跳过自动预热与矩阵——
+// 每次探测消耗订阅额度且 ChatGPT 后端无常备轻量端点）
+func hasChatGPTKey(rc *routing.ResolvedChannel) bool {
+	for _, k := range rc.Keys {
+		if k.Kind == store.KeyKindChatGPT {
+			return true
+		}
+	}
+	return false
+}
+
+// keyPlainFor 解析单个密钥的出站明文与账号 ID：api 密钥解密原值（accountID 空）；
+// chatgpt 密钥取当前有效 access_token（EnsureFresh，快过期自动刷新）
+func (e *Engine) keyPlainFor(k *store.Key) (plain, accountID string, err error) {
+	if k.Kind != store.KeyKindChatGPT || e.chatgpt == nil {
+		plain, err = routing.DecodeKeyValue(e.secret, k)
+		return plain, "", err
+	}
+	tok, acct, ferr := e.chatgpt.EnsureFresh(k)
+	return tok, acct, ferr
 }
 
 // warmupInterval 预热节拍（分钟）；≤0 = 按需预热关闭（KEYWAY_PROBE_INTERVAL_MIN=0）
@@ -141,6 +166,9 @@ func (e *Engine) warmup(ch *store.Channel) {
 	if len(rc.Keys) == 0 {
 		return
 	}
+	if hasChatGPTKey(rc) {
+		return // chatgpt 密钥探测消耗订阅额度，跳过预热（FR-K12）
+	}
 	models := probeModels(ch)
 	if len(models) == 0 || len(rc.BaseURLs) == 0 {
 		return
@@ -174,7 +202,7 @@ func (e *Engine) warmup(ch *store.Channel) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), probeWait)
 			defer cancel()
-			results[i] = e.probeOne(ctx, ch, routing.ApplyModelMapping(ch, model), keyPlain, c.line, c.proxyURL, c.via, shape, true)
+			results[i] = e.probeOne(ctx, ch, routing.ApplyModelMapping(ch, model), keyPlain, "", c.line, c.proxyURL, c.via, shape, true)
 		}()
 	}
 	wg.Wait()
@@ -189,6 +217,11 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 	}
 	if len(rc.Keys) == 0 {
 		return nil, fmt.Errorf("渠道无可用密钥")
+	}
+	if hasChatGPTKey(rc) {
+		// ChatGPT 后端无轻量健康端点，矩阵探测（≤20 个请求）烧订阅额度且无意义；
+		// 连通性用「逐密钥测试」验证（FR-K12）
+		return nil, fmt.Errorf("含 ChatGPT 账号密钥的渠道不做矩阵探测（消耗订阅额度），请用「逐密钥测试」验证连通")
 	}
 	models := probeModels(ch)
 	if len(models) == 0 {
@@ -220,7 +253,7 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = e.probeOnce(ch, models, keyPlain, t.line, t.proxyURL, t.via)
+			results[i] = e.probeOnce(ch, models, keyPlain, "", t.line, t.proxyURL, t.via)
 		}()
 	}
 	wg.Wait()
@@ -255,7 +288,7 @@ func (e *Engine) ProbeKeys(ch *store.Channel) ([]KeyResult, error) {
 	out := make([]KeyResult, len(rc.Keys))
 	var wg sync.WaitGroup
 	for i, k := range rc.Keys {
-		plain, err := routing.DecodeKeyValue(e.secret, k)
+		plain, accountID, err := e.keyPlainFor(k) // chatgpt 密钥取有效 access_token（FR-K12）
 		if err != nil {
 			out[i] = KeyResult{KeyID: k.ID, Name: k.Name, Error: err.Error()}
 			continue
@@ -263,7 +296,7 @@ func (e *Engine) ProbeKeys(ch *store.Channel) ([]KeyResult, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res := e.probeOnce(ch, models, plain, line, "", "direct")
+			res := e.probeOnce(ch, models, plain, accountID, line, "", "direct")
 			out[i] = KeyResult{
 				KeyID: k.ID, Name: k.Name, OK: res.OK, LatencyMs: res.LatencyMs, Error: res.Error,
 			}
@@ -315,8 +348,9 @@ func shapeLabel(shape string) string {
 // probeOnce 发送最小请求并计时；模型 × 端点形态两级回退（v1.5.23/24）：
 // 候选模型依序尝试，每个模型按其形态判定序列（见 probeShapes）继续回退，
 // 任一成功即该组合健康；全部失败时汇报各模型末次错误摘要（含上游响应体 message）。
-// 整个组合共享 probeWait 总超时（所有回退请求用同一 deadline，上限确定）
-func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, proxyURL, via string) Result {
+// 整个组合共享 probeWait 总超时（所有回退请求用同一 deadline，上限确定）。
+// accountID 非空 = chatgpt 密钥探测：附加 chatgpt-account-id 头（v1.5.81）
+func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, accountID, line, proxyURL, via string) Result {
 	result := Result{LineURL: line, Via: via}
 	var modelErrs []string
 	ctx, cancel := context.WithTimeout(context.Background(), probeWait)
@@ -327,7 +361,7 @@ func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, p
 		var shapeErrs []string
 		var last Result
 		for _, shape := range probeShapes(ch, m) {
-			last = e.probeOne(ctx, ch, upstreamModel, keyPlain, line, proxyURL, via, shape, false)
+			last = e.probeOne(ctx, ch, upstreamModel, keyPlain, accountID, line, proxyURL, via, shape, false)
 			if last.OK {
 				last.Model = m // 记录判定健康的模型（熔断恢复联动用）
 				return last
@@ -354,7 +388,7 @@ func (e *Engine) probeOnce(ch *store.Channel, models []string, keyPlain, line, p
 // 完不成会误判失败），且探测成本更高。
 // loose = 线路预热语义（FR-S1，v1.5.45）：4xx 也记为通并取延迟——4xx 是
 // 模型/密钥维度问题，不代表线路差；仅网络错误、HTML 回退、5xx 记为不通
-func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlain, line, proxyURL, via, shape string, loose bool) Result {
+func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlain, accountID, line, proxyURL, via, shape string, loose bool) Result {
 	result := Result{LineURL: line, Via: via}
 
 	var body []byte
@@ -369,12 +403,16 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 		})
 	} else if shape == "openai-responses" {
 		path = "/responses"
-		body, _ = json.Marshal(map[string]any{
+		m := map[string]any{
 			"model":             model,
 			"input":             "ping",
 			"max_output_tokens": 16,
 			"stream":            true,
-		})
+		}
+		if accountID != "" {
+			m["store"] = false // ChatGPT 后端要求（与真实转发一致，FR-K11）
+		}
+		body, _ = json.Marshal(m)
 	} else {
 		path = "/chat/completions"
 		body, _ = json.Marshal(map[string]any{
@@ -398,6 +436,9 @@ func (e *Engine) probeOne(ctx context.Context, ch *store.Channel, model, keyPlai
 		req.Header.Set("anthropic-version", "2023-06-01")
 	} else {
 		req.Header.Set("Authorization", "Bearer "+keyPlain)
+		if accountID != "" {
+			req.Header.Set("chatgpt-account-id", accountID)
+		}
 	}
 
 	client, err := e.pool.Get(proxyURL)

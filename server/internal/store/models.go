@@ -32,16 +32,26 @@ func (Session) TableName() string { return "sessions" }
 
 // Key 上游密钥池
 type Key struct {
-	ID            int64   `gorm:"column:id;primaryKey;autoIncrement"`
-	UserID        int64   `gorm:"column:user_id;not null;uniqueIndex:idx_keys_user_name,priority:1"`
-	Name          string  `gorm:"column:name;not null;uniqueIndex:idx_keys_user_name,priority:2"`
-	ValueEnc      []byte  `gorm:"column:value_enc;not null"`
-	Note          string  `gorm:"column:note;default:''"`
-	Status        int     `gorm:"column:status;not null;default:1"` // 1 启用 / 2 禁用
+	ID       int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID   int64  `gorm:"column:user_id;not null;uniqueIndex:idx_keys_user_name,priority:1"`
+	Name     string `gorm:"column:name;not null;uniqueIndex:idx_keys_user_name,priority:2"`
+	ValueEnc []byte `gorm:"column:value_enc;not null"`
+	Note     string `gorm:"column:note;default:''"`
+	Status   int    `gorm:"column:status;not null;default:1"` // 1 启用 / 2 禁用
+	// Kind 密钥类型：api = 常规供应商 API key（存量默认）；
+	// chatgpt = OAuth 账号（value_enc 存加密 JSON：access_token/refresh_token/
+	// account_id/plan/expires_at，见 chatgpt 包）
+	Kind          string  `gorm:"column:kind;not null;default:'api'"`
 	LastError     *string `gorm:"column:last_error"`
 	CooldownUntil int64   `gorm:"column:cooldown_until;default:0"`
 	CreatedAt     int64   `gorm:"column:created_at"`
 }
+
+// Key kinds
+const (
+	KeyKindAPI     = "api"
+	KeyKindChatGPT = "chatgpt"
+)
 
 func (Key) TableName() string { return "keys" }
 

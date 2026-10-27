@@ -65,7 +65,7 @@ func newEngine(t *testing.T) (*store.Store, *Engine) {
 	t.Cleanup(func() { st.Close() })
 	r := routing.New(st, testSecret)
 	pm := proxyman.New(st, testSecret)
-	return st, New(st, testSecret, r, pm, config.Config{}, nil)
+	return st, New(st, testSecret, r, pm, config.Config{}, nil, nil)
 }
 
 // newEngineWithBreaker 构造与熔断引擎共享同一存储的探测器（验证探测成功关闭熔断）
@@ -79,7 +79,7 @@ func newEngineWithBreaker(t *testing.T) (*store.Store, *Engine, *breaker.Engine)
 	bk := breaker.New(st.DB(), 1, 300, 3600)
 	r := routing.New(st, testSecret)
 	pm := proxyman.New(st, testSecret)
-	return st, New(st, testSecret, r, pm, config.Config{}, bk), bk
+	return st, New(st, testSecret, r, pm, config.Config{}, bk, nil), bk
 }
 
 // seedChannel 落一把密钥并绑定到渠道（直连路径）

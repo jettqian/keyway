@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,9 +65,14 @@ func (s *Server) HandleOpenAIPassthrough(path string) gin.HandlerFunc {
 		candidates := append(matched, defaults...)
 		// 协议不兼容的渠道必然不会尝试，先剔除再算熔断视图
 		// （否则"唯一可用渠道熔断 + 其余渠道不兼容"会被误判为存在可用候选）
+		// chatgpt 后端无 /chat/completions（responses-only）：绑纯 chatgpt 密钥的
+		// 渠道对本端点无意义，剔除（混合绑定的渠道仍可用其中常规密钥）
 		viable := make([]*routing.ResolvedChannel, 0, len(candidates))
 		for _, rc := range candidates {
 			if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
+				continue
+			}
+			if !hasAPIKey(rc) { // chatgpt 后端无本端点，纯 chatgpt 渠道剔除
 				continue
 			}
 			viable = append(viable, rc)
@@ -167,6 +173,7 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 	reqStart := time.Now()
 	c.Set(ctxEffortKey, reasoningEffortOf("openai", body))
 	// 协议不兼容的渠道必然不会尝试，先剔除再算熔断视图（同 completions 管线）
+	// chatgpt 后端仅支持 /responses，绑纯 chatgpt 密钥的渠道对 responses 仍然有效
 	var viable []*routing.ResolvedChannel
 	for _, rc := range append(matched, defaults...) {
 		if rc.Channel.ForwardMode == "convert" && rc.Channel.Type != "openai" {
@@ -196,6 +203,13 @@ func (s *Server) HandleOpenAIResponses(c *gin.Context) {
 			return
 		}
 		m["model"] = upstreamModel
+		// chatgpt 渠道兜底注入 store:false（ChatGPT 后端要求存储关闭；Codex 客户端
+		// 本就携带，仅对缺省的其他客户端生效，FR-K11）
+		if hasChatGPTKey(rc) {
+			if _, ok := m["store"]; !ok {
+				m["store"] = false
+			}
+		}
 		sendBody, _ := json.Marshal(m)
 		tried := false
 		for _, a := range s.planFor(rc, probe.Model, view) {
@@ -403,6 +417,23 @@ func (s *Server) relay(c *gin.Context, inbound, model string, rawBody []byte, _ 
 		respondProtocolError(c, inbound, http.StatusNotFound,
 			fmt.Sprintf("model %s 未命中任何渠道，请到控制台配置或设置默认渠道", model))
 		return
+	}
+	// chat/messages 端点 ChatGPT 后端不支持（responses-only，FR-K11）：绑纯 chatgpt
+	// 密钥的渠道必然失败，先剔除（混合绑定渠道保留，其常规密钥仍可服务本端点）
+	{
+		fm := make([]*routing.ResolvedChannel, 0, len(matched))
+		for _, rc := range matched {
+			if hasAPIKey(rc) {
+				fm = append(fm, rc)
+			}
+		}
+		fd := make([]*routing.ResolvedChannel, 0, len(defaults))
+		for _, rc := range defaults {
+			if hasAPIKey(rc) {
+				fd = append(fd, rc)
+			}
+		}
+		matched, defaults = fm, fd
 	}
 
 	view := s.breakerView(append(matched, defaults...), model)
@@ -639,11 +670,24 @@ func ensureIncludeUsage(m map[string]any) {
 	m["stream_options"] = map[string]any{"include_usage": true}
 }
 
-// sendUpstream 发送上游请求（含鉴权头、代理客户端、超时）
+// sendUpstream 发送上游请求（含鉴权头、代理客户端、超时）；
+// kind=chatgpt 密钥解析当前有效 access_token 并附加 chatgpt-account-id（FR-K11）
 func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, stream bool) (*http.Response, string, error) {
 	keyPlain, err := routing.DecodeKeyValue(s.Secret, a.key)
 	if err != nil {
 		return nil, "", err
+	}
+	chatgptAccountID := ""
+	if a.key.Kind == store.KeyKindChatGPT {
+		if s.ChatGPT == nil {
+			return nil, "", errors.New("chatgpt 密钥不可用（令牌管理器未初始化）")
+		}
+		token, accountID, ferr := s.ChatGPT.EnsureFresh(a.key)
+		if ferr != nil {
+			return nil, "", fmt.Errorf("获取 ChatGPT 有效令牌失败: %w", ferr)
+		}
+		keyPlain = token
+		chatgptAccountID = accountID
 	}
 	ctx := context.Background()
 	if a.request != nil {
@@ -675,6 +719,9 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 	}
 	if stream {
 		req.Header.Set("Accept", "text/event-stream")
+	}
+	if chatgptAccountID != "" {
+		req.Header.Set("chatgpt-account-id", chatgptAccountID)
 	}
 	client, err := s.getClient(a.proxyURL)
 	if err != nil {

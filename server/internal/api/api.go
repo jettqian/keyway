@@ -10,6 +10,7 @@ import (
 
 	"keyway/internal/auth"
 	"keyway/internal/breaker"
+	"keyway/internal/chatgpt"
 	"keyway/internal/fxrate"
 	"keyway/internal/probe"
 	"keyway/internal/proxyman"
@@ -26,10 +27,11 @@ type Server struct {
 	Fx      *fxrate.Engine
 	Breaker *breaker.Engine
 	BaseURL string
+	ChatGPT *chatgpt.Manager // ChatGPT 账号登录与令牌刷新（v1.5.81）
 }
 
-func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *proxyman.Manager, fx *fxrate.Engine, bk *breaker.Engine, baseURL string) *Server {
-	return &Server{Store: st, Secret: secret, Auth: a, Probe: p, PM: pm, Fx: fx, Breaker: bk, BaseURL: baseURL}
+func New(st *store.Store, secret string, a *auth.Service, p *probe.Engine, pm *proxyman.Manager, fx *fxrate.Engine, bk *breaker.Engine, baseURL string, cg *chatgpt.Manager) *Server {
+	return &Server{Store: st, Secret: secret, Auth: a, Probe: p, PM: pm, Fx: fx, Breaker: bk, BaseURL: baseURL, ChatGPT: cg}
 }
 
 const sessionCookie = "keyway_session"
@@ -165,7 +167,10 @@ func (s *Server) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/keys", s.handleCreateKey)
 	r.PUT("/keys/:id", s.handleUpdateKey)
 	r.PUT("/keys/:id/status", s.handleUpdateKeyStatus)
+	r.PUT("/keys/:id/refresh", s.handleRefreshKey)
 	r.DELETE("/keys/:id", s.handleDeleteKey)
+	r.POST("/chatgpt/login/start", s.handleChatGPTLoginStart)
+	r.POST("/chatgpt/login/complete", s.handleChatGPTLoginComplete)
 
 	r.GET("/channels", s.handleListChannels)
 	r.POST("/channels", s.handleCreateChannel)

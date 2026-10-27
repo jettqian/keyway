@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"keyway/internal/chatgpt"
 	"keyway/internal/crypto"
 	"keyway/internal/httpx"
 	"keyway/internal/store"
@@ -16,17 +17,33 @@ import (
 
 // ---------- 密钥池 ----------
 
-func keyDTO(k *store.Key) gin.H {
+func (s *Server) keyDTO(k *store.Key) gin.H {
 	dto := gin.H{
 		"id":            k.ID,
 		"name":          k.Name,
 		"note":          k.Note,
 		"status":        k.Status,
+		"kind":          k.Kind,
 		"cooldownUntil": k.CooldownUntil,
 		"createdAt":     k.CreatedAt,
 	}
 	if k.LastError != nil {
 		dto["lastError"] = *k.LastError
+	}
+	// chatgpt 密钥解出展示字段（不回显任何令牌明文）
+	if k.Kind == store.KeyKindChatGPT {
+		if b, err := chatgpt.DecryptBundle(s.Secret, k.ValueEnc); err == nil {
+			acct := b.AccountID
+			if len(acct) > 10 {
+				acct = acct[:6] + "…" + acct[len(acct)-4:]
+			}
+			dto["accountId"] = acct
+			dto["plan"] = b.Plan
+			dto["expiresAt"] = b.ExpiresAt
+			if b.Email != "" {
+				dto["email"] = b.Email
+			}
+		}
 	}
 	return dto
 }
@@ -36,7 +53,7 @@ func (s *Server) handleListKeys(c *gin.Context) {
 	s.Store.DB().Where("user_id = ? ORDER BY id", currentUser(c).ID).Find(&keys)
 	out := make([]gin.H, 0, len(keys))
 	for i := range keys {
-		out = append(out, keyDTO(&keys[i]))
+		out = append(out, s.keyDTO(&keys[i]))
 	}
 	s.ok(c, gin.H{"keys": out})
 }
@@ -68,16 +85,10 @@ func (s *Server) handleCreateKey(c *gin.Context) {
 		s.fail(c, http.StatusInternalServerError, "创建失败")
 		return
 	}
-	s.ok(c, gin.H{"key": keyDTO(&k)})
+	s.ok(c, gin.H{"key": s.keyDTO(&k)})
 }
 
 func (s *Server) handleUpdateKey(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	var k store.Key
-	if err := s.Store.DB().Where("id = ? AND user_id = ?", id, currentUser(c).ID).First(&k).Error; err != nil {
-		s.fail(c, http.StatusNotFound, "密钥不存在")
-		return
-	}
 	var req struct {
 		Name  string `json:"name"`
 		Note  string `json:"note"`
@@ -85,6 +96,10 @@ func (s *Server) handleUpdateKey(c *gin.Context) {
 	}
 	if err := c.BindJSON(&req); err != nil || trimOrEmpty(req.Name) == "" {
 		s.fail(c, http.StatusBadRequest, "名称不能为空")
+		return
+	}
+	k, ok := s.handleUpdateKeyEditGuard(c, trimOrEmpty(req.Value) != "")
+	if !ok {
 		return
 	}
 	updates := map[string]any{"name": trimOrEmpty(req.Name), "note": req.Note}
@@ -98,8 +113,8 @@ func (s *Server) handleUpdateKey(c *gin.Context) {
 		updates["cooldown_until"] = 0
 		updates["last_error"] = nil
 	}
-	s.Store.DB().Model(&k).Updates(updates)
-	s.ok(c, gin.H{"key": keyDTO(&k)})
+	s.Store.DB().Model(k).Updates(updates)
+	s.ok(c, gin.H{"key": s.keyDTO(k)})
 }
 
 func (s *Server) handleDeleteKey(c *gin.Context) {
@@ -129,6 +144,82 @@ func (s *Server) handleUpdateKeyStatus(c *gin.Context) {
 		return
 	}
 	s.ok(c, gin.H{})
+}
+
+// handleUpdateKeyEditGuard 提取本人密钥；chatgpt 密钥禁止改值（令牌由 OAuth 流程管理）
+func (s *Server) handleUpdateKeyEditGuard(c *gin.Context, hasValue bool) (*store.Key, bool) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var k store.Key
+	if err := s.Store.DB().Where("id = ? AND user_id = ?", id, currentUser(c).ID).First(&k).Error; err != nil {
+		s.fail(c, http.StatusNotFound, "密钥不存在")
+		return nil, false
+	}
+	if hasValue && k.Kind == store.KeyKindChatGPT {
+		s.fail(c, http.StatusBadRequest, "ChatGPT 账号密钥不支持直接改值，请删除后重新登录或使用刷新")
+		return nil, false
+	}
+	return &k, true
+}
+
+// handleRefreshKey 手动刷新 chatgpt 密钥令牌（api 密钥无刷新语义）
+func (s *Server) handleRefreshKey(c *gin.Context) {
+	k, ok := s.loadOwnKey(c)
+	if !ok {
+		return
+	}
+	if k.Kind != store.KeyKindChatGPT {
+		s.fail(c, http.StatusBadRequest, "仅 ChatGPT 账号密钥支持刷新")
+		return
+	}
+	if s.ChatGPT == nil {
+		s.fail(c, http.StatusInternalServerError, "令牌管理器未初始化")
+		return
+	}
+	if err := s.ChatGPT.RefreshNow(k); err != nil {
+		s.fail(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	var fresh store.Key
+	s.Store.DB().First(&fresh, k.ID)
+	s.ok(c, gin.H{"key": s.keyDTO(&fresh)})
+}
+
+func (s *Server) loadOwnKey(c *gin.Context) (*store.Key, bool) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var k store.Key
+	if err := s.Store.DB().Where("id = ? AND user_id = ?", id, currentUser(c).ID).First(&k).Error; err != nil {
+		s.fail(c, http.StatusNotFound, "密钥不存在")
+		return nil, false
+	}
+	return &k, true
+}
+
+// handleChatGPTLoginStart 发起 ChatGPT 账号登录：返回 PKCE 授权链接（FR-K9）
+func (s *Server) handleChatGPTLoginStart(c *gin.Context) {
+	authURL, err := s.ChatGPT.StartLogin(currentUser(c).ID)
+	if err != nil {
+		s.fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.ok(c, gin.H{"authUrl": authURL})
+}
+
+// handleChatGPTLoginComplete 粘贴回调地址完成登录并创建 kind=chatgpt 密钥（FR-K9）
+func (s *Server) handleChatGPTLoginComplete(c *gin.Context) {
+	var req struct {
+		CallbackURL string `json:"callbackUrl"`
+		Name        string `json:"name"`
+	}
+	if err := c.BindJSON(&req); err != nil || trimOrEmpty(req.CallbackURL) == "" {
+		s.fail(c, http.StatusBadRequest, "缺少回调地址")
+		return
+	}
+	k, info, err := s.ChatGPT.CompleteLogin(currentUser(c).ID, req.CallbackURL, trimOrEmpty(req.Name))
+	if err != nil {
+		s.fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.ok(c, gin.H{"key": s.keyDTO(k), "account": info})
 }
 
 // ---------- 渠道 ----------

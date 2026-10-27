@@ -15,6 +15,7 @@ import (
 	"keyway/internal/api"
 	"keyway/internal/auth"
 	"keyway/internal/breaker"
+	"keyway/internal/chatgpt"
 	"keyway/internal/config"
 	"keyway/internal/fxrate"
 	"keyway/internal/pricing"
@@ -48,12 +49,14 @@ func buildApp(cfg config.Config) (*app, error) {
 	pm := proxyman.New(st, cfg.Secret)
 	// 渠道×模型熔断器：relay 失败计数/半开试探恢复 + 探测/手动恢复关闭
 	breakerEngine := breaker.New(st.DB(), cfg.BreakerFailThreshold, cfg.BreakerCooldownSec, cfg.BreakerCooldownMaxSec)
+	// ChatGPT 账号令牌管理（OAuth 登录/刷新，api/relay/probe 共享同一实例）
+	chatgptMgr := chatgpt.NewManager(st, cfg.Secret)
 	// 探测器（v1.5.45 起无定时循环）：按需线路预热 + 测试按钮矩阵
-	probeEngine := probe.New(st, cfg.Secret, routingSvc, pm, cfg, breakerEngine)
+	probeEngine := probe.New(st, cfg.Secret, routingSvc, pm, cfg, breakerEngine, chatgptMgr)
 	// 汇率定时同步（USD→CNY，auto 模式下每 24h 覆盖，manual 保留固定值）
 	fxEngine := fxrate.New(st, cfg.FxSourceURL)
-	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm, fxEngine, breakerEngine, cfg.BaseURL)
-	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, pm, cfg, breakerEngine, probeEngine)
+	apiSvc := api.New(st, cfg.Secret, authSvc, probeEngine, pm, fxEngine, breakerEngine, cfg.BaseURL, chatgptMgr)
+	relaySvc := relay.NewServer(st, cfg.Secret, authSvc, routingSvc, logWriter, pm, cfg, breakerEngine, probeEngine, chatgptMgr)
 
 	stopWriter := make(chan struct{})
 	writerDone := make(chan struct{})

@@ -12,6 +12,7 @@ import (
 
 	"keyway/internal/auth"
 	"keyway/internal/breaker"
+	"keyway/internal/chatgpt"
 	"keyway/internal/config"
 	"keyway/internal/httpx"
 	"keyway/internal/probe"
@@ -31,19 +32,41 @@ type Server struct {
 	PM      *proxyman.Manager
 	Cfg     config.Config
 	Breaker *breaker.Engine
-	Probe   *probe.Engine // 按需线路预热（line_stats 缺失/过期时异步补测）
+	Probe   *probe.Engine    // 按需线路预热（line_stats 缺失/过期时异步补测）
+	ChatGPT *chatgpt.Manager // ChatGPT 账号令牌管理（kind=chatgpt 密钥取有效 access_token，v1.5.81）
 
 	pool httpx.Pool
 	rr   map[int64]int64 // round_robin 渠道计数
 	rrMu sync.Mutex
 }
 
-func NewServer(st *store.Store, secret string, a *auth.Service, r *routing.Service, w *usage.Writer, pm *proxyman.Manager, cfg config.Config, bk *breaker.Engine, pb *probe.Engine) *Server {
+func NewServer(st *store.Store, secret string, a *auth.Service, r *routing.Service, w *usage.Writer, pm *proxyman.Manager, cfg config.Config, bk *breaker.Engine, pb *probe.Engine, cg *chatgpt.Manager) *Server {
 	return &Server{
-		Store: st, Secret: secret, Auth: a, Routing: r, Logs: w, PM: pm, Cfg: cfg, Breaker: bk, Probe: pb,
+		Store: st, Secret: secret, Auth: a, Routing: r, Logs: w, PM: pm, Cfg: cfg, Breaker: bk, Probe: pb, ChatGPT: cg,
 		pool: *httpx.NewPool(cfg.ResponseHeaderTimeoutSec),
 		rr:   map[int64]int64{},
 	}
+}
+
+// hasChatGPTKey 渠道是否绑定 chatgpt 型密钥（混合绑定时也按需要处理）
+func hasChatGPTKey(rc *routing.ResolvedChannel) bool {
+	for _, k := range rc.Keys {
+		if k.Kind == store.KeyKindChatGPT {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAPIKey 渠道是否绑定常规 API 密钥（chat/completions 等 ChatGPT 后端不支持的
+// 端点只对含常规密钥的渠道有意义）
+func hasAPIKey(rc *routing.ResolvedChannel) bool {
+	for _, k := range rc.Keys {
+		if k.Kind != store.KeyKindChatGPT {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------- 鉴权中间件 ----------

@@ -42,6 +42,7 @@ type configExportKey struct {
 	Name   string `json:"name"`
 	Note   string `json:"note"`
 	Status int    `json:"status"`
+	Kind   string `json:"kind,omitempty"`  // api | chatgpt（缺省 api，v1.5.81）
 	Value  string `json:"value,omitempty"` // 仅完整导出
 }
 
@@ -112,7 +113,7 @@ func (s *Server) handleConfigExport(c *gin.Context) {
 	for i := range keys {
 		k := &keys[i]
 		keyNameByID[k.ID] = k.Name
-		ek := configExportKey{Name: k.Name, Note: k.Note, Status: k.Status}
+		ek := configExportKey{Name: k.Name, Note: k.Note, Status: k.Status, Kind: k.Kind}
 		if secrets {
 			if plain, err := crypto.Decrypt(s.Secret, crypto.PurposeKey, k.ValueEnc); err == nil {
 				ek.Value = string(plain)
@@ -210,6 +211,14 @@ func channelToExport(ch *store.Channel, keyNameByID map[int64]string) configExpo
 	}
 }
 
+// keyKindOrAPI 密钥类型兜底：空/未知值回退 api（v1.5.81 前的导出文件无 kind 字段）
+func keyKindOrAPI(kind string) string {
+	if kind == store.KeyKindChatGPT {
+		return store.KeyKindChatGPT
+	}
+	return store.KeyKindAPI
+}
+
 // handleConfigImport 导入用户配置（合并模式，重复导入幂等）：
 // - 密钥：同名复用现有（不覆盖值）；含明文值且无同名的创建；无值且无同名的悬空
 // - 渠道：同名跳过复用（不新建副本，令牌绑定重映射到现有渠道）；无同名的创建，
@@ -298,7 +307,8 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 		if status != 1 && status != 2 {
 			status = 1
 		}
-		k := store.Key{UserID: userID, Name: name, ValueEnc: enc, Note: ek.Note, Status: status, CreatedAt: now}
+		k := store.Key{UserID: userID, Name: name, ValueEnc: enc, Note: ek.Note,
+			Status: status, Kind: keyKindOrAPI(ek.Kind), CreatedAt: now}
 		if err := tx.Create(&k).Error; err != nil {
 			return fmt.Errorf("创建密钥「%s」失败: %w", name, err)
 		}
