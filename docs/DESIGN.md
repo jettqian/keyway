@@ -1,6 +1,9 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.77（与 PRD v1.5.81 对应；**ChatGPT 账号登录接入**——keys 新增 `kind` 列
+- 版本：v1.78（与 PRD v1.5.82 对应；**ChatGPT 账号接入加固**——渠道绑定校验与出站
+  兜底防令牌外泄（`chatgpt.IsBackendURL`）、刷新读库最新令牌 + 后台执行 + 失败退避、
+  订阅额度 429 按重置时间冷却、边缘拦截 HTML 归线路、导出导入不迁移令牌；详见 §10.5）；
+  v1.77（与 PRD v1.5.81 对应；**ChatGPT 账号登录接入**——keys 新增 `kind` 列
   （`api` 存量默认 / `chatgpt` OAuth 账号），chatgpt 密钥 `value_enc` 存加密 JSON
   {access_token, refresh_token, account_id, plan, expires_at}；新增
   `internal/chatgpt` 包（PKCE 授权链接生成、令牌交换/刷新、JWT claim 解析、
@@ -1476,10 +1479,34 @@ POST /api/keys/chatgpt/login/complete {callbackUrl, name?}
 - **令牌刷新（EnsureFresh）**：relay `sendUpstream` 对 kind=chatgpt 的密钥解出
   JSON，`expires_at - now < 5min` 时以 refresh_token 换新
   （grant_type=refresh_token，OpenAI 可能轮转 refresh_token，新对整体落库），
-  按密钥 ID singleflight 防并发重复刷新；刷新失败 → 该尝试以错误失败（正常走
-  换 key/渠道管线），密钥记 last_error
+  按密钥 ID singleflight 防并发重复刷新。v1.5.82 加固：
+  - **读库最新令牌**：刷新前重新读密钥行——调用方持有的行可能早于上一次刷新落库，
+    用已被轮换的 refresh_token 刷新会触发服务端复用检测、整组令牌作废；库中令牌
+    已新鲜则直接返回
+  - **后台执行**：刷新在独立 goroutine 中以 30s 超时跑完并落库，调用方 ctx 只约束
+    等待（请求取消不中断刷新，避免服务端已轮换而本地未落库）
+  - **失败退避**：暂时性失败（网络/5xx）1 分钟、令牌端点 4xx（refresh_token 失效）
+    1 小时；期内直接返回上次错误不发请求，并同步设密钥 `cooldown_until`（组合排序
+    把它排到可用密钥后）；刷新成功只撤销自己设的冷却（更晚到期的 429/402 冷却保留）；
+    手动刷新无视退避
+  - **错误归属**：刷新失败包装为 `errKeyUnavailable`，管线换下一组合但不记渠道
+    last_error（错误已记在密钥上）
+  - **代理路径**：刷新走本组合的代理客户端；直连组合用管理器默认客户端（尊重
+    HTTPS_PROXY）
+  - **到期时间**：JWT `exp` 优先，其次 `expires_in`，兜底 1h（缺省到期=当前时刻会
+    让此后每个请求都刷新）
+- **令牌防外泄（v1.5.82）**：`chatgpt.IsBackendURL`（https + 主机名精确匹配
+  `chatgpt.com`）三处把关——渠道保存（含 chatgpt 密钥则全部线路必须是后端，且不得
+  与常规密钥混绑：两类密钥端点与请求体互不兼容）、配置导入（同一校验，防经导入
+  复用本地同名 chatgpt 密钥绕过）、出站 `sendUpstream` / 逐密钥测试（存量违规数据
+  兜底拒发）
+- **按密钥选形态**：responses 管线按 `a.key.Kind` 而非渠道决定端点拼接与请求体
+  规范化；chat/messages/completions 管线经 `withoutChatGPTKeys` 只用常规密钥，
+  剔除后未命中返回 404
 - **转发注入（仅功能必需项）**：`Authorization: Bearer <有效 access_token>` +
-  `chatgpt-account-id: <account_id>`；请求体缺省 `store` 字段时补 `store:false`
+  `chatgpt-account-id: <account_id>` + Codex 协议头 `OpenAI-Beta:
+  responses=experimental`、`originator: codex_cli_rs`（**仅客户端缺省时补齐**，
+  客户端已带则原样透传，`chatgpt.ApplyHeaders`）；请求体缺省 `store` 字段时补 `store:false`
   （ChatGPT 后端要求，Codex 客户端本就携带）；`input` 为字符串时转为标准
   message 数组（后端只收数组，官方 API 的字符串形状出站前展开）。**端点拼接
   用 `httpx.UpstreamEndpointBare` 纯追加**（/codex/responses）——通用拼接的
@@ -1489,7 +1516,14 @@ POST /api/keys/chatgpt/login/complete {callbackUrl, name?}
   指纹，伪造反增维护负担）
 - **探测适配**：MaybeWarmup 与 ProbeChannel 对含 chatgpt 密钥的渠道直接跳过
   （探测消耗订阅额度且后端无轻量健康端点）；ProbeKeys 对 chatgpt 密钥解析有效
-  令牌后发单个最小流式请求验证（用户主动诊断，成本 ≈ 十几 token）
+  令牌后发单个最小流式请求验证（用户主动诊断，成本 ≈ 十几 token；只试 responses
+  形态，请求体经 `chatgpt.PrepareRequest` 与真实转发同一规范化）
+- **订阅额度 429**：chatgpt 密钥的 429 无 Retry-After 时解析错误体
+  `error.type=usage_limit_reached` 的 `resets_in_seconds` / `resets_at` 设冷却，
+  无重置时间按 KEYWAY_QUOTA_COOLDOWN_S 长冷却（60s 默认冷却会让耗尽的账号每分钟
+  被白打一次）
+- **边缘拦截页**：上游以 401/402/403/429 返回 text/html（Cloudflare managed
+  challenge 等）视为线路问题换组合、记渠道 last_error，不记密钥错误（全部管线）
 - **线路**：渠道 base_url 填 `https://chatgpt.com/backend-api/codex`（openai 型，
   /v1/responses 透传管线原样复用）；国内不可直连，走渠道现有代理机制
   （个人/公共代理均可——用户明确不限制流量形态；固定出口更稳，控制台提示）
@@ -1497,7 +1531,11 @@ POST /api/keys/chatgpt/login/complete {callbackUrl, name?}
   `PUT /keys/:id` 拒绝为 chatgpt 密钥改值（只能改名/备注/启停/删除/刷新）；
   令牌交换与刷新走 `http.DefaultTransport`（尊重 HTTPS_PROXY 环境变量，
   覆盖服务端到 auth.openai.com 不通的场景）
-- **导出导入**：value 即令牌 JSON，导出导入逻辑与普通密钥完全一致，零特判
+- **导出导入（v1.5.82）**：完整导出不输出 chatgpt 密钥的令牌；导入跳过 chatgpt
+  条目（含 v1.5.81 导出的带令牌文件）并提示在目标实例重新登录——同一组令牌被两个
+  实例轮流轮换 refresh_token，必有一方失效
+- **登录会话**：单用户待完成会话上限 5 个（超出淘汰最早的）；显式命名撞名如实报错，
+  自动命名撞名加随机后缀；邮箱取 access_token 的 email / profile claim，其次 id_token
 
 ## 11. API 设计
 
