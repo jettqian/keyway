@@ -1495,6 +1495,18 @@ POST /api/keys/chatgpt/login/complete {callbackUrl, name?}
     HTTPS_PROXY）
   - **到期时间**：JWT `exp` 优先，其次 `expires_in`，兜底 1h（缺省到期=当前时刻会
     让此后每个请求都刷新）
+- **软过期 + 401 自愈（部署实测补丁，2026-10-28）**：access_token 的实际寿命
+  （约 8~10 小时，官方 CLI 靠 refresh_token 高频轮换）远短于 JWT `exp` 声明
+  （约 10 天）——仅按 exp 惰性判断，令牌会被上游静默失效后持续 401（生产事故：
+  渠道 34 连续 16 次 401 触发熔断）。双兜底：
+  ① bundle 新增 `refreshed_at`（每次获取令牌的 unix 秒），`EnsureFresh` 在
+  exp 判定外叠加软过期：获取时刻超过 `accessLifetime`（7h，保守值）即强制刷新；
+  存量 bundle 无该字段时回退密钥 `created_at`；`doRefresh` 的"库中已新鲜则跳过"
+  同步叠加软过期判定
+  ② relay `sendUpstream` 收到上游 401（chatgpt 密钥）→ 丢弃旧响应、
+  `ForceRefresh`（无视退避）取新令牌、原样重建请求重发一次——就地自愈账号异地
+  重登等提前吊销场景；仍 401 原样返回交由管线按密钥级错误换下一组合。请求构造
+  收敛为闭包 `buildReq(token)`，重试与首发共享同一组头逻辑
 - **令牌防外泄（v1.5.82）**：`chatgpt.IsBackendURL`（https + 主机名精确匹配
   `chatgpt.com`）三处把关——渠道保存（含 chatgpt 密钥则全部线路必须是后端，且不得
   与常规密钥混绑：两类密钥端点与请求体互不兼容）、配置导入（同一校验，防经导入

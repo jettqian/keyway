@@ -692,14 +692,15 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 		ctx = a.request.Context()
 	}
 	var keyPlain, chatgptAccountID string
-	if a.key.Kind == store.KeyKindChatGPT {
+	var refreshClient *http.Client // chatgpt 密钥的刷新客户端（直连 = 管理器默认）
+	isChatGPTKey := a.key.Kind == store.KeyKindChatGPT
+	if isChatGPTKey {
 		if !chatgpt.IsBackendURL(url) {
 			return nil, "", fmt.Errorf("%w：%v（拒绝发往 %s）", errKeyUnavailable, chatgpt.ErrNotBackendURL, shortURL(url))
 		}
 		if s.ChatGPT == nil {
 			return nil, "", fmt.Errorf("%w：令牌管理器未初始化", errKeyUnavailable)
 		}
-		var refreshClient *http.Client // 直连 = 管理器默认客户端（尊重 HTTPS_PROXY）
 		if a.proxyURL != "" {
 			c, err := s.getClient(a.proxyURL)
 			if err != nil {
@@ -719,35 +720,42 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 		}
 		keyPlain = plain
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(sendBody))
-	if err != nil {
-		return nil, "", err
-	}
-	if a.request != nil {
-		copyForwardHeaders(req.Header, a.request.Header)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Del("Authorization")
-	req.Header.Del("x-api-key")
 	protocol := a.protocol
 	if protocol == "" {
 		protocol = a.rc.Channel.Type
 	}
-	if protocol == "anthropic" {
-		req.Header.Set("x-api-key", keyPlain)
-		if req.Header.Get("anthropic-version") == "" {
-			req.Header.Set("anthropic-version", "2023-06-01")
+	buildReq := func(token string) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(sendBody))
+		if err != nil {
+			return nil, err
 		}
-	} else {
-		req.Header.Del("anthropic-version")
-		req.Header.Del("anthropic-beta")
-		req.Header.Set("Authorization", "Bearer "+keyPlain)
+		if a.request != nil {
+			copyForwardHeaders(req.Header, a.request.Header)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Del("Authorization")
+		req.Header.Del("x-api-key")
+		if protocol == "anthropic" {
+			req.Header.Set("x-api-key", token)
+			if req.Header.Get("anthropic-version") == "" {
+				req.Header.Set("anthropic-version", "2023-06-01")
+			}
+		} else {
+			req.Header.Del("anthropic-version")
+			req.Header.Del("anthropic-beta")
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		if stream {
+			req.Header.Set("Accept", "text/event-stream")
+		}
+		if chatgptAccountID != "" {
+			chatgpt.ApplyHeaders(req.Header, chatgptAccountID)
+		}
+		return req, nil
 	}
-	if stream {
-		req.Header.Set("Accept", "text/event-stream")
-	}
-	if chatgptAccountID != "" {
-		chatgpt.ApplyHeaders(req.Header, chatgptAccountID)
+	req, err := buildReq(keyPlain)
+	if err != nil {
+		return nil, "", err
 	}
 	client, err := s.getClient(a.proxyURL)
 	if err != nil {
@@ -760,6 +768,25 @@ func (s *Server) sendUpstream(a attempt, method, url string, sendBody []byte, st
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("上游连接失败（%s %s）: %w", a.via, shortURL(a.lineURL), err)
+	}
+	// chatgpt 密钥 401 自愈（v1.5.82）：access_token 可能早于软过期被上游提前
+	// 吊销（账号异地重登/风控）——就地强刷一次并原样重发；仍 401 则原样返回，
+	// 交由管线按密钥级错误换下一组合
+	if isChatGPTKey && resp.StatusCode == http.StatusUnauthorized && s.ChatGPT != nil {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		resp.Body.Close()
+		token2, _, ferr := s.ChatGPT.ForceRefresh(ctx, a.key, refreshClient)
+		if ferr != nil {
+			return nil, "", fmt.Errorf("%w：401 强制刷新失败: %v", errKeyUnavailable, ferr)
+		}
+		req2, berr := buildReq(token2)
+		if berr != nil {
+			return nil, "", berr
+		}
+		resp, err = client.Do(req2)
+		if err != nil {
+			return nil, "", fmt.Errorf("上游连接失败（%s %s）: %w", a.via, shortURL(a.lineURL), err)
+		}
 	}
 	return resp, keyPlain, nil
 }

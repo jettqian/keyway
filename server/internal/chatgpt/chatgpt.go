@@ -55,6 +55,10 @@ const (
 	// refreshDeadBackoff 令牌端点明确拒绝（4xx，如 invalid_grant）后的退避：
 	// refresh_token 已失效，只能重新登录，长退避避免反复打令牌端点
 	refreshDeadBackoff = time.Hour
+	// accessLifetime access_token 的实际寿命保守估计：上游会在 JWT exp 声明到期前
+	// 静默失效（实测约 18 小时后 401，官方 CLI 靠 refresh_token 高频轮换），超过
+	// 该时长即主动刷新，避免把失效令牌发给上游吃 401
+	accessLifetime = 7 * time.Hour
 )
 
 // ErrNotBackendURL chatgpt 令牌被要求发往非 ChatGPT 后端主机（拒绝发送，防令牌外泄）
@@ -68,6 +72,10 @@ type Bundle struct {
 	Plan         string `json:"plan"`
 	Email        string `json:"email,omitempty"`
 	ExpiresAt    int64  `json:"expires_at"` // unix 秒
+	// RefreshedAt 本次 access_token 的获取时刻（unix 秒）。上游的实际令牌寿命
+	// （实测约 8~10 小时）远短于 JWT exp 声明（约 10 天）——仅按 exp 惰性判断会
+	// 在上游静默失效后持续 401；软过期兜底见 EnsureFresh（v1.5.82）
+	RefreshedAt int64 `json:"refreshed_at,omitempty"`
 }
 
 // AccountInfo 登录完成后的展示信息（不含任何令牌明文）
@@ -305,7 +313,7 @@ func (m *Manager) EnsureFresh(ctx context.Context, k *store.Key, client *http.Cl
 	if err != nil {
 		return "", "", err
 	}
-	if time.Until(time.Unix(b.ExpiresAt, 0)) > refreshMargin {
+	if time.Until(time.Unix(b.ExpiresAt, 0)) > refreshMargin && !softExpired(b, k) {
 		return b.AccessToken, b.AccountID, nil
 	}
 	nb, err := m.refresh(ctx, k.ID, client, false)
@@ -315,10 +323,32 @@ func (m *Manager) EnsureFresh(ctx context.Context, k *store.Key, client *http.Cl
 	return nb.AccessToken, nb.AccountID, nil
 }
 
+// softExpired 软过期判定：access_token 的实际寿命远短于 JWT exp 声明（上游会
+// 在声明到期前静默失效，实测约 18 小时后 401），因此获取时刻超过 accessLifetime
+// 即视为过期强制刷新。RefreshedAt 缺省（v1.5.82 前的存量 bundle）回退密钥创建时刻，
+// 保证存量令牌最多在创建后 accessLifetime 内被刷新一次
+func softExpired(b *Bundle, k *store.Key) bool {
+	anchor := b.RefreshedAt
+	if anchor <= 0 {
+		anchor = k.CreatedAt
+	}
+	return anchor > 0 && time.Since(time.Unix(anchor, 0)) > accessLifetime
+}
+
 // RefreshNow 强制刷新（控制台手动刷新端点用；无视失败退避）
 func (m *Manager) RefreshNow(ctx context.Context, k *store.Key) error {
 	_, err := m.refresh(ctx, k.ID, nil, true)
 	return err
+}
+
+// ForceRefresh 强制刷新并返回新令牌（relay 收到上游 401 时调用——令牌可能在
+// 软过期之前就被上游提前吊销，属自愈路径；无视失败退避）
+func (m *Manager) ForceRefresh(ctx context.Context, k *store.Key, client *http.Client) (string, string, error) {
+	nb, err := m.refresh(ctx, k.ID, client, true)
+	if err != nil {
+		return "", "", err
+	}
+	return nb.AccessToken, nb.AccountID, nil
 }
 
 // refresh 带并发收敛与失败退避的令牌刷新：
@@ -386,7 +416,8 @@ func (m *Manager) doRefresh(keyID int64, client *http.Client, force bool) (Bundl
 	if err != nil {
 		return Bundle{}, err
 	}
-	if !force && time.Until(time.Unix(b.ExpiresAt, 0)) > refreshMargin {
+	// 软过期（实际寿命到限）与 exp 到期同权：任一命中都刷新
+	if !force && time.Until(time.Unix(b.ExpiresAt, 0)) > refreshMargin && !softExpired(b, &k) {
 		return *b, nil // 其他请求已刷新落库
 	}
 	if b.RefreshToken == "" {
@@ -495,6 +526,7 @@ func bundleFromToken(tok *tokenResponse) (Bundle, error) {
 		RefreshToken: tok.RefreshToken,
 		ExpiresAt:    expiryOf(tok),
 		Email:        emailOf(tok),
+		RefreshedAt:  time.Now().Unix(),
 	}
 	if claims.Auth != nil {
 		b.AccountID = claims.Auth.AccountID
