@@ -19,6 +19,23 @@ type Path struct {
 	ProxyID  int64  // 公共代理 ID（公共路径时非零）
 }
 
+// 出站策略（渠道级 proxy_policy，DESIGN §5.4）
+const (
+	ProxyPolicyAuto       = "auto"        // 直连优先（默认，历史行为）
+	ProxyPolicyProxyFirst = "proxy_first" // 代理优先，直连兜底
+	ProxyPolicyProxyOnly  = "proxy_only"  // 仅代理，直连不参与尝试
+)
+
+// NormalizeProxyPolicy 空值/未知值回退 auto（存量数据与容错）
+func NormalizeProxyPolicy(p string) string {
+	switch p {
+	case ProxyPolicyProxyFirst, ProxyPolicyProxyOnly:
+		return p
+	default:
+		return ProxyPolicyAuto
+	}
+}
+
 // Manager 公共代理池管理：解密缓存 + 按用户流量统计（仅统计，DESIGN §5.4 FR-P2）
 type Manager struct {
 	store  *store.Store
@@ -63,11 +80,14 @@ func (m *Manager) list() map[int64]string {
 	return urls
 }
 
-// Paths 路径集合：直连 → 个人代理 → 公共代理（总上限 4，DESIGN §5.10）
-func (m *Manager) Paths(personalProxyURL string, allowPublic bool) []Path {
-	paths := []Path{{ProxyURL: "", Via: "direct"}}
+// Paths 路径集合，按渠道出站策略展开（总上限 4，DESIGN §5.10）：
+//   - auto：直连 → 个人代理 → 公共代理（历史行为）
+//   - proxy_first：个人代理 → 公共代理 → 直连（代理健康时流量走代理，代理全挂直连兜底）
+//   - proxy_only：个人代理 → 公共代理（直连不参与；无任何代理时返回空，渠道不可用）
+func (m *Manager) Paths(personalProxyURL string, allowPublic bool, policy string) []Path {
+	var proxyPaths []Path
 	if personalProxyURL != "" {
-		paths = append(paths, Path{ProxyURL: personalProxyURL, Via: "personal"})
+		proxyPaths = append(proxyPaths, Path{ProxyURL: personalProxyURL, Via: "personal"})
 	}
 	if allowPublic {
 		urls := m.list()
@@ -78,13 +98,24 @@ func (m *Manager) Paths(personalProxyURL string, allowPublic bool) []Path {
 		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 		for _, id := range ids {
 			u := urls[id]
-			if len(paths) >= 4 {
+			if len(proxyPaths) >= 4 {
 				break
 			}
-			paths = append(paths, Path{ProxyURL: u, Via: fmt.Sprintf("proxy:%d", id), ProxyID: id})
+			proxyPaths = append(proxyPaths, Path{ProxyURL: u, Via: fmt.Sprintf("proxy:%d", id), ProxyID: id})
 		}
 	}
-	return paths
+	direct := Path{ProxyURL: "", Via: "direct"}
+	switch NormalizeProxyPolicy(policy) {
+	case ProxyPolicyProxyOnly:
+		return proxyPaths
+	case ProxyPolicyProxyFirst:
+		if len(proxyPaths) < 4 {
+			return append(proxyPaths, direct)
+		}
+		return proxyPaths
+	default:
+		return append([]Path{direct}, proxyPaths...)
+	}
 }
 
 // Record 记录公共代理出站流量（内存累计，批量落库）

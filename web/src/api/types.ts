@@ -30,6 +30,8 @@ export interface ApiKeyInput {
   value?: string
 }
 
+export type ProxyPolicy = 'auto' | 'proxy_first' | 'proxy_only'
+
 export interface Channel {
   id: number
   name: string
@@ -40,6 +42,7 @@ export interface Channel {
   lineStrategy: 'auto' | 'manual'
   proxyUrl?: string
   allowPublicProxy: boolean
+  proxyPolicy?: ProxyPolicy
   models: string[]
   modelMapping: Record<string, string>
   forwardMode: 'passthrough' | 'convert'
@@ -63,6 +66,7 @@ export interface ChannelInput {
   lineStrategy: 'auto' | 'manual'
   proxyUrl?: string
   allowPublicProxy: boolean
+  proxyPolicy?: ProxyPolicy
   models: string[]
   modelMapping: Record<string, string>
   forwardMode: 'passthrough' | 'convert'

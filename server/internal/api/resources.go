@@ -12,6 +12,7 @@ import (
 	"keyway/internal/chatgpt"
 	"keyway/internal/crypto"
 	"keyway/internal/httpx"
+	"keyway/internal/proxyman"
 	"keyway/internal/store"
 )
 
@@ -233,6 +234,7 @@ type channelInput struct {
 	LineStrategy     string            `json:"lineStrategy"`
 	ProxyURL         string            `json:"proxyUrl"`
 	AllowPublicProxy bool              `json:"allowPublicProxy"`
+	ProxyPolicy      string            `json:"proxyPolicy"` // auto | proxy_first | proxy_only
 	Models           []string          `json:"models"`
 	ModelMapping     map[string]string `json:"modelMapping"`
 	ForwardMode      string            `json:"forwardMode"`
@@ -278,6 +280,7 @@ func (s *Server) validateChannel(in *channelInput) string {
 	if in.LineStrategy == "" {
 		in.LineStrategy = "auto"
 	}
+	in.ProxyPolicy = proxyman.NormalizeProxyPolicy(in.ProxyPolicy)
 	if in.PricingMode == "" {
 		in.PricingMode = "usd"
 	}
@@ -305,6 +308,7 @@ func (s *Server) applyChannelInput(ch *store.Channel, in *channelInput, copyFrom
 	ch.KeyStrategy = in.KeyStrategy
 	ch.LineStrategy = in.LineStrategy
 	ch.AllowPublicProxy = boolToInt(in.AllowPublicProxy)
+	ch.ProxyPolicy = proxyman.NormalizeProxyPolicy(in.ProxyPolicy)
 	ch.ModelsJSON = string(mustJSONStr(nonEmpty(in.Models)))
 	ch.ModelMappingJSON = string(mustJSONStr(in.ModelMapping))
 	ch.ForwardMode = in.ForwardMode
@@ -357,6 +361,10 @@ func (s *Server) handleCreateChannel(c *gin.Context) {
 		return
 	}
 	if msg := validatePersonalProxy(in.ProxyURL); msg != "" {
+		s.fail(c, http.StatusBadRequest, msg)
+		return
+	}
+	if msg := validateProxyOnly(in.ProxyPolicy, trimOrEmpty(in.ProxyURL) != "", in.AllowPublicProxy); msg != "" {
 		s.fail(c, http.StatusBadRequest, msg)
 		return
 	}
@@ -417,6 +425,10 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, msg)
 		return
 	}
+	if msg := validateProxyOnly(in.ProxyPolicy, trimOrEmpty(in.ProxyURL) != "" || ch.ProxyURLEnc != nil, in.AllowPublicProxy); msg != "" {
+		s.fail(c, http.StatusBadRequest, msg)
+		return
+	}
 	if len(in.KeyIDs) > 0 && !s.ownsKeys(currentUser(c).ID, in.KeyIDs) {
 		s.fail(c, http.StatusBadRequest, "包含不属于你的密钥")
 		return
@@ -435,7 +447,8 @@ func (s *Server) handleUpdateChannel(c *gin.Context) {
 		saveErr = s.Store.DB().Model(&ch).Omit("proxy_url_enc").Updates(map[string]any{
 			"name": ch.Name, "type": ch.Type, "base_urls_json": ch.BaseURLsJSON,
 			"key_ids_json": ch.KeyIDsJSON, "key_strategy": ch.KeyStrategy, "line_strategy": ch.LineStrategy,
-			"allow_public_proxy": ch.AllowPublicProxy, "models_json": ch.ModelsJSON,
+			"allow_public_proxy": ch.AllowPublicProxy, "proxy_policy": ch.ProxyPolicy,
+			"models_json":        ch.ModelsJSON,
 			"model_mapping_json": ch.ModelMappingJSON, "forward_mode": ch.ForwardMode, "priority": ch.Priority,
 			"price_multiplier": ch.PriceMultiplier, "pricing_mode": ch.PricingMode, "cny_ratio": ch.CNYRatio,
 			"is_default": ch.IsDefault, "enabled": ch.Enabled,
@@ -832,6 +845,18 @@ func (s *Server) ownsKeys(userID int64, keyIDs []int64) bool {
 	return count == int64(len(keyIDs))
 }
 
+// validateProxyOnly 仅代理策略要求渠道至少有一条代理路径（个人代理或公共代理），
+// 否则 proxyman.Paths 返回空集合、渠道零可用路径
+func validateProxyOnly(policy string, hasPersonalProxy, allowPublic bool) string {
+	if proxyman.NormalizeProxyPolicy(policy) != proxyman.ProxyPolicyProxyOnly {
+		return ""
+	}
+	if !hasPersonalProxy && !allowPublic {
+		return "仅代理策略要求先配置个人代理或开启公共代理"
+	}
+	return ""
+}
+
 func validatePersonalProxy(raw string) string {
 	raw = trimOrEmpty(raw)
 	if raw == "" {
@@ -876,6 +901,7 @@ func channelDTO(ch *store.Channel) gin.H {
 		"keyStrategy": ch.KeyStrategy, "lineStrategy": ch.LineStrategy,
 		"hasPersonalProxy": ch.ProxyURLEnc != nil,
 		"allowPublicProxy": ch.AllowPublicProxy == 1,
+		"proxyPolicy":      proxyman.NormalizeProxyPolicy(ch.ProxyPolicy),
 		"models":           models, "modelMapping": mapping,
 		"forwardMode": ch.ForwardMode,
 		"priority":    ch.Priority, "priceMultiplier": ch.PriceMultiplier,

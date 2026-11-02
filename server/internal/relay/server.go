@@ -155,7 +155,7 @@ func (s *Server) plan(matched, defaults []*routing.ResolvedChannel, model string
 		if s.Probe != nil {
 			s.Probe.MaybeWarmup(rc.Channel) // 线路数据缺失/过期时异步预热（节流）
 		}
-		paths := s.PM.Paths(rc.PersonalProxyURL, rc.Channel.AllowPublicProxy == 1)
+		paths := s.PM.Paths(rc.PersonalProxyURL, rc.Channel.AllowPublicProxy == 1, rc.Channel.ProxyPolicy)
 		lines := rc.BaseURLs
 		if rc.Channel.LineStrategy == "manual" {
 			// manual：固定第一条线路且不做路径优选

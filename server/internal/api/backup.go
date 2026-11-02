@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"keyway/internal/crypto"
+	"keyway/internal/proxyman"
 	"keyway/internal/store"
 )
 
@@ -56,6 +57,7 @@ type configExportChan struct {
 	LineStrategy     string            `json:"lineStrategy"`
 	ProxyURL         string            `json:"proxyUrl,omitempty"` // 仅完整导出
 	AllowPublicProxy bool              `json:"allowPublicProxy"`
+	ProxyPolicy      string            `json:"proxyPolicy,omitempty"` // auto 缺省不导出（v1.5.83）
 	Models           []string          `json:"models"`
 	ModelMapping     map[string]string `json:"modelMapping"`
 	ForwardMode      string            `json:"forwardMode"`
@@ -203,7 +205,7 @@ func channelToExport(ch *store.Channel, keyNameByID map[int64]string) configExpo
 			keyNames = append(keyNames, n)
 		}
 	}
-	return configExportChan{
+	out := configExportChan{
 		ID: ch.ID, Name: ch.Name, Type: ch.Type,
 		BaseURLs: urls, KeyNames: keyNames,
 		KeyStrategy: ch.KeyStrategy, LineStrategy: ch.LineStrategy,
@@ -213,6 +215,10 @@ func channelToExport(ch *store.Channel, keyNameByID map[int64]string) configExpo
 		PriceMultiplier: ch.PriceMultiplier, PricingMode: ch.PricingMode,
 		CNYRatio: ch.CNYRatio, IsDefault: ch.IsDefault == 1, Enabled: ch.Enabled == 1,
 	}
+	if p := proxyman.NormalizeProxyPolicy(ch.ProxyPolicy); p != proxyman.ProxyPolicyAuto {
+		out.ProxyPolicy = p // auto 为缺省值，不导出（兼容旧版导入）
+	}
+	return out
 }
 
 // keyKindOrAPI 密钥类型兜底：空/未知值回退 api（v1.5.81 前的导出文件无 kind 字段）
@@ -382,7 +388,8 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 			Name: ec.Name, Type: ec.Type, BaseURLs: ec.BaseURLs, KeyIDs: keyIDs,
 			KeyStrategy: ec.KeyStrategy, LineStrategy: ec.LineStrategy,
 			ProxyURL: ec.ProxyURL, AllowPublicProxy: ec.AllowPublicProxy,
-			Models: ec.Models, ModelMapping: ec.ModelMapping,
+			ProxyPolicy: ec.ProxyPolicy,
+			Models:      ec.Models, ModelMapping: ec.ModelMapping,
 			ForwardMode: ec.ForwardMode, Priority: ec.Priority,
 			PriceMultiplier: ec.PriceMultiplier, PricingMode: ec.PricingMode,
 			CNYRatio: ec.CNYRatio, IsDefault: ec.IsDefault, Enabled: ec.Enabled,
@@ -399,6 +406,11 @@ func (s *Server) importUserConfig(tx *gorm.DB, userID int64, in *configExportFil
 			continue
 		}
 		if msg := validatePersonalProxy(ci.ProxyURL); msg != "" {
+			res.ChannelsSkipped++
+			res.warn("渠道「%s」校验失败已跳过：%s", name, msg)
+			continue
+		}
+		if msg := validateProxyOnly(ci.ProxyPolicy, trimOrEmpty(ci.ProxyURL) != "", ci.AllowPublicProxy); msg != "" {
 			res.ChannelsSkipped++
 			res.warn("渠道「%s」校验失败已跳过：%s", name, msg)
 			continue

@@ -38,6 +38,7 @@ const emptyInput: ChannelInput = {
   keyStrategy: 'ordered',
   lineStrategy: 'auto',
   allowPublicProxy: false,
+  proxyPolicy: 'auto',
   models: [],
   modelMapping: {},
   forwardMode: 'passthrough',
@@ -128,6 +129,7 @@ const ChannelsPage: React.FC = () => {
       keyStrategy: 'ordered',
       lineStrategy: tpl.lineStrategy,
       allowPublicProxy: tpl.allowPublicProxyDefault,
+      proxyPolicy: 'auto',
       models: tpl.models,
       modelMapping: Object.entries(tpl.modelMapping).map(([from, to]) => ({ from, to })),
       forwardMode: 'passthrough',
@@ -151,6 +153,7 @@ const ChannelsPage: React.FC = () => {
       lineStrategy: c.lineStrategy,
       proxyUrl: '',
       allowPublicProxy: c.allowPublicProxy,
+      proxyPolicy: c.proxyPolicy ?? 'auto',
       models: c.models,
       modelMapping: Object.entries(c.modelMapping).map(([from, to]) => ({ from, to })),
       forwardMode: c.forwardMode ?? 'passthrough',
@@ -180,6 +183,7 @@ const ChannelsPage: React.FC = () => {
       lineStrategy: v.lineStrategy,
       proxyUrl: v.proxyUrl || undefined,
       allowPublicProxy: v.allowPublicProxy,
+      proxyPolicy: v.proxyPolicy || 'auto',
       models: v.models || [],
       modelMapping: mapping,
       forwardMode: v.forwardMode ?? 'passthrough',
@@ -234,6 +238,7 @@ const ChannelsPage: React.FC = () => {
     keyStrategy: c.keyStrategy,
     lineStrategy: c.lineStrategy,
     allowPublicProxy: c.allowPublicProxy,
+    proxyPolicy: c.proxyPolicy ?? 'auto',
     models: Array.isArray(c.models) ? c.models : [],
     modelMapping: c.modelMapping ?? {},
     forwardMode: c.forwardMode,
@@ -534,6 +539,16 @@ const ChannelsPage: React.FC = () => {
           </Form.Item>
           <Form.Item name="allowPublicProxy" label={t('channels.allowPublicProxy')} valuePropName="checked">
             <Switch />
+          </Form.Item>
+          <Form.Item name="proxyPolicy" label={t('channels.proxyPolicy')} extra={<span className="form-hint">{t('channels.proxyPolicyExtra')}</span>}>
+            <Select
+              style={{ width: 260 }}
+              options={[
+                { value: 'auto', label: t('channels.proxyPolicyAuto') },
+                { value: 'proxy_first', label: t('channels.proxyPolicyFirst') },
+                { value: 'proxy_only', label: t('channels.proxyPolicyOnly') },
+              ]}
+            />
           </Form.Item>
           <Form.Item label={t('channels.modelMapping')}>
             <Form.List name="modelMapping">

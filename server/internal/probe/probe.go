@@ -186,7 +186,7 @@ func (e *Engine) warmup(ch *store.Channel) {
 	if err != nil {
 		return
 	}
-	paths := e.pm.Paths(rc.PersonalProxyURL, ch.AllowPublicProxy == 1)
+	paths := e.pm.Paths(rc.PersonalProxyURL, ch.AllowPublicProxy == 1, ch.ProxyPolicy)
 	type combo struct{ line, proxyURL, via string }
 	var combos []combo
 	for _, line := range rc.BaseURLs {
@@ -241,8 +241,8 @@ func (e *Engine) ProbeChannel(ch *store.Channel) ([]Result, error) {
 		return nil, err
 	}
 
-	// 路径集合：proxyman（直连 → 个人 → 公共代理，渠道 opt-in）
-	paths := e.pm.Paths(rc.PersonalProxyURL, ch.AllowPublicProxy == 1)
+	// 路径集合：proxyman（按渠道出站策略展开，公共代理需渠道 opt-in）
+	paths := e.pm.Paths(rc.PersonalProxyURL, ch.AllowPublicProxy == 1, ch.ProxyPolicy)
 
 	type target struct{ line, proxyURL, via string }
 	var targets []target

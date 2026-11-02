@@ -154,6 +154,97 @@ func TestE2E公共代理优选与流量统计(t *testing.T) {
 	}
 }
 
+func TestE2E仅代理与代理优先策略(t *testing.T) {
+	c, _ := setupApp(t)
+	upstream := echoUpstream(t)
+	defer upstream.Close()
+	proxy := forwardProxy(t, "p1")
+	defer proxy.Close()
+
+	if w := c.do("POST", "/api/auth/register", map[string]any{"username": "dave", "password": "password123"}, false); w.Code != 200 {
+		t.Fatal("注册失败")
+	}
+	var keyResp struct {
+		Key struct {
+			ID int64 `json:"id"`
+		} `json:"key"`
+	}
+	if w := c.do("POST", "/api/keys", map[string]any{"name": "k1", "value": "any-key"}, true); w.Code != 200 {
+		t.Fatal("建密钥失败")
+	} else {
+		json.Unmarshal(w.Body.Bytes(), &keyResp)
+	}
+	if w := c.do("POST", "/api/admin/proxies", map[string]any{
+		"name": "公共出口", "url": proxy.URL, "note": "测试",
+	}, true); w.Code != 200 {
+		t.Fatalf("建公共代理失败: %s", w.Body.String())
+	}
+
+	// 仅代理策略：未配任何代理应被拒绝（否则渠道零可用路径）
+	if w := c.do("POST", "/api/channels", map[string]any{
+		"name": "bad-only", "type": "openai",
+		"baseUrls": []string{upstream.URL}, "keyIds": []int64{keyResp.Key.ID},
+		"models": []string{"pol-a"}, "proxyPolicy": "proxy_only", "enabled": true,
+	}, true); w.Code != 400 {
+		t.Fatalf("仅代理且无代理来源应 400: %d %s", w.Code, w.Body.String())
+	}
+
+	create := func(name, model, policy string) int64 {
+		w := c.do("POST", "/api/channels", map[string]any{
+			"name": name, "type": "openai",
+			"baseUrls":         []string{upstream.URL},
+			"keyIds":           []int64{keyResp.Key.ID},
+			"models":           []string{model},
+			"allowPublicProxy": true,
+			"proxyPolicy":      policy,
+			"enabled":          true,
+		}, true)
+		if w.Code != 200 {
+			t.Fatalf("建渠道 %s 失败: %s", policy, w.Body.String())
+		}
+		var chResp struct {
+			Channel struct {
+				ID          int64  `json:"id"`
+				ProxyPolicy string `json:"proxyPolicy"`
+			} `json:"channel"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &chResp)
+		if chResp.Channel.ProxyPolicy != policy {
+			t.Fatalf("proxyPolicy 回读 = %q，want %q", chResp.Channel.ProxyPolicy, policy)
+		}
+		return chResp.Channel.ID
+	}
+
+	// 渠道 A 仅代理：即使直连标记健康（延迟更低），直连也不在路径集中 → 必走公共代理
+	idOnly := create("pol-only", "pol-a", "proxy_only")
+	c.seedStats(t, idOnly, upstream.URL, true, 5)
+
+	// 渠道 B 代理优先：无任何 line_stats（未知组合按登记顺序）→ 公共代理先于直连
+	create("pol-first", "pol-b", "proxy_first")
+
+	if w := c.do("POST", "/api/tokens", map[string]any{"name": "t1"}, true); w.Code != 200 {
+		t.Fatal("签令牌失败")
+	} else {
+		var tokResp struct {
+			Plaintext string `json:"plaintext"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &tokResp)
+		c.token = tokResp.Plaintext
+	}
+
+	for _, tc := range []struct {
+		model string
+		want  string
+	}{{"pol-a", "via:p1"}, {"pol-b", "via:p1"}} {
+		w := c.do("POST", "/v1/chat/completions", map[string]any{
+			"model": tc.model, "messages": []map[string]any{{"role": "user", "content": "hi"}},
+		}, false)
+		if !strings.Contains(w.Body.String(), tc.want) {
+			t.Fatalf("模型 %s 应经公共代理转发（%s）: %s", tc.model, tc.want, w.Body.String())
+		}
+	}
+}
+
 func TestE2E管理员模板CRUD与复制(t *testing.T) {
 	c, upstream := setupApp(t)
 

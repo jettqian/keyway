@@ -1,6 +1,10 @@
 # Keyway 技术方案（DESIGN）
 
-- 版本：v1.78（与 PRD v1.5.82 对应；**ChatGPT 账号接入加固**——渠道绑定校验与出站
+- 版本：v1.79（与 PRD v1.5.83 对应；**渠道出站策略**——channels 新增 `proxy_policy`
+  列（`auto` 直连优先 / `proxy_first` 代理优先直连兜底 / `proxy_only` 仅代理），
+  `proxyman.Paths` 按策略展开路径集合，relay 与 probe 共用；仅代理未配任何代理时
+  API 校验拒绝；详见 §5.4）；
+  前版 v1.78（与 PRD v1.5.82 对应；**ChatGPT 账号接入加固**——渠道绑定校验与出站
   兜底防令牌外泄（`chatgpt.IsBackendURL`）、刷新读库最新令牌 + 后台执行 + 失败退避、
   订阅额度 429 按重置时间冷却、边缘拦截 HTML 归线路、导出导入不迁移令牌；详见 §10.5）；
   v1.77（与 PRD v1.5.81 对应；**ChatGPT 账号登录接入**——keys 新增 `kind` 列
@@ -562,6 +566,7 @@ CREATE TABLE channels (
   line_strategy TEXT NOT NULL DEFAULT 'auto',
   proxy_url_enc BLOB,                      -- 个人代理（可空）
   allow_public_proxy INTEGER NOT NULL DEFAULT 0,
+  proxy_policy TEXT NOT NULL DEFAULT 'auto', -- auto=直连优先 | proxy_first=代理优先直连兜底 | proxy_only=仅代理（v1.79）
   models_json TEXT NOT NULL, model_mapping_json TEXT DEFAULT '{}',
   forward_mode TEXT NOT NULL DEFAULT 'passthrough', -- passthrough | convert
   priority INTEGER NOT NULL DEFAULT 0,
@@ -817,8 +822,14 @@ graph LR
 
 1. 线路排序：line_stats 中 `ok=1` 且延迟最低者优先；探测数据过期（>3 周期）视为未知，
    按 base_urls 录入顺序；`line_strategy=manual` 时固定第一条线路且不做路径优选
-2. 路径展开：直连 → 个人代理（如配）→ 启用的公共代理（如 allow_public_proxy=1，
-   按代理池顺序，参与探测矩阵的 ≤4 条）
+2. 路径展开（按渠道 `proxy_policy`，v1.79）：
+   - `auto`（默认）：直连 → 个人代理（如配）→ 启用的公共代理（如 allow_public_proxy=1，
+     按代理池顺序，参与探测矩阵的 ≤4 条）——历史行为
+   - `proxy_first`：个人代理 → 公共代理 → 直连（代理健康时流量走代理；健康组合仍按
+     延迟优选，代理优先只在组合未知/失败排序时生效）
+   - `proxy_only`：个人代理 → 公共代理（直连**不参与**；无任何代理时空集合，API 保存
+     时已校验拒绝）。需要渠道流量**固定**走代理（如经美国出口解除上游地区封锁）时使用
+   - 集合总上限仍为 4 条；relay 与 probe（预热/矩阵）共用同一展开（`proxyman.Paths`）
 3. 密钥选择：ordered → 首个未冷却密钥；round_robin → 原子计数取模（跳过冷却者）
 4. 错误分类驱动下一跳：
    - 连接失败 / TLS 错误 / 拨号超时 → **换路径/线路**（同 key）
